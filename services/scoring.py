@@ -5,7 +5,13 @@ import unicodedata
 
 def _norm(s: str) -> str:
     s = (s or "").strip().lower()
-    s = s.replace("?", "o")
+    # Limpieza profunda de caracteres y símbolos comunes en errores de codificación
+    replacements = {
+        "?": "o", "ó": "o", "á": "a", "é": "e", "í": "i", "ú": "u",
+        "(": " ", ")": " ", "-": " "
+    }
+    for old, new in replacements.items():
+        s = s.replace(old, new)
     s = "".join(ch for ch in unicodedata.normalize("NFD", s) if unicodedata.category(ch) != "Mn")
     return " ".join(s.split())
 
@@ -22,16 +28,16 @@ def get_activity_capture_mode(task_name: str) -> tuple[str, str | None]:
     name = _norm(task_name)
 
     cumplimiento_tasks = [
-        "sacar basura",
-        "recepcion de guia",
-        "apoyo a tienda",
-        "limpieza",
-        "transporte de bulto (en grupo)",
-        "transporte de bulto (solo)",
-        "transporte de bulto (montacarga)",
-        "cuadre lote (supervision)",
-        "cuadre lote (impresion codigos)",
-        "pedido por mayor",
+        "sacar basura", # 1p
+        "limpieza",     # 1p
+        "apoyo a tienda", # 7p
+        "transporte de bulto en grupo", # 2p
+        "transporte de bulto solo",     # 4p
+        "transporte de bulto",            # Captura cualquier variante de transporte
+        "cuadre lote supervision",     # 2p
+        "cuadre lote impresion codigos", # 2p
+        "pedido por mayor", # 2p
+        "recepcion de guia"
     ]
     if any(k in name for k in cumplimiento_tasks):
         return "cumplimiento", None
@@ -49,11 +55,11 @@ def get_activity_capture_mode(task_name: str) -> tuple[str, str | None]:
 
     # Actividades por tiempo según el Excel
     time_tasks = [
-        "visita de tienda (atencion)",
+        "visita de tienda atencion",
         "reposicion",
         "apoyo inter-area",
         "apoyo inter area",
-        "pistoleado y embalado (despacho)",
+        "pistoleado y embalado despacho",
         "envio nuevo",
     ]
     if any(k in name for k in time_tasks):
@@ -94,11 +100,11 @@ def calculate_points(task_name: str, cantidad: float | None, tiempo_minutos: int
         "sacar basura": 1, # 1p
         "limpieza": 1, # 1p
         "apoyo a tienda": 7,
-        "transporte de bulto (en grupo)": 2, # 2p
-        "transporte de bulto (montacarga)": 2, # 2p
-        "transporte de bulto (solo)": 4, # 4p
-        "cuadre lote (supervision)": 2,
-        "cuadre lote (impresion codigos)": 2,
+        "transporte de bulto en grupo": 2, # 2p
+        "transporte de bulto montacarga": 2, # 2p
+        "transporte de bulto solo": 4, # 4p
+        "cuadre lote supervision": 2,
+        "cuadre lote impresion codigos": 2,
         "pedido por mayor": 2,
     }
     for k, p in fixed.items():

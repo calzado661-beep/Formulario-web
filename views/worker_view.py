@@ -18,25 +18,26 @@ from services.scoring import calculate_points, get_activity_capture_mode
 def _render_dynamic_fields(task_name: str, idx: int) -> tuple[float | None, int | None, bool | None, str]:
     tipo, unidad = get_activity_capture_mode(task_name)
 
-    # Siempre habilitamos el campo de cantidad para que se guarde en la BD independientemente del tipo de tarea
-    cantidad = st.number_input(
-        f"Cantidad ({unidad or 'unidades'})",
-        min_value=0.0,
-        step=1.0,
-        value=1.0 if tipo == "cumplimiento" else 0.0,
-        key=f"cantidad_{idx}",
-        disabled=(tipo == "cumplimiento")) # Deshabilita si es de cumplimiento
-    
+    cantidad = None
     minutos = None
     cumplimiento = None
 
-    if tipo == "tiempo":
+    if tipo == "cantidad":
+        cantidad = st.number_input(f"Cantidad ({unidad or 'unidades'})", min_value=0.0, step=1.0, value=0.0, key=f"cantidad_{idx}")
+        cumplimiento = True # Para tareas de cantidad, se asume cumplimiento si se registra una cantidad
+    elif tipo == "tiempo":
         horas = st.number_input("Horas", min_value=0, step=1, key=f"horas_{idx}")
         mins = st.number_input("Minutos", min_value=0, max_value=59, step=1, key=f"mins_{idx}")
         minutos = int(horas) * 60 + int(mins)
         st.caption(f"Tiempo total: {minutos} min")
-    else:
+        cantidad = 0.0 # Las tareas de tiempo no tienen una cantidad explícita
+        cumplimiento = True # Para tareas de tiempo, se asume cumplimiento si se registra un tiempo
+    elif tipo == "cumplimiento":
+        # Para tareas de cumplimiento, la cantidad es fija en 1 y no se muestra el input
+        cantidad = 1.0
         cumplimiento = st.checkbox("Cumplido", value=True, key=f"cumpl_{idx}")
+        # El campo de cantidad no se renderiza para este tipo de actividad
+
 
     detalle = st.text_area("Detalle (opcional)", placeholder="Comentarios de lo realizado", key=f"detalle_{idx}")
     return cantidad, minutos, cumplimiento, detalle
@@ -78,31 +79,34 @@ def render_worker(supabase: Client, user: dict) -> None:
 
         st.caption(f"Registros a cargar: {st.session_state.worker_items_count}")
 
-        with st.form("worker_log_form"):
-            fecha = st.date_input("Fecha", value=date.today())
-            registros = []
+        # Eliminamos st.form para permitir que la interfaz reaccione al selectbox inmediatamente
+        fecha = st.date_input("Fecha", value=date.today())
+        registros = []
 
-            for i in range(st.session_state.worker_items_count):
-                st.markdown(f"### Registro {i + 1}")
-                task_key = st.selectbox("Tarea realizada", list(task_map.keys()), key=f"task_{i}")
-                selected_task = task_map[task_key]
-                task_name = selected_task.get("nombre") or selected_task.get("titulo") or "Sin título"
-                st.caption(f"Actividad: {task_name}")
+        for i in range(st.session_state.worker_items_count):
+            st.markdown(f"### Registro {i + 1}")
+            task_key = st.selectbox("Tarea realizada", list(task_map.keys()), key=f"task_{i}")
 
-                cantidad, minutos, cumplimiento, detalle = _render_dynamic_fields(task_name, i)
-                registros.append(
-                    {
-                        "task_key": task_key,
-                        "task_name": task_name,
-                        "cantidad": cantidad,
-                        "minutos": minutos,
-                        "cumplimiento": cumplimiento,
-                        "detalle": detalle,
-                    }
-                )
-                st.divider()
+            # Usamos el texto visible en el selectbox para determinar los campos.
+            # Esto ignora errores en la base de datos y se guía por lo que tú seleccionaste.
+            clean_name = task_key.split(" - ", 1)[-1] if " - " in task_key else task_key
+            
+            cantidad, minutos, cumplimiento, detalle = _render_dynamic_fields(clean_name, i)
+            
+            registros.append(
+                {
+                    "task_key": task_key,
+                    "task_name": clean_name,
+                    "cantidad": cantidad,
+                    "minutos": minutos,
+                    "cumplimiento": cumplimiento,
+                    "detalle": detalle,
+                }
+            )
+            st.divider()
 
-            guardar = st.form_submit_button("Guardar registros")
+        # Cambiamos st.form_submit_button por un botón normal
+        guardar = st.button("Guardar registros", type="primary", use_container_width=True)
 
         if guardar:
             total_puntos = 0
