@@ -135,8 +135,11 @@ def _worker_points_panel(supabase: Client) -> None:
         return
 
     users = select_users(supabase)
-    user_name_by_id = {u.get("id"): (u.get("nombre") or u.get("email")) for u in users}
-    user_email_by_id = {u.get("id"): u.get("email") for u in users}
+    # Filtramos para excluir a los administradores de la lista de trabajadores
+    workers = [u for u in users if str(u.get("rol", "")).lower() == "trabajador"]
+    worker_ids = {u.get("id") for u in workers}
+    user_name_by_id = {u.get("id"): (u.get("nombre") or u.get("email")) for u in workers}
+    user_email_by_id = {u.get("id"): u.get("email") for u in workers}
     tasks = list_tasks(supabase)
     task_name_by_id = {t.get("id"): (t.get("nombre") or t.get("titulo") or f"Tarea {t.get('id')}") for t in tasks}
     activities = list_activities_catalog(supabase)
@@ -145,6 +148,10 @@ def _worker_points_panel(supabase: Client) -> None:
     rows = []
     for r in logs:
         trabajador_id = r.get("trabajador_id")
+        # Omitir registros de usuarios que no son trabajadores (ej. administradores)
+        if trabajador_id not in worker_ids:
+            continue
+            
         tarea_nombre = task_name_by_id.get(r.get("tarea_id"))
         actividad_nombre = activity_name_by_id.get(r.get("actividad_id")) or tarea_nombre
         rows.append(
@@ -174,4 +181,3 @@ def _worker_points_panel(supabase: Client) -> None:
 
     st.markdown("### Detalle")
     st.dataframe(df, width="stretch")
-

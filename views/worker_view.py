@@ -18,13 +18,13 @@ from services.scoring import calculate_points, get_activity_capture_mode
 def _render_dynamic_fields(task_name: str, idx: int) -> tuple[float | None, int | None, bool | None, str]:
     tipo, unidad = get_activity_capture_mode(task_name)
 
-    cantidad = None
+    # Siempre habilitamos el campo de cantidad para que se guarde en la BD independientemente del tipo de tarea
+    cantidad = st.number_input(f"Cantidad ({unidad or 'unidades'})", min_value=0.0, step=1.0, value=1.0 if tipo == "cumplimiento" else 0.0, key=f"cantidad_{idx}")
+    
     minutos = None
     cumplimiento = None
 
-    if tipo == "cantidad":
-        cantidad = st.number_input(f"Cantidad ({unidad or 'unidades'})", min_value=0.0, step=1.0, key=f"cantidad_{idx}")
-    elif tipo == "tiempo":
+    if tipo == "tiempo":
         horas = st.number_input("Horas", min_value=0, step=1, key=f"horas_{idx}")
         mins = st.number_input("Minutos", min_value=0, max_value=59, step=1, key=f"mins_{idx}")
         minutos = int(horas) * 60 + int(mins)
