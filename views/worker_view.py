@@ -19,7 +19,13 @@ def _render_dynamic_fields(task_name: str, idx: int) -> tuple[float | None, int 
     tipo, unidad = get_activity_capture_mode(task_name)
 
     # Siempre habilitamos el campo de cantidad para que se guarde en la BD independientemente del tipo de tarea
-    cantidad = st.number_input(f"Cantidad ({unidad or 'unidades'})", min_value=0.0, step=1.0, value=1.0 if tipo == "cumplimiento" else 0.0, key=f"cantidad_{idx}")
+    cantidad = st.number_input(
+        f"Cantidad ({unidad or 'unidades'})",
+        min_value=0.0,
+        step=1.0,
+        value=1.0 if tipo == "cumplimiento" else 0.0,
+        key=f"cantidad_{idx}",
+        disabled=(tipo == "cumplimiento")) # Deshabilita si es de cumplimiento
     
     minutos = None
     cumplimiento = None

@@ -6,6 +6,8 @@ from supabase import create_client, Client
 from views.login_view import render_login
 from views.admin_view import render_admin
 from views.worker_view import render_worker
+from services.styles import apply_styles
+from services.sidebar import render_sidebar
 
 load_dotenv()
 
@@ -27,26 +29,24 @@ def get_supabase() -> Client:
     return create_client(url, key)
 
 def logout() -> None:
-    st.session_state.pop("usuario", None)
-    st.rerun()
+    st.session_state.clear()
 
 def app() -> None:
     supabase = get_supabase()
+    apply_styles() # Aplicamos los estilos globales
+
     user = st.session_state.get("usuario")
 
     if not user:
         render_login(supabase)
         return
 
+    # Renderizamos la barra lateral con info de admin/trabajador y logout
+    render_sidebar(user, logout)
+    
     role = str(user.get("rol", "")).lower()
-    col1, col2 = st.columns([0.8, 0.2])
-
-    with col1:
-        st.title("Sistema de Formularios")
-        st.caption(f"Sesión activa: {user.get('nombre', user.get('email'))} | Rol: {role}")
-
-    with col2:
-        st.button("Cerrar sesión", on_click=logout, use_container_width=True)
+    st.title("Sistema de Formularios")
+    st.caption(f"Bienvenido al panel de {role}")
 
     if role == "administrador":
         render_admin(supabase)

@@ -91,11 +91,12 @@ def calculate_points(task_name: str, cantidad: float | None, tiempo_minutos: int
         return _points_by_threshold(float(tiempo_minutos or 0), [(120, 3), (180, 5), (420, 7)])
 
     fixed = {
-        "sacar basura": 1,
-        "limpieza": 1,
+        "sacar basura": 1, # 1p
+        "limpieza": 1, # 1p
         "apoyo a tienda": 7,
-        "transporte de bulto (en grupo)": 4,
-        "transporte de bulto (montacarga)": 2,
+        "transporte de bulto (en grupo)": 2, # 2p
+        "transporte de bulto (montacarga)": 2, # 2p
+        "transporte de bulto (solo)": 4, # 4p
         "cuadre lote (supervision)": 2,
         "cuadre lote (impresion codigos)": 2,
         "pedido por mayor": 2,
@@ -103,9 +104,6 @@ def calculate_points(task_name: str, cantidad: float | None, tiempo_minutos: int
     for k, p in fixed.items():
         if k in name:
             return p if cumplimiento else 0
-
-    if "transporte de bulto (solo)" in name:
-        return 0
     if "recepcion de guia" in name:
         return 0
 
