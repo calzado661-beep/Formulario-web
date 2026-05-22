@@ -1,6 +1,7 @@
 ﻿import pandas as pd
 import streamlit as st
 from supabase import Client
+from services.scoring import get_activity_capture_mode
 
 from services.repositories import (
     create_task,
@@ -115,7 +116,7 @@ def _tasks_panel(supabase: Client) -> None:
 
         if crear:
             payload = {
-                "nombre": titulo.strip(),
+                "titulo": titulo.strip(),
                 "descripcion": descripcion.strip(),
                 "estado": estado.strip(),
             }
@@ -154,6 +155,16 @@ def _worker_points_panel(supabase: Client) -> None:
             
         tarea_nombre = task_name_by_id.get(r.get("tarea_id"))
         actividad_nombre = activity_name_by_id.get(r.get("actividad_id")) or tarea_nombre
+        
+        # Traducción de cantidad a Turno si corresponde
+        val_cant = r.get("cantidad")
+        val_turno = r.get("turno")
+        cant_display = val_turno if val_turno else val_cant
+
+        tipo_act, _ = get_activity_capture_mode(actividad_nombre or "")
+        if tipo_act == "turno" and not val_turno:
+            cant_display = "Turno mañana o tarde" if val_cant == 1.0 else "Turno mañana y tarde"
+
         rows.append(
             {
                 "Fecha": r.get("fecha_registro"),
@@ -161,7 +172,8 @@ def _worker_points_panel(supabase: Client) -> None:
                 "Email": user_email_by_id.get(trabajador_id),
                 "Tarea": tarea_nombre,
                 "Actividad": actividad_nombre,
-                "Cantidad": r.get("cantidad"),
+                "Cantidad": str(val_cant) if val_cant is not None else "",
+                "Turno": val_turno if val_turno else (cant_display if tipo_act == "turno" else ""),
                 "Tiempo (min)": r.get("tiempo_minutos"),
                 "Cumplimiento": r.get("cumplimiento"),
                 "Puntos": float(r.get("puntos_obtenidos") or 0),

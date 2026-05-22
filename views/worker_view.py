@@ -15,12 +15,13 @@ from services.repositories import (
 from services.scoring import calculate_points, get_activity_capture_mode
 
 
-def _render_dynamic_fields(task_name: str, idx: int) -> tuple[float | None, int | None, bool | None, str]:
+def _render_dynamic_fields(task_name: str, idx: int) -> tuple[float | None, int | None, bool | None, str, str | None]:
     tipo, unidad = get_activity_capture_mode(task_name)
 
     cantidad = None
     minutos = None
     cumplimiento = None
+    turno = None
 
     if tipo == "cantidad":
         cantidad = st.number_input(f"Cantidad ({unidad or 'unidades'})", min_value=0.0, step=1.0, value=0.0, key=f"cantidad_{idx}")
@@ -37,10 +38,21 @@ def _render_dynamic_fields(task_name: str, idx: int) -> tuple[float | None, int 
         cantidad = 1.0
         cumplimiento = st.checkbox("Cumplido", value=True, key=f"cumpl_{idx}")
         # El campo de cantidad no se renderiza para este tipo de actividad
+    elif tipo == "turno": # New type for turno selection
+        turno_option = st.radio(
+            "Selecciona el turno",
+            ["Turno mañana o tarde", "Turno mañana y tarde"],
+            key=f"turno_{idx}"
+        )
+        turno = turno_option
+        # Map turno selection to a numerical quantity for point calculation
+        cantidad = 1.0 if turno == "Turno mañana o tarde" else 2.0
+        cumplimiento = True # Turno selection implies compliance
+        minutos = None # Not applicable for turno-based tasks
 
 
     detalle = st.text_area("Detalle (opcional)", placeholder="Comentarios de lo realizado", key=f"detalle_{idx}")
-    return cantidad, minutos, cumplimiento, detalle
+    return cantidad, minutos, cumplimiento, detalle, turno
 
 
 def render_worker(supabase: Client, user: dict) -> None:
@@ -91,7 +103,7 @@ def render_worker(supabase: Client, user: dict) -> None:
             # Esto ignora errores en la base de datos y se guía por lo que tú seleccionaste.
             clean_name = task_key.split(" - ", 1)[-1] if " - " in task_key else task_key
             
-            cantidad, minutos, cumplimiento, detalle = _render_dynamic_fields(clean_name, i)
+            cantidad, minutos, cumplimiento, detalle, turno = _render_dynamic_fields(clean_name, i)
             
             registros.append(
                 {
@@ -101,6 +113,7 @@ def render_worker(supabase: Client, user: dict) -> None:
                     "minutos": minutos,
                     "cumplimiento": cumplimiento,
                     "detalle": detalle,
+                    "turno": turno,
                 }
             )
             st.divider()
@@ -112,35 +125,38 @@ def render_worker(supabase: Client, user: dict) -> None:
             total_puntos = 0
             guardados_bd = 0
             errores = 0
+            last_error = ""
             for item in registros:
-                puntos = calculate_points(item["task_name"], item["cantidad"], item["minutos"], item["cumplimiento"])
-                actividad_id = ensure_activity(supabase, item["task_name"])
-                if not actividad_id:
-                    errores += 1
-                    continue
-
-                payload = {
-                    "trabajador_id": user.get("id"),
-                    "tarea_id": task_map[item["task_key"]].get("id"),
-                    "actividad_id": actividad_id,
-                    "fecha_registro": str(fecha),
-                    "cantidad": item["cantidad"],
-                    "tiempo_minutos": item["minutos"],
-                    "cumplimiento": item["cumplimiento"],
-                    "detalle": (item["detalle"] or "").strip() or None,
-                    "puntos_obtenidos": puntos,
-                }
                 try:
+                    puntos = calculate_points(item["task_name"], item["cantidad"], item["minutos"], item["cumplimiento"])
+                    actividad_id = ensure_activity(supabase, item["task_name"])
+                    if not actividad_id:
+                        errores += 1
+                        continue
+
+                    payload = {
+                        "trabajador_id": user.get("id"),
+                        "tarea_id": task_map[item["task_key"]].get("id"),
+                        "actividad_id": actividad_id,
+                        "fecha_registro": str(fecha),
+                        "cantidad": item["cantidad"],
+                        "tiempo_minutos": item["minutos"],
+                        "cumplimiento": item["cumplimiento"],
+                        "detalle": (item["detalle"] or "").strip() or None,
+                        "turno": item.get("turno"),
+                        "puntos_obtenidos": puntos,
+                    }
                     create_worker_activity_log(supabase, payload)
                     guardados_bd += 1
                     total_puntos += puntos
-                except Exception:
+                except Exception as e:
                     errores += 1
+                    last_error = str(e)
 
             if guardados_bd:
                 st.success(f"Se guardaron {guardados_bd} registros en base de datos. Puntos totales: {total_puntos}")
             if errores:
-                st.error(f"{errores} registros no se pudieron guardar. Revisa que exista la tabla registro_actividades.")
+                st.error(f"{errores} registros fallaron. Error: {last_error}")
             st.session_state.worker_items_count = 1
             st.rerun()
 
@@ -166,12 +182,24 @@ def render_worker(supabase: Client, user: dict) -> None:
         for r in logs:
             tarea_nombre = task_name_by_id.get(r.get("tarea_id"))
             actividad_nombre = activity_name_by_id.get(r.get("actividad_id"))
+            
+            # Lógica para mostrar "Turno" en lugar de 1 o 2 en el historial
+            final_name = actividad_nombre or tarea_nombre or ""
+            tipo_act, _ = get_activity_capture_mode(final_name)
+            val_cant = r.get("cantidad")
+            val_turno = r.get("turno")
+            cant_display = val_turno if val_turno else val_cant
+            
+            if tipo_act == "turno" and not val_turno:
+                cant_display = "Turno mañana o tarde" if float(val_cant or 0) == 1.0 else "Turno mañana y tarde"
+
             rows.append(
                 {
                     "Fecha": r.get("fecha_registro"),
                     "Tarea": tarea_nombre,
-                    "Actividad": actividad_nombre or tarea_nombre,
-                    "Cantidad": r.get("cantidad"),
+                    "Actividad": final_name,
+                    "Cantidad": str(val_cant) if val_cant is not None else "",
+                    "Turno": val_turno if val_turno else (cant_display if tipo_act == "turno" else ""),
                     "Tiempo (min)": r.get("tiempo_minutos"),
                     "Cumplimiento": r.get("cumplimiento"),
                     "Puntos": r.get("puntos_obtenidos"),

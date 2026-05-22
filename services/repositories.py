@@ -108,30 +108,42 @@ def list_activities_catalog(supabase: Client) -> list[dict[str, Any]]:
 
 def ensure_activity(supabase: Client, activity_name: str) -> int | None:
     try:
-        found = (
+        # Limpiamos el nombre para buscar (quitando el ? si existe)
+        clean_search = activity_name.replace("?", "ó")
+        
+        found_data = (
             supabase.table("actividades_catalogo")
-            .select("id")
-            .eq("actividad", activity_name)
+            .select("id, tipo_medicion")
+            .ilike("actividad", clean_search)
             .limit(1)
             .execute()
             .data
             or []
         )
-        if found:
-            return int(found[0]["id"])
 
         mode, unit = get_activity_capture_mode(activity_name)
+
+        if found_data:
+            act_id = int(found_data[0]["id"])
+            # Si el tipo guardado en BD no coincide con el que el código espera, lo corregimos
+            if found_data[0].get("tipo_medicion") != mode:
+                supabase.table("actividades_catalogo").update({"tipo_medicion": mode, "unidad_base": unit}).eq("id", act_id).execute()
+            return act_id
+
+        # Si no existe, la creamos usando el modo de captura detectado
         payload = {
-            "actividad": activity_name,
+            "actividad": clean_search,
             "tipo_medicion": mode,
             "unidad_base": unit,
             "activo": True,
         }
-        created = supabase.table("actividades_catalogo").insert(payload).execute().data or []
+        res = supabase.table("actividades_catalogo").insert(payload).execute()
+        created = res.data or []
         if created:
             return int(created[0]["id"])
-    except Exception:
-        return None
+    except Exception as e:
+        # Elevamos la excepción para que la vista pueda capturar el mensaje de error de la BD
+        raise Exception(f"Error en catálogo: {str(e)}")
     return None
 
 
