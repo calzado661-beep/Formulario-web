@@ -67,14 +67,17 @@ def render_worker(supabase: Client, user: dict) -> None:
             st.warning("No tienes tareas asignadas para registrar actividades.")
             return
 
+        # Creamos el mapa y ordenamos las llaves numéricamente por el ID que aparece al inicio
         task_map = {f"{t.get('id')} - {t.get('nombre') or t.get('titulo') or 'Sin título'}": t for t in tasks}
+        sorted_task_keys = sorted(task_map.keys(), key=lambda x: int(x.split(" - ")[0]))
 
         if "worker_items_count" not in st.session_state:
             st.session_state.worker_items_count = 1
 
         col_add, col_remove = st.columns(2)
         with col_add:
-            if st.button("Añadir tarea realizada"):
+            # Evitamos añadir más registros de los que hay tareas disponibles para evitar errores de selección
+            if st.button("Añadir tarea realizada") and st.session_state.worker_items_count < len(sorted_task_keys):
                 st.session_state.worker_items_count += 1
                 st.rerun()
         with col_remove:
@@ -85,10 +88,21 @@ def render_worker(supabase: Client, user: dict) -> None:
         st.caption(f"Registros a cargar: {st.session_state.worker_items_count}")
         
         registros = []
+        tareas_seleccionadas = []
 
         for i in range(st.session_state.worker_items_count):
             st.markdown(f"### Registro {i + 1}")
-            task_key = st.selectbox("Tarea realizada", list(task_map.keys()), key=f"task_{i}")
+            
+            # Filtramos las opciones para excluir las que ya han sido elegidas en bloques de registro anteriores
+            opciones_disponibles = [k for k in sorted_task_keys if k not in tareas_seleccionadas]
+            
+            if not opciones_disponibles:
+                st.info("Has seleccionado todas las tareas únicas disponibles.")
+                break
+
+            task_key = st.selectbox("Tarea realizada", opciones_disponibles, key=f"task_{i}")
+            # Registramos la tarea actual para que los siguientes selectores no la muestren
+            tareas_seleccionadas.append(task_key)
 
             # Usamos el texto visible en el selectbox para determinar los campos.
             # Esto ignora errores en la base de datos y se guía por lo que tú seleccionaste.
