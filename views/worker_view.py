@@ -53,7 +53,7 @@ def _render_dynamic_fields(task_name: str, idx: int) -> tuple[float | None, int 
 
 
     detalle = st.text_area("Detalle (opcional)", placeholder="Comentarios de lo realizado", key=f"detalle_{idx}")
-    return cantidad, minutes, cumplimiento, detalle, turno
+    return cantidad, minutos, cumplimiento, detalle, turno
 
 
 def render_worker(supabase: Client, user: dict) -> None:
