@@ -102,7 +102,7 @@ def add_login_video_background(video_file: str = "fondovideo.mp4"):
                     height: 100%;
                     object-fit: cover;
                     z-index: -1;
-                    filter: blur(10px) brightness(0.4);
+                    filter: brightness(0.5);
                 }}
                 .stApp {{
                     background: none !important;
