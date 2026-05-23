@@ -24,7 +24,27 @@ def render_admin_sidebar(user: dict, logout_func):
         _render_user_profile(user)
         st.divider()
         st.markdown("### 📊 Gestión de Operaciones")
-        st.caption("Usa el menú inferior para navegar entre las secciones de control.")
+        
+        # Inicializar el estado del menú si no existe
+        if "admin_menu" not in st.session_state:
+            st.session_state.admin_menu = "Usuarios"
+
+        # Botones de navegación en el sidebar
+        if st.button("👥 Usuarios", use_container_width=True, 
+                    type="primary" if st.session_state.admin_menu == "Usuarios" else "secondary"):
+            st.session_state.admin_menu = "Usuarios"
+            st.rerun()
+            
+        if st.button("📝 Tareas", use_container_width=True, 
+                    type="primary" if st.session_state.admin_menu == "Tareas" else "secondary"):
+            st.session_state.admin_menu = "Tareas"
+            st.rerun()
+            
+        if st.button("📊 Realizadas / Puntos", use_container_width=True, 
+                    type="primary" if st.session_state.admin_menu == "Realizadas / Puntos" else "secondary"):
+            st.session_state.admin_menu = "Realizadas / Puntos"
+            st.rerun()
+
         _render_logout_section(logout_func)
 
 def render_worker_sidebar(user: dict, logout_func):

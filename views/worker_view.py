@@ -1,4 +1,5 @@
-﻿from datetime import date
+﻿from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -52,19 +53,11 @@ def _render_dynamic_fields(task_name: str, idx: int) -> tuple[float | None, int 
 
 
     detalle = st.text_area("Detalle (opcional)", placeholder="Comentarios de lo realizado", key=f"detalle_{idx}")
-    return cantidad, minutos, cumplimiento, detalle, turno
+    return cantidad, minutes, cumplimiento, detalle, turno
 
 
 def render_worker(supabase: Client, user: dict) -> None:
-    tab1, tab2, tab3 = st.tabs(["Mis tareas", "Registrar actividad", "Historial"])
-
-    with tab1:
-        st.subheader("Tus tareas")
-        tasks = get_tasks_for_user(supabase, user)
-        if not tasks:
-            st.info("No hay tareas asignadas por el momento.")
-        else:
-            st.dataframe(pd.DataFrame(tasks), width="stretch")
+    tab2, tab3 = st.tabs(["Registrar actividad", "Historial"])
 
     with tab2:
         st.subheader("Registrar lo realizado")
@@ -90,9 +83,7 @@ def render_worker(supabase: Client, user: dict) -> None:
                 st.rerun()
 
         st.caption(f"Registros a cargar: {st.session_state.worker_items_count}")
-
-        # Eliminamos st.form para permitir que la interfaz reaccione al selectbox inmediatamente
-        fecha = st.date_input("Fecha", value=date.today())
+        
         registros = []
 
         for i in range(st.session_state.worker_items_count):
@@ -126,6 +117,31 @@ def render_worker(supabase: Client, user: dict) -> None:
             guardados_bd = 0
             errores = 0
             last_error = ""
+            
+            # Capturamos el momento exacto en horario Perú Lima
+            lima_tz = ZoneInfo("America/Lima")
+            now_lima = datetime.now(lima_tz)
+            today_str = now_lima.date().isoformat()
+
+            # 1. Validar en el lote actual: Si hay un turno completo, no debe haber más registros
+            has_full_shift_in_batch = any(item.get("turno") == "Turno mañana y tarde" for item in registros)
+            
+            if has_full_shift_in_batch and len(registros) > 1:
+                st.error("Si seleccionas 'Turno mañana y tarde', no puedes registrar otras actividades el mismo día.")
+                return
+
+            # 2. Validar contra la base de datos (registros ya existentes hoy)
+            existing_logs = list_worker_activity_logs(supabase, user.get("id"))
+            logs_today = [l for l in existing_logs if str(l.get("fecha_registro")) == today_str]
+            
+            if logs_today:
+                if has_full_shift_in_batch:
+                    st.error("No puedes registrar un turno completo porque ya tienes actividades registradas hoy.")
+                    return
+                if any(l.get("turno") == "Turno mañana y tarde" for l in logs_today):
+                    st.error("Ya registraste un turno completo hoy. No puedes añadir más actividades.")
+                    return
+
             for item in registros:
                 try:
                     puntos = calculate_points(item["task_name"], item["cantidad"], item["minutos"], item["cumplimiento"])
@@ -138,13 +154,14 @@ def render_worker(supabase: Client, user: dict) -> None:
                         "trabajador_id": user.get("id"),
                         "tarea_id": task_map[item["task_key"]].get("id"),
                         "actividad_id": actividad_id,
-                        "fecha_registro": str(fecha),
+                        "fecha_registro": now_lima.date().isoformat(),
                         "cantidad": item["cantidad"],
                         "tiempo_minutos": item["minutos"],
                         "cumplimiento": item["cumplimiento"],
                         "detalle": (item["detalle"] or "").strip() or None,
                         "turno": item.get("turno"),
                         "puntos_obtenidos": puntos,
+                        "created_at": now_lima.isoformat(),
                     }
                     create_worker_activity_log(supabase, payload)
                     guardados_bd += 1
@@ -183,6 +200,23 @@ def render_worker(supabase: Client, user: dict) -> None:
             tarea_nombre = task_name_by_id.get(r.get("tarea_id"))
             actividad_nombre = activity_name_by_id.get(r.get("actividad_id"))
             
+            # --- CORRECCIÓN CRÍTICA DE HORARIO LIMA AL LEER DE SUPABASE ---
+            created_at_str = r.get("created_at")
+            fecha_display = str(r.get("fecha_registro") or "")
+            if created_at_str:
+                try:
+                    # Supabase devuelve el string con 'Z' o con offsets (+00:00). 
+                    # Reemplazar 'Z' asegura compatibilidad total al parsear.
+                    clean_timestamp = created_at_str.replace('Z', '+00:00')
+                    dt = datetime.fromisoformat(clean_timestamp)
+                    
+                    # Convertir explícitamente el objeto datetime a la zona de Lima
+                    dt_lima = dt.astimezone(ZoneInfo("America/Lima"))
+                    fecha_display = dt_lima.strftime("%d %b %y %H:%M:%S").title()
+                except Exception:
+                    pass
+            # -------------------------------------------------------------
+
             # Lógica para mostrar "Turno" en lugar de 1 o 2 en el historial
             final_name = actividad_nombre or tarea_nombre or ""
             tipo_act, _ = get_activity_capture_mode(final_name)
@@ -195,7 +229,7 @@ def render_worker(supabase: Client, user: dict) -> None:
 
             rows.append(
                 {
-                    "Fecha": r.get("fecha_registro"),
+                    "Fecha": fecha_display,
                     "Tarea": tarea_nombre,
                     "Actividad": final_name,
                     "Cantidad": str(val_cant) if val_cant is not None else "",

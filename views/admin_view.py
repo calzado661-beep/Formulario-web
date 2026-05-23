@@ -1,4 +1,7 @@
-﻿import pandas as pd
+﻿from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import pandas as pd
 import streamlit as st
 from supabase import Client
 from services.scoring import get_activity_capture_mode
@@ -16,7 +19,9 @@ from services.repositories import (
 
 
 def render_admin(supabase: Client) -> None:
-    menu = st.sidebar.radio("Panel", ["Usuarios", "Tareas", "Realizadas / Puntos"])
+    # Renderizar el contenido basado en la selección actual
+    menu = st.session_state.get("admin_menu", "Usuarios")
+
     if menu == "Usuarios":
         _users_crud(supabase)
     elif menu == "Tareas":
@@ -156,6 +161,17 @@ def _worker_points_panel(supabase: Client) -> None:
         tarea_nombre = task_name_by_id.get(r.get("tarea_id"))
         actividad_nombre = activity_name_by_id.get(r.get("actividad_id")) or tarea_nombre
         
+        # Formatear fecha para visualización (ej: 23 May 26 10:55:06)
+        created_at_str = r.get("created_at")
+        fecha_display = str(r.get("fecha_registro") or "")
+        if created_at_str:
+            try:
+                dt = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                dt_lima = dt.astimezone(ZoneInfo("America/Lima"))
+                fecha_display = dt_lima.strftime("%d %b %y %H:%M:%S").title()
+            except Exception:
+                pass
+
         # Traducción de cantidad a Turno si corresponde
         val_cant = r.get("cantidad")
         val_turno = r.get("turno")
@@ -167,7 +183,7 @@ def _worker_points_panel(supabase: Client) -> None:
 
         rows.append(
             {
-                "Fecha": r.get("fecha_registro"),
+                "Fecha": fecha_display,
                 "Trabajador": user_name_by_id.get(trabajador_id),
                 "Email": user_email_by_id.get(trabajador_id),
                 "Tarea": tarea_nombre,
@@ -181,15 +197,34 @@ def _worker_points_panel(supabase: Client) -> None:
         )
 
     df = pd.DataFrame(rows)
+
+    st.markdown("### Acumulado por trabajador")
     resumen = (
         df.groupby(["Trabajador", "Email"], dropna=False, as_index=False)["Puntos"]
         .sum()
         .sort_values("Puntos", ascending=False)
     )
-
-    st.markdown("### Acumulado por trabajador")
     st.dataframe(resumen, width="stretch")
     st.metric("Puntos totales registrados", f"{resumen['Puntos'].sum():.0f}")
 
-    st.markdown("### Detalle")
-    st.dataframe(df, width="stretch")
+    st.divider()
+    st.markdown("### 🔍 Detalle Individual por Trabajador")
+    
+    for worker in workers:
+        w_id = worker.get("id")
+        w_email = user_email_by_id.get(w_id)
+        w_name = user_name_by_id.get(w_id)
+        
+        # Filtrar datos del trabajador específico
+        worker_df = df[df["Email"] == w_email]
+        
+        if not worker_df.empty:
+            with st.expander(f"👤 {w_name} ({w_email}) - Total: {worker_df['Puntos'].sum():.1f} pts"):
+                st.write(f"**Actividades realizadas por {w_name}:**")
+                # Mostramos el detalle sin repetir el nombre y email en cada fila
+                st.dataframe(
+                    worker_df.drop(columns=["Trabajador", "Email"]), 
+                    use_container_width=True
+                )
+        else:
+            st.caption(f"ℹ️ {w_name} ({w_email}) no tiene registros todavía.")
