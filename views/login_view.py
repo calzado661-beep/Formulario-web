@@ -2,9 +2,11 @@
 from supabase import Client
 
 from services.repositories import verify_user
+from services.styles import add_login_video_background
 
 
 def render_login(supabase: Client) -> None:
+    add_login_video_background("fondovideo.mp4")
     st.title("Ingreso al sistema")
     st.caption("Roles soportados: administrador y trabajador")
 

@@ -1,4 +1,17 @@
+import base64
+import os
 import streamlit as st
+
+@st.cache_data
+def _get_base64_video(video_path: str) -> str | None:
+    """Lee un archivo de video y lo devuelve en formato base64."""
+    try:
+        if os.path.exists(video_path):
+            with open(video_path, "rb") as f:
+                return base64.b64encode(f.read()).decode()
+    except Exception:
+        pass
+    return None
 
 def apply_styles():
     """
@@ -72,3 +85,30 @@ def apply_styles():
             }
         </style>
     """, unsafe_allow_html=True)
+
+def add_login_video_background(video_file: str = "fondovideo.mp4"):
+    """
+    Añade un video de fondo para la pantalla de login.
+    """
+    video_b64 = _get_base64_video(video_file)
+    if video_b64:
+        st.markdown(f"""
+            <style>
+                #bgVideo {{
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    object-fit: cover;
+                    z-index: -1;
+                    filter: blur(10px) brightness(0.4);
+                }}
+                .stApp {{
+                    background: none !important;
+                }}
+            </style>
+            <video autoplay muted loop id="bgVideo">
+                <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+            </video>
+        """, unsafe_allow_html=True)
