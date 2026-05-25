@@ -10,7 +10,6 @@ from services.repositories import (
     create_task,
     create_user,
     delete_user,
-    list_activities_catalog,
     list_all_activity_logs,
     list_tasks,
     select_users,
@@ -117,6 +116,8 @@ def _tasks_panel(supabase: Client) -> None:
             descripcion = st.text_area("Descripción")
             estado = st.text_input("Estado", value="pendiente")
             asignado_a = st.text_input("Asignado a (id usuario)")
+            tipo_medicion = st.selectbox("Tipo de medición", ["cantidad", "tiempo", "cumplimiento", "turno"], index=0)
+            unidad_base = st.text_input("Unidad base (ej. pares, cajas, bultos)", placeholder="Opcional")
             crear = st.form_submit_button("Crear tarea")
 
         if crear:
@@ -124,6 +125,8 @@ def _tasks_panel(supabase: Client) -> None:
                 "titulo": titulo.strip(),
                 "descripcion": descripcion.strip(),
                 "estado": estado.strip(),
+                "tipo_medicion": tipo_medicion,
+                "unidad_base": unidad_base.strip() if unidad_base.strip() else None,
             }
             if asignado_a.strip().isdigit():
                 payload["asignado_a"] = int(asignado_a.strip())
@@ -148,8 +151,6 @@ def _worker_points_panel(supabase: Client) -> None:
     user_email_by_id = {u.get("id"): u.get("email") for u in workers}
     tasks = list_tasks(supabase)
     task_name_by_id = {t.get("id"): (t.get("nombre") or t.get("titulo") or f"Tarea {t.get('id')}") for t in tasks}
-    activities = list_activities_catalog(supabase)
-    activity_name_by_id = {a.get("id"): (a.get("actividad") or f"Actividad {a.get('id')}") for a in activities}
 
     rows = []
     for r in logs:
@@ -159,7 +160,7 @@ def _worker_points_panel(supabase: Client) -> None:
             continue
             
         tarea_nombre = task_name_by_id.get(r.get("tarea_id"))
-        actividad_nombre = activity_name_by_id.get(r.get("actividad_id")) or tarea_nombre
+        actividad_nombre = tarea_nombre
         
         # Formatear fecha para visualización (ej: 23 May 26 10:55:06)
         created_at_str = r.get("created_at")
@@ -208,23 +209,25 @@ def _worker_points_panel(supabase: Client) -> None:
     st.metric("Puntos totales registrados", f"{resumen['Puntos'].sum():.0f}")
 
     st.divider()
-    st.markdown("### 🔍 Detalle Individual por Trabajador")
     
-    for worker in workers:
-        w_id = worker.get("id")
-        w_email = user_email_by_id.get(w_id)
-        w_name = user_name_by_id.get(w_id)
-        
-        # Filtrar datos del trabajador específico
-        worker_df = df[df["Email"] == w_email]
-        
-        if not worker_df.empty:
-            with st.expander(f"👤 {w_name} ({w_email}) - Total: {worker_df['Puntos'].sum():.1f} pts"):
-                st.write(f"**Actividades realizadas por {w_name}:**")
-                # Mostramos el detalle sin repetir el nombre y email en cada fila
-                st.dataframe(
-                    worker_df.drop(columns=["Trabajador", "Email"]), 
-                    use_container_width=True
-                )
-        else:
-            st.caption(f"ℹ️ {w_name} ({w_email}) no tiene registros todavía.")
+    # Agrupamos los detalles en un contenedor con borde para aplicar el efecto de fondo
+    with st.container(border=True):
+        st.markdown("### 🔍 Detalle Individual por Trabajador")
+        for worker in workers:
+            w_id = worker.get("id")
+            w_email = user_email_by_id.get(w_id)
+            w_name = user_name_by_id.get(w_id)
+            
+            # Filtrar datos del trabajador específico
+            worker_df = df[df["Email"] == w_email]
+            
+            if not worker_df.empty:
+                with st.expander(f"👤 {w_name} ({w_email}) - Total: {worker_df['Puntos'].sum():.1f} pts"):
+                    st.write(f"**Actividades realizadas por {w_name}:**")
+                    # Mostramos el detalle sin repetir el nombre y email en cada fila
+                    st.dataframe(
+                        worker_df.drop(columns=["Trabajador", "Email"]), 
+                        use_container_width=True
+                    )
+            else:
+                st.caption(f"ℹ️ {w_name} ({w_email}) no tiene registros todavía.")

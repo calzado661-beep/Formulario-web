@@ -7,17 +7,16 @@ from supabase import Client
 
 from services.repositories import (
     create_worker_activity_log,
-    ensure_activity,
     get_tasks_for_user,
-    list_activities_catalog,
     list_tasks,
     list_worker_activity_logs,
 )
 from services.scoring import calculate_points, get_activity_capture_mode
 
 
-def _render_dynamic_fields(task_name: str, idx: int) -> tuple[float | None, int | None, bool | None, str, str | None]:
-    tipo, unidad = get_activity_capture_mode(task_name)
+def _render_dynamic_fields(task_name: str, idx: int, task_tipo: str = None, task_unidad: str = None) -> tuple[float | None, int | None, bool | None, str, str | None]:
+    # Si la tarea ya tiene un tipo definido en la BD, lo usamos; si no, lo inferimos por nombre
+    tipo, unidad = (task_tipo, task_unidad) if task_tipo else get_activity_capture_mode(task_name)
 
     cantidad = None
     minutos = None
@@ -107,8 +106,14 @@ def render_worker(supabase: Client, user: dict) -> None:
             # Usamos el texto visible en el selectbox para determinar los campos.
             # Esto ignora errores en la base de datos y se guía por lo que tú seleccionaste.
             clean_name = task_key.split(" - ", 1)[-1] if " - " in task_key else task_key
-            
-            cantidad, minutos, cumplimiento, detalle, turno = _render_dynamic_fields(clean_name, i)
+            selected_task = task_map[task_key]
+
+            cantidad, minutos, cumplimiento, detalle, turno = _render_dynamic_fields(
+                clean_name, 
+                i, 
+                task_tipo=selected_task.get("tipo_medicion"),
+                task_unidad=selected_task.get("unidad_base")
+            )
             
             registros.append(
                 {
@@ -131,6 +136,7 @@ def render_worker(supabase: Client, user: dict) -> None:
             guardados_bd = 0
             errores = 0
             last_error = ""
+            failed_payloads = []
             
             # Capturamos el momento exacto en horario Perú Lima
             lima_tz = ZoneInfo("America/Lima")
@@ -159,15 +165,11 @@ def render_worker(supabase: Client, user: dict) -> None:
             for item in registros:
                 try:
                     puntos = calculate_points(item["task_name"], item["cantidad"], item["minutos"], item["cumplimiento"])
-                    actividad_id = ensure_activity(supabase, item["task_name"])
-                    if not actividad_id:
-                        errores += 1
-                        continue
 
                     payload = {
                         "trabajador_id": user.get("id"),
                         "tarea_id": task_map[item["task_key"]].get("id"),
-                        "actividad_id": actividad_id,
+                        "actividad_nombre": item["task_name"],
                         "fecha_registro": now_lima.date().isoformat(),
                         "cantidad": item["cantidad"],
                         "tiempo_minutos": item["minutos"],
@@ -183,11 +185,20 @@ def render_worker(supabase: Client, user: dict) -> None:
                 except Exception as e:
                     errores += 1
                     last_error = str(e)
+                    failed_payloads.append(
+                        {
+                            "tarea": item.get("task_name"),
+                            "error": str(e),
+                        }
+                    )
 
             if guardados_bd:
                 st.success(f"Se guardaron {guardados_bd} registros en base de datos. Puntos totales: {total_puntos}")
             if errores:
                 st.error(f"{errores} registros fallaron. Error: {last_error}")
+                st.caption("Detalle del error de guardado:")
+                st.json(failed_payloads)
+                return
             st.session_state.worker_items_count = 1
             st.rerun()
 
@@ -203,16 +214,10 @@ def render_worker(supabase: Client, user: dict) -> None:
             t.get("id"): (t.get("nombre") or t.get("titulo") or f"Tarea {t.get('id')}")
             for t in task_rows
         }
-        activity_rows = list_activities_catalog(supabase)
-        activity_name_by_id = {
-            a.get("id"): a.get("actividad") or f"Actividad {a.get('id')}"
-            for a in activity_rows
-        }
 
         rows = []
         for r in logs:
             tarea_nombre = task_name_by_id.get(r.get("tarea_id"))
-            actividad_nombre = activity_name_by_id.get(r.get("actividad_id"))
             
             # --- CORRECCIÓN CRÍTICA DE HORARIO LIMA AL LEER DE SUPABASE ---
             created_at_str = r.get("created_at")
@@ -232,7 +237,7 @@ def render_worker(supabase: Client, user: dict) -> None:
             # -------------------------------------------------------------
 
             # Lógica para mostrar "Turno" en lugar de 1 o 2 en el historial
-            final_name = actividad_nombre or tarea_nombre or ""
+            final_name = tarea_nombre or ""
             tipo_act, _ = get_activity_capture_mode(final_name)
             val_cant = r.get("cantidad")
             val_turno = r.get("turno")

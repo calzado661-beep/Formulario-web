@@ -30,11 +30,42 @@ def apply_styles():
             
             /* Contenedor principal con fondo semi-transparente para legibilidad */
             .main .block-container {
-                background-color: rgba(255, 255, 255, 0.95);
+                background-color: rgba(255, 255, 255, 0.8);
+                backdrop-filter: blur(10px);
+                -webkit-backdrop-filter: blur(10px);
                 padding: 3rem;
                 border-radius: 1rem;
                 margin-top: 1.5rem;
                 box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            }
+
+            /* Estilo difuminado (glassmorphism) para los expanders de detalle de trabajadores */
+            div[data-testid="stExpander"] {
+                background-color: rgba(255, 255, 255, 0.2) !important;
+                backdrop-filter: none !important;
+                -webkit-backdrop-filter: none !important;
+                border-radius: 0.8rem !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            }
+
+            /* Estilo para los mensajes informativos de "sin registros" (st.caption) */
+            div[data-testid="stCaptionContainer"] {
+                background-color: rgba(255, 255, 255, 0.2) !important;
+                backdrop-filter: none !important;
+                -webkit-backdrop-filter: none !important;
+                padding: 0.6rem 1rem !important;
+                border-radius: 0.6rem !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                margin-bottom: 0.5rem !important;
+            }
+
+            /* Estilo para el contenedor agrupador de detalles (st.container con borde) */
+            div[data-testid="stVerticalBlockBorderWrapper"] {
+                background-color: rgba(255, 255, 255, 0.3) !important;
+                backdrop-filter: blur(20px) !important;
+                -webkit-backdrop-filter: blur(20px) !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                border-radius: 1rem !important;
             }
 
             /* Estilo personalizado para el Sidebar */

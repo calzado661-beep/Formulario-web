@@ -2,7 +2,6 @@ from typing import Any
 
 from supabase import Client
 
-from services.activity_catalog import ACTIVIDADES
 from services.scoring import get_activity_capture_mode
 from services.security import hash_password
 
@@ -91,64 +90,37 @@ def delete_user(supabase: Client, user_id: Any) -> None:
 def list_tasks(supabase: Client) -> list[dict[str, Any]]:
     return supabase.table("tarea").select("*").order("id", desc=False).execute().data or []
 
-
 def create_task(supabase: Client, payload: dict[str, Any]) -> None:
     supabase.table("tarea").insert(payload).execute()
 
-
-def list_activities_catalog(supabase: Client) -> list[dict[str, Any]]:
-    try:
-        data = supabase.table("actividades_catalogo").select("*").order("actividad", desc=False).execute().data or []
-        if data:
-            return data
-    except Exception:
-        pass
-    return [{"id": -i, **a} for i, a in enumerate(ACTIVIDADES, start=1)]
-
-
-def ensure_activity(supabase: Client, activity_name: str) -> int | None:
-    try:
-        # Limpiamos el nombre para buscar (quitando el ? si existe)
-        clean_search = activity_name.replace("?", "ó")
-        
-        found_data = (
-            supabase.table("actividades_catalogo")
-            .select("id, tipo_medicion")
-            .ilike("actividad", clean_search)
-            .limit(1)
-            .execute()
-            .data
-            or []
-        )
-
-        mode, unit = get_activity_capture_mode(activity_name)
-
-        if found_data:
-            act_id = int(found_data[0]["id"])
-            # Si el tipo guardado en BD no coincide con el que el código espera, lo corregimos
-            if found_data[0].get("tipo_medicion") != mode:
-                supabase.table("actividades_catalogo").update({"tipo_medicion": mode, "unidad_base": unit}).eq("id", act_id).execute()
-            return act_id
-
-        # Si no existe, la creamos usando el modo de captura detectado
-        payload = {
-            "actividad": clean_search,
-            "tipo_medicion": mode,
-            "unidad_base": unit,
-            "activo": True,
-        }
-        res = supabase.table("actividades_catalogo").insert(payload).execute()
-        created = res.data or []
-        if created:
-            return int(created[0]["id"])
-    except Exception as e:
-        # Elevamos la excepción para que la vista pueda capturar el mensaje de error de la BD
-        raise Exception(f"Error en catálogo: {str(e)}")
-    return None
-
-
 def create_worker_activity_log(supabase: Client, payload: dict[str, Any]) -> None:
-    supabase.table("registro_actividades").insert(payload).execute()
+    attempts: list[dict[str, Any]] = []
+    attempts.append(payload.copy())
+
+    no_activity_id = payload.copy()
+    no_activity_id.pop("actividad_id", None)
+    attempts.append(no_activity_id)
+
+    no_activity_name = payload.copy()
+    no_activity_name.pop("actividad_nombre", None)
+    attempts.append(no_activity_name)
+
+    minimal = payload.copy()
+    minimal.pop("actividad_id", None)
+    minimal.pop("actividad_nombre", None)
+    attempts.append(minimal)
+
+    last_err: Exception | None = None
+    for candidate in attempts:
+        try:
+            supabase.table("registro_actividades").insert(candidate).execute()
+            return
+        except Exception as e:
+            last_err = e
+            continue
+
+    if last_err:
+        raise last_err
 
 
 def list_worker_activity_logs(supabase: Client, trabajador_id: Any) -> list[dict[str, Any]]:
@@ -163,7 +135,28 @@ def list_worker_activity_logs(supabase: Client, trabajador_id: Any) -> list[dict
             or []
         )
     except Exception:
-        return []
+        try:
+            return (
+                supabase.table("registro_actividades")
+                .select("*")
+                .eq("trabajador_id", trabajador_id)
+                .order("created_at", desc=True)
+                .execute()
+                .data
+                or []
+            )
+        except Exception:
+            try:
+                return (
+                    supabase.table("registro_actividades")
+                    .select("*")
+                    .eq("trabajador_id", trabajador_id)
+                    .execute()
+                    .data
+                    or []
+                )
+            except Exception:
+                return []
 
 
 def list_all_activity_logs(supabase: Client) -> list[dict[str, Any]]:

@@ -18,20 +18,11 @@ create table if not exists public.tarea (
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.actividades_catalogo (
-  id bigserial primary key,
-  actividad text unique not null,
-  tipo_medicion text not null check (tipo_medicion in ('cantidad', 'tiempo', 'cumplimiento', 'mixto', 'turno')),
-  unidad_base text,
-  activo boolean not null default true,
-  created_at timestamptz not null default now()
-);
-
 create table if not exists public.registro_actividades (
   id bigserial primary key,
   trabajador_id bigint not null references public.usuarios(id) on delete cascade,
   tarea_id bigint not null references public.tarea(id) on delete cascade,
-  actividad_id bigint not null references public.actividades_catalogo(id) on delete restrict,
+  actividad_nombre text,
   fecha_registro date not null default current_date,
   cantidad numeric,
   tiempo_minutos integer,
