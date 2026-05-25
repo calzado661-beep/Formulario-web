@@ -111,7 +111,7 @@ def calculate_points(task_name: str, cantidad: float | None, tiempo_minutos: int
             return 6
         return 0
 
-    if "codificacion" in name:
+    if "codificacion" in name or "recepcion de guia" in name:
         return _points_by_threshold(float(cantidad or 0), [(15, 1), (50, 2), (100, 3), (150, 4), (300, 5), (350, 6), (400, 7), (450, 8), (500, 9), (600, 10)])
 
     if "micro inventario" in name:
@@ -139,7 +139,4 @@ def calculate_points(task_name: str, cantidad: float | None, tiempo_minutos: int
     for k, p in fixed.items():
         if k in name:
             return p if cumplimiento else 0
-    if "recepcion de guia" in name:
-        return 0
-
     return 1 if cumplimiento else 0
