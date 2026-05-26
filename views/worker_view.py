@@ -15,8 +15,14 @@ from services.scoring import calculate_points, get_activity_capture_mode
 
 
 def _render_dynamic_fields(task_name: str, idx: int, task_tipo: str = None, task_unidad: str = None) -> tuple[float | None, int | None, bool | None, str, str | None]:
-    # Si la tarea ya tiene un tipo definido en la BD, lo usamos; si no, lo inferimos por nombre
-    tipo, unidad = (task_tipo, task_unidad) if task_tipo else get_activity_capture_mode(task_name)
+    # Normalizamos tipo_medicion de BD (puede venir con espacios/saltos) y
+    # hacemos fallback por nombre si el tipo no es válido.
+    tipo_bd = (task_tipo or "").strip().lower()
+    tipos_validos = {"cantidad", "tiempo", "cumplimiento", "turno"}
+    if tipo_bd in tipos_validos:
+        tipo, unidad = tipo_bd, task_unidad
+    else:
+        tipo, unidad = get_activity_capture_mode(task_name)
 
     cantidad = None
     minutos = None

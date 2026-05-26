@@ -35,6 +35,7 @@ def get_activity_capture_mode(task_name: str) -> tuple[str, str | None]:
         "apoyo a tienda",
         "apoyo inter area", # _norm convierte inter-area en inter area
         "reposicion",
+        "repocicion",
         "clasificacion",
     ]
     if any(k in name for k in turno_tasks):
@@ -98,7 +99,7 @@ def calculate_points(task_name: str, cantidad: float | None, tiempo_minutos: int
         elif cantidad == 2: # turno mñn y tarde
             return 7
         return 0
-    if "reposicion" in name:
+    if "reposicion" in name or "repocicion" in name:
         if cantidad == 1: # turno mñn o tarde
             return 3
         elif cantidad == 2: # turno mñn y tarde
