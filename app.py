@@ -11,7 +11,7 @@ from services.sidebar import render_sidebar
 
 load_dotenv()
 
-st.set_page_config(page_title="Formulario por Roles", page_icon="🧾", layout="wide")
+st.set_page_config(page_title="Formulario por Roles", page_icon="🧾", layout="wide", initial_sidebar_state="expanded")
 
 def _get_env(name: str) -> str:
     value = os.getenv(name, "").strip()

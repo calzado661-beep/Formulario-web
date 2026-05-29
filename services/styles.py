@@ -19,6 +19,11 @@ def apply_styles():
     """
     st.markdown("""
         <style>
+            /* Ocultar el botón de colapsar el sidebar (hacerlo estático) */
+            [data-testid="collapsedControl"] {
+                display: none;
+            }
+
             /* Fondo general de la aplicación */
             .stApp {
                 background-image: url("https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=2069&auto=format&fit=crop");
