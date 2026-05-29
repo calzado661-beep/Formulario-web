@@ -70,10 +70,16 @@ def apply_styles():
 
             /* Estilo personalizado para el Sidebar */
             [data-testid="stSidebar"] {
-                background-color: rgba(255, 255, 255, 0.15);
-                backdrop-filter: blur(12px);
-                border-right: 2px solid #1e3a8a;
+                background-color: rgba(0, 0, 0, 0.6) !important;
+                backdrop-filter: blur(15px) !important;
+                -webkit-backdrop-filter: blur(15px) !important;
+                border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
                 padding-top: 1rem;
+            }
+            
+            /* Color de texto claro para legibilidad en el sidebar oscuro */
+            [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3, [data-testid="stSidebar"] p, [data-testid="stSidebar"] span, [data-testid="stSidebar"] label {
+                color: #ffffff !important;
             }
             
             /* Títulos */
