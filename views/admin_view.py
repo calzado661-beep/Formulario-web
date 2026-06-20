@@ -1,4 +1,5 @@
 ﻿from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -11,8 +12,11 @@ from services.repositories import (
     create_user,
     delete_user,
     list_all_activity_logs,
+    list_task_score_ranges,
     list_tasks,
     select_users,
+    set_task_score_ranges,
+    update_task,
     update_user,
 )
 
@@ -105,34 +109,246 @@ def _users_crud(supabase: Client) -> None:
                 st.rerun()
 
 
+def _render_quantity_ranges_form(prefix: str, existing_ranges: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    st.markdown("### Rangos de puntaje por cantidad (1 a 10)")
+    existing_ranges = existing_ranges or []
+
+    # Forzamos exactamente 10 rangos, uno por cada punto de 1 a 10.
+    ranges: list[dict[str, Any]] = []
+    for idx in range(10):
+        existing = existing_ranges[idx] if idx < len(existing_ranges) else {}
+        col_desde, col_hasta, col_puntos = st.columns([3, 3, 1])
+        punto_val = idx + 1
+        with col_desde:
+            cantidad_desde = st.number_input(
+                f"Punto {punto_val} - Desde",
+                min_value=0.0,
+                step=1.0,
+                value=float(existing.get("cantidad_desde") or 0.0),
+                key=f"{prefix}_desde_{idx}",
+            )
+        with col_hasta:
+            cantidad_hasta_str = st.text_input(
+                f"Punto {punto_val} - Hasta",
+                value=str(existing.get("cantidad_hasta") or ""),
+                placeholder="Dejar vacío para sin límite",
+                key=f"{prefix}_hasta_{idx}",
+            )
+            cantidad_hasta = float(cantidad_hasta_str) if cantidad_hasta_str.strip() else None
+        with col_puntos:
+            # Mostrar el punto (1..10) como campo deshabilitado para claridad
+            st.number_input(
+                f"Pts",
+                min_value=1,
+                max_value=10,
+                step=1,
+                value=punto_val,
+                key=f"{prefix}_puntos_{idx}",
+                disabled=True,
+            )
+
+        ranges.append(
+            {
+                "cantidad_desde": cantidad_desde,
+                "cantidad_hasta": cantidad_hasta,
+                "puntos": punto_val,
+            }
+        )
+
+    return ranges
+
+
 def _tasks_panel(supabase: Client) -> None:
     st.subheader("Gestión de tareas")
     tasks = list_tasks(supabase)
     st.dataframe(pd.DataFrame(tasks), width="stretch")
 
-    with st.expander("Crear tarea"):
+    tab1, tab2 = st.tabs(["Crear tarea", "Editar tarea"])
+
+    with tab1:
         with st.form("create_task"):
             titulo = st.text_input("Nombre de tarea")
             descripcion = st.text_area("Descripción")
             estado = st.text_input("Estado", value="pendiente")
             asignado_a = st.text_input("Asignado a (id usuario)")
-            tipo_medicion = st.selectbox("Tipo de medición", ["cantidad", "tiempo", "cumplimiento", "turno"], index=0)
-            unidad_base = st.text_input("Unidad base (ej. pares, cajas, bultos)", placeholder="Opcional")
+            tipo_medicion = st.selectbox(
+                "Tipo de medición",
+                ["cantidad", "cumplimiento", "tiempo", "turno"],
+                index=0,
+            )
+            unidad_base = st.text_input(
+                "Unidad base (ej. pares, cajas, bultos)", placeholder="Opcional"
+            )
+            puntaje_fijo = None
+            rangos = []
+
+            if tipo_medicion == "cantidad":
+                rangos = _render_quantity_ranges_form("create")
+            elif tipo_medicion == "cumplimiento":
+                puntaje_fijo = st.number_input(
+                    "Puntaje fijo",
+                    min_value=1,
+                    max_value=10,
+                    step=1,
+                    value=1,
+                    key="create_puntaje_fijo",
+                )
+
             crear = st.form_submit_button("Crear tarea")
 
         if crear:
-            payload = {
-                "titulo": titulo.strip(),
-                "descripcion": descripcion.strip(),
-                "estado": estado.strip(),
-                "tipo_medicion": tipo_medicion,
-                "unidad_base": unidad_base.strip() if unidad_base.strip() else None,
-            }
-            if asignado_a.strip().isdigit():
-                payload["asignado_a"] = int(asignado_a.strip())
-            create_task(supabase, payload)
-            st.success("Tarea creada.")
-            st.rerun()
+            if tipo_medicion == "cantidad":
+                invalid_range = any(
+                    r["cantidad_hasta"] is not None and r["cantidad_hasta"] < r["cantidad_desde"]
+                    for r in rangos
+                )
+                if invalid_range:
+                    st.error("Cada rango debe tener 'hasta' mayor o igual a 'desde'.")
+                else:
+                    payload = {
+                        "titulo": titulo.strip(),
+                        "descripcion": descripcion.strip(),
+                        "estado": estado.strip(),
+                        "tipo_medicion": tipo_medicion,
+                        "unidad_base": unidad_base.strip() if unidad_base.strip() else None,
+                    }
+                    if asignado_a.strip().isdigit():
+                        payload["asignado_a"] = int(asignado_a.strip())
+                    created = create_task(supabase, payload)
+                    if created and created.get("id"):
+                        set_task_score_ranges(supabase, created["id"], rangos)
+                    st.success("Tarea creada.")
+                    st.rerun()
+            else:
+                payload = {
+                    "titulo": titulo.strip(),
+                    "descripcion": descripcion.strip(),
+                    "estado": estado.strip(),
+                    "tipo_medicion": tipo_medicion,
+                    "unidad_base": unidad_base.strip() if unidad_base.strip() else None,
+                    "puntaje_fijo": puntaje_fijo if tipo_medicion == "cumplimiento" else None,
+                }
+                if asignado_a.strip().isdigit():
+                    payload["asignado_a"] = int(asignado_a.strip())
+                create_task(supabase, payload)
+                st.success("Tarea creada.")
+                st.rerun()
+
+    with tab2:
+        if not tasks:
+            st.info("No hay tareas para editar.")
+            return
+
+        # Construir mapa de tareas mostrando el nombre/título cuando exista
+        task_entries: list[tuple[str, dict]] = []
+        for t in tasks:
+            title = t.get("nombre") or t.get("titulo") or ""
+            key = f"{t.get('id')} - {title}"
+            task_entries.append((key, t))
+
+        # Ordenar por ID para consistencia en la UI
+        task_entries.sort(key=lambda x: int(str(x[0]).split(" - ")[0]))
+        task_map = {k: v for k, v in task_entries}
+
+        selected_key = st.selectbox("Selecciona una tarea", list(task_map.keys()), key="edit_task_select")
+        selected_task = task_map[selected_key]
+
+        # Normalizar tipo_medicion antiguo 'fijo' a 'cumplimiento' para compatibilidad
+        tipo_raw = str(selected_task.get("tipo_medicion", "cantidad")).strip().lower()
+        if tipo_raw == "fijo":
+            tipo_raw = "cumplimiento"
+
+        existing_ranges = []
+        if tipo_raw == "cantidad":
+            existing_ranges = list_task_score_ranges(supabase, selected_task.get("id"))
+
+        # Mostrar el selector fuera del form para que la UI reevalúe y muestre los campos correspondientes
+        tipo_options = ["cantidad", "cumplimiento", "tiempo", "turno"]
+        tipo_for_index = tipo_raw if tipo_raw in tipo_options else "cantidad"
+        tipo_medicion_value = st.selectbox(
+            "Tipo de medición",
+            tipo_options,
+            index=tipo_options.index(tipo_for_index),
+            key="edit_task_tipo",
+        )
+
+        with st.form("edit_task"):
+            # Prefill fields using either 'nombre' or 'titulo' for compatibility
+            titulo_value = selected_task.get("nombre") or selected_task.get("titulo") or ""
+            titulo = st.text_input("Nombre de tarea", value=str(titulo_value))
+            descripcion = st.text_area("Descripción", value=str(selected_task.get("descripcion") or selected_task.get("descripcion") or ""))
+            estado = st.text_input(
+                "Estado",
+                value=str(selected_task.get("estado", "pendiente")),
+            )
+            # 'Asignado a' no se edita desde aquí según requerimiento
+            # Determinar índice inicial asegurando que 'fijo' esté mapeado a 'cumplimiento'
+            tipo_options = ["cantidad", "cumplimiento", "tiempo", "turno"]
+            tipo_for_index = tipo_raw if tipo_raw in tipo_options else "cantidad"
+            # Usar la selección realizada fuera del formulario
+            tipo_medicion = tipo_medicion_value
+            unidad_base = st.text_input(
+                "Unidad base (ej. pares, cajas, bultos)",
+                value=str(selected_task.get("unidad_base") or selected_task.get("unidad") or ""),
+                placeholder="Opcional",
+            )
+            puntaje_fijo = None
+            rangos = []
+
+            if tipo_medicion == "cantidad":
+                rangos = _render_quantity_ranges_form("edit", existing_ranges)
+            elif tipo_medicion == "cumplimiento":
+                puntaje_default = int(selected_task.get("puntaje_fijo") or selected_task.get("puntaje") or 1)
+                puntaje_fijo = st.number_input(
+                    "Puntaje fijo",
+                    min_value=1,
+                    max_value=10,
+                    step=1,
+                    value=puntaje_default,
+                    key="edit_puntaje_fijo",
+                )
+
+            guardar = st.form_submit_button("Guardar cambios")
+
+        if guardar:
+            if tipo_medicion == "cantidad":
+                invalid_range = any(
+                    r["cantidad_hasta"] is not None and r["cantidad_hasta"] < r["cantidad_desde"]
+                    for r in rangos
+                )
+                if invalid_range:
+                    st.error("Cada rango debe tener 'hasta' mayor o igual a 'desde'.")
+                else:
+                    changes = {
+                        "titulo": titulo.strip(),
+                        "descripcion": descripcion.strip(),
+                        "estado": estado.strip(),
+                        "tipo_medicion": tipo_medicion,
+                        "unidad_base": unidad_base.strip() if unidad_base.strip() else None,
+                        "puntaje_fijo": None,
+                    }
+                    if asignado_a.strip().isdigit():
+                        changes["asignado_a"] = int(asignado_a.strip())
+                    update_task(supabase, selected_task["id"], changes, selected_task)
+                    set_task_score_ranges(supabase, selected_task["id"], rangos)
+                    st.success("Tarea actualizada.")
+                    st.rerun()
+            else:
+                changes = {
+                    "titulo": titulo.strip(),
+                    "descripcion": descripcion.strip(),
+                    "estado": estado.strip(),
+                    "tipo_medicion": tipo_medicion,
+                    "unidad_base": unidad_base.strip() if unidad_base.strip() else None,
+                    "puntaje_fijo": puntaje_fijo if tipo_medicion == "cumplimiento" else None,
+                }
+                if asignado_a.strip().isdigit():
+                    changes["asignado_a"] = int(asignado_a.strip())
+                update_task(supabase, selected_task["id"], changes, selected_task)
+                if tipo_medicion != "cantidad":
+                    set_task_score_ranges(supabase, selected_task["id"], [])
+                st.success("Tarea actualizada.")
+                st.rerun()
 
 
 def _worker_points_panel(supabase: Client) -> None:

@@ -13,10 +13,25 @@ create table if not exists public.tarea (
   titulo text not null,
   descripcion text,
   estado text not null default 'pendiente',
+  tipo_medicion text not null default 'cantidad',
+  unidad_base text,
+  puntaje_fijo integer,
   asignado_a bigint references public.usuarios(id) on delete set null,
   email_trabajador text,
   created_at timestamptz not null default now()
 );
+
+create table if not exists public.rangos_puntaje (
+  id bigserial primary key,
+  tarea_id bigint not null references public.tarea(id) on delete cascade,
+  cantidad_desde numeric,
+  cantidad_hasta numeric,
+  puntos integer not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists idx_rangos_puntaje_tarea_range
+  on public.rangos_puntaje(tarea_id, cantidad_desde, cantidad_hasta);
 
 create table if not exists public.registro_actividades (
   id bigserial primary key,

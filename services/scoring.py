@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from typing import Any
 import unicodedata
 
 
@@ -77,8 +78,36 @@ def get_activity_capture_mode(task_name: str) -> tuple[str, str | None]:
     return "cantidad", "unidades"
 
 
-def calculate_points(task_name: str, cantidad: float | None, tiempo_minutos: int | None, cumplimiento: bool | None) -> int:
+def calculate_points(task: dict[str, Any] | None, cantidad: float | None, tiempo_minutos: int | None, cumplimiento: bool | None) -> int:
+    task_name = str(task.get("titulo") if task else "")
     name = _norm(task_name)
+    tipo_medicion = str(task.get("tipo_medicion") if task else "").strip().lower()
+
+    # 'cumplimiento' (fixed) uses puntaje_fijo
+    if tipo_medicion == "cumplimiento":
+        puntaje = int(task.get("puntaje_fijo") or 0)
+        return puntaje if cumplimiento else 0
+
+    if tipo_medicion == "cantidad":
+        ranges = task.get("rangos_puntaje") if task else None
+        if ranges:
+            for rango in ranges:
+                desde = float(rango.get("cantidad_desde") or 0)
+                hasta = rango.get("cantidad_hasta")
+                puntos = int(rango.get("puntos") or 0)
+                if hasta is None:
+                    if float(cantidad or 0) >= desde:
+                        return puntos
+                else:
+                    try:
+                        hasta_val = float(hasta)
+                    except Exception:
+                        hasta_val = None
+                    if hasta_val is None:
+                        if float(cantidad or 0) >= desde:
+                            return puntos
+                    elif float(cantidad or 0) >= desde and float(cantidad or 0) <= hasta_val:
+                        return puntos
 
     # New: Points for turno-based activities
     if "visitar tienda" in name or "visita de tienda" in name:

@@ -8,6 +8,7 @@ from supabase import Client
 from services.repositories import (
     create_worker_activity_log,
     get_tasks_for_user,
+    list_task_score_ranges,
     list_tasks,
     list_worker_activity_logs,
 )
@@ -39,11 +40,11 @@ def _render_dynamic_fields(task_name: str, idx: int, task_tipo: str = None, task
         st.caption(f"Tiempo total: {minutos} min")
         cantidad = 0.0 # Las tareas de tiempo no tienen una cantidad explícita
         cumplimiento = True # Para tareas de tiempo, se asume cumplimiento si se registra un tiempo
-    elif tipo == "cumplimiento":
-        # Para tareas de cumplimiento, la cantidad es fija en 1 y no se muestra el input
+    if tipo == "cumplimiento":
+        # Para tareas de cumplimiento (fijas), la cantidad es fija en 1 y no se muestra el input
         cantidad = 1.0
         cumplimiento = st.checkbox("Cumplido", value=True, key=f"cumpl_{idx}")
-        # El campo de cantidad no se renderiza para este tipo de actividad
+        st.caption("Esta tarea usa puntaje fijo definido en la tarea.")
     elif tipo == "turno": # New type for turno selection
         turno_option = st.radio(
             "Selecciona el turno",
@@ -170,7 +171,17 @@ def render_worker(supabase: Client, user: dict) -> None:
 
             for item in registros:
                 try:
-                    puntos = calculate_points(item["task_name"], item["cantidad"], item["minutos"], item["cumplimiento"])
+                    current_task = task_map[item["task_key"]].copy()
+                    if str(current_task.get("tipo_medicion", "")).lower() == "cantidad":
+                        current_task["rangos_puntaje"] = list_task_score_ranges(
+                            supabase, current_task.get("id")
+                        )
+                    puntos = calculate_points(
+                        current_task,
+                        item["cantidad"],
+                        item["minutos"],
+                        item["cumplimiento"],
+                    )
 
                     payload = {
                         "trabajador_id": user.get("id"),
