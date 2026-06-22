@@ -1,7 +1,10 @@
-﻿create table if not exists public.usuarios (
+-- Esquema base para la versión actual de la app
+-- Pensado para una base nueva en Supabase.
+
+create table if not exists public.usuarios (
   id bigserial primary key,
   nombre text not null,
-  email text unique not null,
+  email text not null unique,
   password_hash text not null,
   rol text not null check (rol in ('administrador', 'trabajador')),
   activo boolean not null default true,
@@ -13,25 +16,39 @@ create table if not exists public.tarea (
   titulo text not null,
   descripcion text,
   estado text not null default 'pendiente',
-  tipo_medicion text not null default 'cantidad',
+  tipo_medicion text not null default 'cantidad'
+    check (tipo_medicion in ('cantidad', 'cumplimiento', 'tiempo', 'turno')),
   unidad_base text,
   puntaje_fijo integer,
+  puntaje_turno_simple integer,
+  puntaje_turno_completo integer,
   asignado_a bigint references public.usuarios(id) on delete set null,
   email_trabajador text,
   created_at timestamptz not null default now()
 );
 
+create index if not exists idx_tarea_asignado_a
+  on public.tarea(asignado_a);
+
+create index if not exists idx_tarea_estado
+  on public.tarea(estado);
+
 create table if not exists public.rangos_puntaje (
   id bigserial primary key,
   tarea_id bigint not null references public.tarea(id) on delete cascade,
-  cantidad_desde numeric,
+  cantidad_desde numeric not null,
   cantidad_hasta numeric,
-  puntos integer not null,
-  created_at timestamptz not null default now()
+  puntos integer not null check (puntos between 1 and 10),
+  created_at timestamptz not null default now(),
+  constraint chk_rangos_puntaje_hasta
+    check (cantidad_hasta is null or cantidad_hasta >= cantidad_desde)
 );
 
 create unique index if not exists idx_rangos_puntaje_tarea_range
   on public.rangos_puntaje(tarea_id, cantidad_desde, cantidad_hasta);
+
+create index if not exists idx_rangos_puntaje_tarea_id
+  on public.rangos_puntaje(tarea_id);
 
 create table if not exists public.registro_actividades (
   id bigserial primary key,
@@ -44,9 +61,12 @@ create table if not exists public.registro_actividades (
   cumplimiento boolean,
   detalle text,
   turno text,
-  puntos_obtenidos numeric,
+  puntos_obtenidos numeric not null default 0,
   created_at timestamptz not null default now()
 );
 
 create index if not exists idx_registro_actividades_trabajador_fecha
   on public.registro_actividades(trabajador_id, fecha_registro desc);
+
+create index if not exists idx_registro_actividades_tarea_id
+  on public.registro_actividades(tarea_id);

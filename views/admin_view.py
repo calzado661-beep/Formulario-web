@@ -12,6 +12,7 @@ from services.repositories import (
     create_user,
     delete_user,
     list_all_activity_logs,
+    delete_task_score_ranges,
     list_task_score_ranges,
     list_tasks,
     select_users,
@@ -109,59 +110,265 @@ def _users_crud(supabase: Client) -> None:
                 st.rerun()
 
 
-def _render_quantity_ranges_form(prefix: str, existing_ranges: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-    st.markdown("### Rangos de puntaje por cantidad (1 a 10)")
+def _quantity_threshold_defaults(existing_ranges: list[dict[str, Any]] | None = None) -> list[float]:
+    thresholds = [0.0] * 10
     existing_ranges = existing_ranges or []
 
-    # Forzamos exactamente 10 rangos, uno por cada punto de 1 a 10.
-    ranges: list[dict[str, Any]] = []
-    for idx in range(10):
-        existing = existing_ranges[idx] if idx < len(existing_ranges) else {}
-        col_desde, col_hasta, col_puntos = st.columns([3, 3, 1])
-        punto_val = idx + 1
-        with col_desde:
-            cantidad_desde = st.number_input(
-                f"Punto {punto_val} - Desde",
-                min_value=0.0,
-                step=1.0,
-                value=float(existing.get("cantidad_desde") or 0.0),
-                key=f"{prefix}_desde_{idx}",
-            )
-        with col_hasta:
-            cantidad_hasta_str = st.text_input(
-                f"Punto {punto_val} - Hasta",
-                value=str(existing.get("cantidad_hasta") or ""),
-                placeholder="Dejar vacío para sin límite",
-                key=f"{prefix}_hasta_{idx}",
-            )
-            cantidad_hasta = float(cantidad_hasta_str) if cantidad_hasta_str.strip() else None
-        with col_puntos:
-            # Mostrar el punto (1..10) como campo deshabilitado para claridad
-            st.number_input(
-                f"Pts",
-                min_value=1,
-                max_value=10,
-                step=1,
-                value=punto_val,
-                key=f"{prefix}_puntos_{idx}",
-                disabled=True,
-            )
+    for rango in existing_ranges:
+        try:
+            punto = int(rango.get("puntos") or 0)
+        except Exception:
+            punto = 0
+        if not 1 <= punto <= 10:
+            continue
+        try:
+            thresholds[punto - 1] = float(rango.get("cantidad_desde") or 0.0)
+        except Exception:
+            thresholds[punto - 1] = 0.0
 
+    for idx in range(1, 10):
+        if thresholds[idx] < thresholds[idx - 1]:
+            thresholds[idx] = thresholds[idx - 1]
+
+    return thresholds
+
+
+def _thresholds_to_ranges(thresholds: list[float]) -> list[dict[str, Any]]:
+    ranges: list[dict[str, Any]] = []
+    for idx, threshold in enumerate(thresholds, start=1):
         ranges.append(
             {
-                "cantidad_desde": cantidad_desde,
-                "cantidad_hasta": cantidad_hasta,
-                "puntos": punto_val,
+                "cantidad_desde": float(threshold),
+                "cantidad_hasta": None,
+                "puntos": idx,
             }
         )
-
     return ranges
+
+
+def _render_quantity_matrix(prefix: str, existing_ranges: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    st.markdown("#### Matriz de puntajes por cantidad")
+    st.caption("Cada columna define la cantidad mínima requerida para obtener ese puntaje.")
+
+    thresholds = _quantity_threshold_defaults(existing_ranges)
+    header_cols = st.columns([3] + [1] * 10)
+    with header_cols[0]:
+        st.markdown("**Actividad**")
+    for idx in range(10):
+        with header_cols[idx + 1]:
+            st.markdown(f"**{idx + 1} punto**")
+
+    row_cols = st.columns([3] + [1] * 10)
+    with row_cols[0]:
+        st.markdown("Cantidad")
+    for idx in range(10):
+        with row_cols[idx + 1]:
+            thresholds[idx] = st.number_input(
+                " ",
+                min_value=0.0,
+                step=1.0,
+                value=float(thresholds[idx]),
+                key=f"{prefix}_cantidad_{idx + 1}",
+                label_visibility="collapsed",
+            )
+
+    for idx in range(1, 10):
+        if thresholds[idx] < thresholds[idx - 1]:
+            st.error("Los valores de cantidad deben ir de menor a mayor de 1 a 10 puntos.")
+            break
+
+    return _thresholds_to_ranges(thresholds)
+
+
+def _render_fixed_matrix(prefix: str, default_score: int) -> int:
+    st.markdown("#### Matriz de puntaje fijo")
+    st.caption("Marca una sola columna: esa será la puntuación fija de la tarea.")
+
+    cols = st.columns([3] + [1] * 10)
+    with cols[0]:
+        st.markdown("**Actividad**")
+    for idx in range(10):
+        with cols[idx + 1]:
+            label = "✓" if default_score == idx + 1 else ""
+            st.markdown(f"**{idx + 1} punto**<br>{label}", unsafe_allow_html=True)
+
+    selected = st.selectbox(
+        "Puntaje fijo",
+        list(range(1, 11)),
+        index=max(0, min(9, default_score - 1)),
+        key=f"{prefix}_puntaje_fijo_select",
+    )
+    return int(selected)
+
+
+def _render_turno_matrix(prefix: str, default_simple: int, default_complete: int) -> tuple[int, int]:
+    st.markdown("#### Matriz de puntaje por turno")
+    st.caption("Se marcan dos columnas: una para turno simple y otra para turno completo.")
+
+    cols = st.columns([3] + [1] * 10)
+    with cols[0]:
+        st.markdown("**Actividad**")
+    for idx in range(10):
+        with cols[idx + 1]:
+            marker = []
+            if default_simple == idx + 1:
+                marker.append("S")
+            if default_complete == idx + 1:
+                marker.append("C")
+            st.markdown(f"**{idx + 1} punto**<br>{' / '.join(marker)}", unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        simple = st.selectbox(
+            "Puntaje turno simple",
+            list(range(1, 11)),
+            index=max(0, min(9, default_simple - 1)),
+            key=f"{prefix}_puntaje_turno_simple_select",
+        )
+    with c2:
+        completo = st.selectbox(
+            "Puntaje turno completo",
+            list(range(1, 11)),
+            index=max(0, min(9, default_complete - 1)),
+            key=f"{prefix}_puntaje_turno_completo_select",
+        )
+
+    return int(simple), int(completo)
+
+
+def _render_score_summary(tasks: list[dict[str, Any]], supabase: Client) -> None:
+    rows: list[dict[str, Any]] = []
+    for task in tasks:
+        tipo = _normalize_tipo_medicion(task.get("tipo_medicion"))
+        row: dict[str, Any] = {
+            "Actividad": _task_title(task),
+            "Tipo de Puntaje": tipo,
+        }
+
+        for idx in range(1, 11):
+            row[f"{idx} punto"] = ""
+
+        if tipo == "cantidad":
+            ranges = list_task_score_ranges(supabase, task.get("id"))
+            thresholds = _quantity_threshold_defaults(ranges)
+            for idx, threshold in enumerate(thresholds, start=1):
+                row[f"{idx} punto"] = threshold
+        elif tipo == "fijo":
+            score = int(task.get("puntaje_fijo") or task.get("puntaje") or 0)
+            if 1 <= score <= 10:
+                row[f"{score} punto"] = "✓"
+        elif tipo == "turno":
+            simple = int(task.get("puntaje_turno_simple") or task.get("puntos_turno_simple") or 0)
+            completo = int(task.get("puntaje_turno_completo") or task.get("puntos_turno_completo") or 0)
+            if 1 <= simple <= 10:
+                row[f"{simple} punto"] = "S"
+            if 1 <= completo <= 10:
+                row[f"{completo} punto"] = "C"
+
+        rows.append(row)
+
+    st.markdown("### Configuración de puntajes")
+    if rows:
+        st.dataframe(pd.DataFrame(rows), width="stretch")
+    else:
+        st.info("No hay tareas configuradas todavía.")
+
+
+def _normalize_tipo_medicion(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"fijo", "cumplimiento"}:
+        return "fijo"
+    if raw in {"cantidad", "tiempo", "turno"}:
+        return raw
+    return "cantidad"
+
+
+def _task_title(task: dict[str, Any]) -> str:
+    return str(task.get("titulo") or task.get("nombre") or "")
+
+
+def _prefill_task_points(task: dict[str, Any]) -> dict[str, int]:
+    return {
+        "puntaje_fijo": int(task.get("puntaje_fijo") or task.get("puntaje") or 1),
+        "puntaje_turno_simple": int(
+            task.get("puntaje_turno_simple")
+            or task.get("puntos_turno_simple")
+            or 1
+        ),
+        "puntaje_turno_completo": int(
+            task.get("puntaje_turno_completo")
+            or task.get("puntos_turno_completo")
+            or 1
+        ),
+    }
+
+
+def _render_measurement_fields(
+    tipo_medicion: str,
+    prefix: str,
+    task: dict[str, Any] | None = None,
+    existing_ranges: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], int | None, int | None, int | None]:
+    ranges: list[dict[str, Any]] = []
+    puntaje_fijo: int | None = None
+    puntaje_turno_simple: int | None = None
+    puntaje_turno_completo: int | None = None
+
+    defaults = _prefill_task_points(task or {}) if task else {
+        "puntaje_fijo": 1,
+        "puntaje_turno_simple": 1,
+        "puntaje_turno_completo": 1,
+    }
+
+    if tipo_medicion == "cantidad":
+        ranges = _render_quantity_matrix(prefix, existing_ranges)
+    elif tipo_medicion == "fijo":
+        puntaje_fijo = _render_fixed_matrix(prefix, int(defaults["puntaje_fijo"]))
+    elif tipo_medicion == "turno":
+        puntaje_turno_simple, puntaje_turno_completo = _render_turno_matrix(
+            prefix,
+            int(defaults["puntaje_turno_simple"]),
+            int(defaults["puntaje_turno_completo"]),
+        )
+
+    return ranges, puntaje_fijo, puntaje_turno_simple, puntaje_turno_completo
+
+
+def _build_task_payload(
+    titulo: str,
+    descripcion: str,
+    estado: str,
+    tipo_medicion: str,
+    unidad_base: str,
+    puntaje_fijo: int | None = None,
+    puntaje_turno_simple: int | None = None,
+    puntaje_turno_completo: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "titulo": titulo.strip(),
+        "descripcion": descripcion.strip(),
+        "estado": estado.strip(),
+        "tipo_medicion": tipo_medicion,
+        "unidad_base": unidad_base.strip() if unidad_base.strip() else None,
+        "puntaje_fijo": None,
+        "puntaje_turno_simple": None,
+        "puntaje_turno_completo": None,
+    }
+
+    if tipo_medicion in {"cumplimiento", "fijo"}:
+        payload["tipo_medicion"] = "fijo"
+        payload["puntaje_fijo"] = puntaje_fijo
+    elif tipo_medicion == "turno":
+        payload["puntaje_turno_simple"] = puntaje_turno_simple
+        payload["puntaje_turno_completo"] = puntaje_turno_completo
+
+    return payload
 
 
 def _tasks_panel(supabase: Client) -> None:
     st.subheader("Gestión de tareas")
     tasks = list_tasks(supabase)
-    st.dataframe(pd.DataFrame(tasks), width="stretch")
+    _render_score_summary(tasks, supabase)
 
     tab1, tab2 = st.tabs(["Crear tarea", "Editar tarea"])
 
@@ -171,47 +378,33 @@ def _tasks_panel(supabase: Client) -> None:
             descripcion = st.text_area("Descripción")
             estado = st.text_input("Estado", value="pendiente")
             asignado_a = st.text_input("Asignado a (id usuario)")
-            tipo_medicion = st.selectbox(
-                "Tipo de medición",
-                ["cantidad", "cumplimiento", "tiempo", "turno"],
-                index=0,
-            )
+            tipo_medicion = st.selectbox("Tipo de medición", ["cantidad", "fijo", "turno", "tiempo"], index=0)
             unidad_base = st.text_input(
                 "Unidad base (ej. pares, cajas, bultos)", placeholder="Opcional"
             )
-            puntaje_fijo = None
-            rangos = []
-
-            if tipo_medicion == "cantidad":
-                rangos = _render_quantity_ranges_form("create")
-            elif tipo_medicion == "cumplimiento":
-                puntaje_fijo = st.number_input(
-                    "Puntaje fijo",
-                    min_value=1,
-                    max_value=10,
-                    step=1,
-                    value=1,
-                    key="create_puntaje_fijo",
-                )
+            rangos, puntaje_fijo, puntaje_turno_simple, puntaje_turno_completo = _render_measurement_fields(
+                tipo_medicion,
+                "create",
+            )
 
             crear = st.form_submit_button("Crear tarea")
 
         if crear:
             if tipo_medicion == "cantidad":
                 invalid_range = any(
-                    r["cantidad_hasta"] is not None and r["cantidad_hasta"] < r["cantidad_desde"]
-                    for r in rangos
+                    float(rangos[idx]["cantidad_desde"]) < float(rangos[idx - 1]["cantidad_desde"])
+                    for idx in range(1, len(rangos))
                 )
                 if invalid_range:
-                    st.error("Cada rango debe tener 'hasta' mayor o igual a 'desde'.")
+                    st.error("Los valores de cantidad deben ir de menor a mayor de 1 a 10 puntos.")
                 else:
-                    payload = {
-                        "titulo": titulo.strip(),
-                        "descripcion": descripcion.strip(),
-                        "estado": estado.strip(),
-                        "tipo_medicion": tipo_medicion,
-                        "unidad_base": unidad_base.strip() if unidad_base.strip() else None,
-                    }
+                    payload = _build_task_payload(
+                        titulo,
+                        descripcion,
+                        estado,
+                        tipo_medicion,
+                        unidad_base,
+                    )
                     if asignado_a.strip().isdigit():
                         payload["asignado_a"] = int(asignado_a.strip())
                     created = create_task(supabase, payload)
@@ -220,14 +413,16 @@ def _tasks_panel(supabase: Client) -> None:
                     st.success("Tarea creada.")
                     st.rerun()
             else:
-                payload = {
-                    "titulo": titulo.strip(),
-                    "descripcion": descripcion.strip(),
-                    "estado": estado.strip(),
-                    "tipo_medicion": tipo_medicion,
-                    "unidad_base": unidad_base.strip() if unidad_base.strip() else None,
-                    "puntaje_fijo": puntaje_fijo if tipo_medicion == "cumplimiento" else None,
-                }
+                payload = _build_task_payload(
+                    titulo,
+                    descripcion,
+                    estado,
+                    tipo_medicion,
+                    unidad_base,
+                    puntaje_fijo=puntaje_fijo,
+                    puntaje_turno_simple=puntaje_turno_simple,
+                    puntaje_turno_completo=puntaje_turno_completo,
+                )
                 if asignado_a.strip().isdigit():
                     payload["asignado_a"] = int(asignado_a.strip())
                 create_task(supabase, payload)
@@ -251,102 +446,85 @@ def _tasks_panel(supabase: Client) -> None:
         task_map = {k: v for k, v in task_entries}
 
         selected_key = st.selectbox("Selecciona una tarea", list(task_map.keys()), key="edit_task_select")
-        selected_task = task_map[selected_key]
+        if st.button("Cargar tarea para editar", type="primary"):
+            st.session_state["edit_task_loaded_key"] = selected_key
+            st.rerun()
 
-        # Normalizar tipo_medicion antiguo 'fijo' a 'cumplimiento' para compatibilidad
-        tipo_raw = str(selected_task.get("tipo_medicion", "cantidad")).strip().lower()
-        if tipo_raw == "fijo":
-            tipo_raw = "cumplimiento"
+        loaded_key = st.session_state.get("edit_task_loaded_key")
+        if loaded_key not in task_map:
+            st.info("Selecciona una tarea y pulsa 'Cargar tarea para editar' para ver y modificar sus datos.")
+            return
 
-        existing_ranges = []
-        if tipo_raw == "cantidad":
-            existing_ranges = list_task_score_ranges(supabase, selected_task.get("id"))
+        selected_task = task_map[loaded_key]
+        task_id = selected_task.get("id")
+        tipo_actual = _normalize_tipo_medicion(selected_task.get("tipo_medicion"))
+        edit_prefix = f"edit_{task_id}_{tipo_actual}"
+        existing_ranges = list_task_score_ranges(supabase, task_id) if tipo_actual == "cantidad" else []
 
-        # Mostrar el selector fuera del form para que la UI reevalúe y muestre los campos correspondientes
-        tipo_options = ["cantidad", "cumplimiento", "tiempo", "turno"]
-        tipo_for_index = tipo_raw if tipo_raw in tipo_options else "cantidad"
         tipo_medicion_value = st.selectbox(
             "Tipo de medición",
-            tipo_options,
-            index=tipo_options.index(tipo_for_index),
-            key="edit_task_tipo",
+            ["cantidad", "fijo", "turno", "tiempo"],
+            index=["cantidad", "fijo", "turno", "tiempo"].index(tipo_actual),
+            key=f"{edit_prefix}_tipo",
         )
 
-        with st.form("edit_task"):
-            # Prefill fields using either 'nombre' or 'titulo' for compatibility
-            titulo_value = selected_task.get("nombre") or selected_task.get("titulo") or ""
-            titulo = st.text_input("Nombre de tarea", value=str(titulo_value))
-            descripcion = st.text_area("Descripción", value=str(selected_task.get("descripcion") or selected_task.get("descripcion") or ""))
+        with st.form(f"edit_task_{task_id}"):
+            titulo = st.text_input("Nombre de tarea", value=_task_title(selected_task), key=f"{edit_prefix}_titulo")
+            descripcion = st.text_area("Descripción", value=str(selected_task.get("descripcion") or ""), key=f"{edit_prefix}_descripcion")
             estado = st.text_input(
                 "Estado",
                 value=str(selected_task.get("estado", "pendiente")),
+                key=f"{edit_prefix}_estado",
             )
-            # 'Asignado a' no se edita desde aquí según requerimiento
-            # Determinar índice inicial asegurando que 'fijo' esté mapeado a 'cumplimiento'
-            tipo_options = ["cantidad", "cumplimiento", "tiempo", "turno"]
-            tipo_for_index = tipo_raw if tipo_raw in tipo_options else "cantidad"
-            # Usar la selección realizada fuera del formulario
             tipo_medicion = tipo_medicion_value
             unidad_base = st.text_input(
                 "Unidad base (ej. pares, cajas, bultos)",
                 value=str(selected_task.get("unidad_base") or selected_task.get("unidad") or ""),
                 placeholder="Opcional",
+                key=f"{edit_prefix}_unidad_base",
             )
-            puntaje_fijo = None
-            rangos = []
-
-            if tipo_medicion == "cantidad":
-                rangos = _render_quantity_ranges_form("edit", existing_ranges)
-            elif tipo_medicion == "cumplimiento":
-                puntaje_default = int(selected_task.get("puntaje_fijo") or selected_task.get("puntaje") or 1)
-                puntaje_fijo = st.number_input(
-                    "Puntaje fijo",
-                    min_value=1,
-                    max_value=10,
-                    step=1,
-                    value=puntaje_default,
-                    key="edit_puntaje_fijo",
-                )
+            rangos, puntaje_fijo, puntaje_turno_simple, puntaje_turno_completo = _render_measurement_fields(
+                tipo_medicion,
+                edit_prefix,
+                selected_task,
+                existing_ranges if tipo_medicion == "cantidad" else None,
+            )
 
             guardar = st.form_submit_button("Guardar cambios")
 
         if guardar:
             if tipo_medicion == "cantidad":
                 invalid_range = any(
-                    r["cantidad_hasta"] is not None and r["cantidad_hasta"] < r["cantidad_desde"]
-                    for r in rangos
+                    float(rangos[idx]["cantidad_desde"]) < float(rangos[idx - 1]["cantidad_desde"])
+                    for idx in range(1, len(rangos))
                 )
                 if invalid_range:
-                    st.error("Cada rango debe tener 'hasta' mayor o igual a 'desde'.")
+                    st.error("Los valores de cantidad deben ir de menor a mayor de 1 a 10 puntos.")
                 else:
-                    changes = {
-                        "titulo": titulo.strip(),
-                        "descripcion": descripcion.strip(),
-                        "estado": estado.strip(),
-                        "tipo_medicion": tipo_medicion,
-                        "unidad_base": unidad_base.strip() if unidad_base.strip() else None,
-                        "puntaje_fijo": None,
-                    }
-                    if asignado_a.strip().isdigit():
-                        changes["asignado_a"] = int(asignado_a.strip())
-                    update_task(supabase, selected_task["id"], changes, selected_task)
-                    set_task_score_ranges(supabase, selected_task["id"], rangos)
+                    changes = _build_task_payload(
+                        titulo,
+                        descripcion,
+                        estado,
+                        tipo_medicion,
+                        unidad_base,
+                    )
+                    update_task(supabase, task_id, changes, selected_task)
+                    set_task_score_ranges(supabase, task_id, rangos)
                     st.success("Tarea actualizada.")
                     st.rerun()
             else:
-                changes = {
-                    "titulo": titulo.strip(),
-                    "descripcion": descripcion.strip(),
-                    "estado": estado.strip(),
-                    "tipo_medicion": tipo_medicion,
-                    "unidad_base": unidad_base.strip() if unidad_base.strip() else None,
-                    "puntaje_fijo": puntaje_fijo if tipo_medicion == "cumplimiento" else None,
-                }
-                if asignado_a.strip().isdigit():
-                    changes["asignado_a"] = int(asignado_a.strip())
-                update_task(supabase, selected_task["id"], changes, selected_task)
-                if tipo_medicion != "cantidad":
-                    set_task_score_ranges(supabase, selected_task["id"], [])
+                changes = _build_task_payload(
+                    titulo,
+                    descripcion,
+                    estado,
+                    tipo_medicion,
+                    unidad_base,
+                    puntaje_fijo=puntaje_fijo,
+                    puntaje_turno_simple=puntaje_turno_simple,
+                    puntaje_turno_completo=puntaje_turno_completo,
+                )
+                update_task(supabase, task_id, changes, selected_task)
+                delete_task_score_ranges(supabase, task_id)
                 st.success("Tarea actualizada.")
                 st.rerun()
 

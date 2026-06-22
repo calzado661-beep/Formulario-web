@@ -29,7 +29,7 @@ def list_task_score_ranges(supabase: Client, tarea_id: Any) -> list[dict[str, An
         supabase.table("rangos_puntaje")
         .select("*")
         .eq("tarea_id", tarea_id)
-        .order("cantidad_desde", desc=False)
+        .order("puntos", desc=False)
         .execute()
         .data
         or []

@@ -1,4 +1,5 @@
-﻿from datetime import datetime
+from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -15,11 +16,15 @@ from services.repositories import (
 from services.scoring import calculate_points, get_activity_capture_mode
 
 
-def _render_dynamic_fields(task_name: str, idx: int, task_tipo: str = None, task_unidad: str = None) -> tuple[float | None, int | None, bool | None, str, str | None]:
-    # Normalizamos tipo_medicion de BD (puede venir con espacios/saltos) y
-    # hacemos fallback por nombre si el tipo no es válido.
+def _render_dynamic_fields(
+    task_name: str,
+    idx: int,
+    task_tipo: str = None,
+    task_unidad: str = None,
+    task_data: dict[str, Any] | None = None,
+) -> tuple[float | None, int | None, bool | None, str, str | None]:
     tipo_bd = (task_tipo or "").strip().lower()
-    tipos_validos = {"cantidad", "tiempo", "cumplimiento", "turno"}
+    tipos_validos = {"cantidad", "tiempo", "fijo", "cumplimiento", "turno"}
     if tipo_bd in tipos_validos:
         tipo, unidad = tipo_bd, task_unidad
     else:
@@ -31,32 +36,39 @@ def _render_dynamic_fields(task_name: str, idx: int, task_tipo: str = None, task
     turno = None
 
     if tipo == "cantidad":
-        cantidad = st.number_input(f"Cantidad ({unidad or 'unidades'})", min_value=0.0, step=1.0, value=0.0, key=f"cantidad_{idx}")
-        cumplimiento = True # Para tareas de cantidad, se asume cumplimiento si se registra una cantidad
+        cantidad = st.number_input(
+            f"Cantidad ({unidad or 'unidades'})",
+            min_value=0.0,
+            step=1.0,
+            value=0.0,
+            key=f"cantidad_{idx}",
+        )
+        cumplimiento = True
     elif tipo == "tiempo":
         horas = st.number_input("Horas", min_value=0, step=1, key=f"horas_{idx}")
         mins = st.number_input("Minutos", min_value=0, max_value=59, step=1, key=f"mins_{idx}")
         minutos = int(horas) * 60 + int(mins)
         st.caption(f"Tiempo total: {minutos} min")
-        cantidad = 0.0 # Las tareas de tiempo no tienen una cantidad explícita
-        cumplimiento = True # Para tareas de tiempo, se asume cumplimiento si se registra un tiempo
-    if tipo == "cumplimiento":
-        # Para tareas de cumplimiento (fijas), la cantidad es fija en 1 y no se muestra el input
+        cantidad = 0.0
+        cumplimiento = True
+    if tipo in {"fijo", "cumplimiento"}:
         cantidad = 1.0
         cumplimiento = st.checkbox("Cumplido", value=True, key=f"cumpl_{idx}")
         st.caption("Esta tarea usa puntaje fijo definido en la tarea.")
-    elif tipo == "turno": # New type for turno selection
+    elif tipo == "turno":
         turno_option = st.radio(
             "Selecciona el turno",
             ["Turno mañana o tarde", "Turno mañana y tarde"],
-            key=f"turno_{idx}"
+            key=f"turno_{idx}",
         )
         turno = turno_option
-        # Map turno selection to a numerical quantity for point calculation
         cantidad = 1.0 if turno == "Turno mañana o tarde" else 2.0
-        cumplimiento = True # Turno selection implies compliance
-        minutos = None # Not applicable for turno-based tasks
-
+        cumplimiento = True
+        minutos = None
+        if task_data:
+            simple = task_data.get("puntaje_turno_simple") or task_data.get("puntos_turno_simple") or 0
+            completo = task_data.get("puntaje_turno_completo") or task_data.get("puntos_turno_completo") or 0
+            st.caption(f"Puntaje configurado: mañana/tarde = {simple}, completo = {completo}")
 
     detalle = st.text_area("Detalle (opcional)", placeholder="Comentarios de lo realizado", key=f"detalle_{idx}")
     return cantidad, minutos, cumplimiento, detalle, turno
@@ -73,7 +85,6 @@ def render_worker(supabase: Client, user: dict) -> None:
             st.warning("No tienes tareas asignadas para registrar actividades.")
             return
 
-        # Creamos el mapa y ordenamos las llaves numéricamente por el ID que aparece al inicio
         task_map = {f"{t.get('id')} - {t.get('nombre') or t.get('titulo') or 'Sin título'}": t for t in tasks}
         sorted_task_keys = sorted(task_map.keys(), key=lambda x: int(x.split(" - ")[0]))
 
@@ -82,7 +93,6 @@ def render_worker(supabase: Client, user: dict) -> None:
 
         col_add, col_remove = st.columns(2)
         with col_add:
-            # Evitamos añadir más registros de los que hay tareas disponibles para evitar errores de selección
             if st.button("Añadir tarea realizada") and st.session_state.worker_items_count < len(sorted_task_keys):
                 st.session_state.worker_items_count += 1
                 st.rerun()
@@ -92,36 +102,33 @@ def render_worker(supabase: Client, user: dict) -> None:
                 st.rerun()
 
         st.caption(f"Registros a cargar: {st.session_state.worker_items_count}")
-        
+
         registros = []
         tareas_seleccionadas = []
 
         for i in range(st.session_state.worker_items_count):
             st.markdown(f"### Registro {i + 1}")
-            
-            # Filtramos las opciones para excluir las que ya han sido elegidas en bloques de registro anteriores
+
             opciones_disponibles = [k for k in sorted_task_keys if k not in tareas_seleccionadas]
-            
+
             if not opciones_disponibles:
                 st.info("Has seleccionado todas las tareas únicas disponibles.")
                 break
 
             task_key = st.selectbox("Tarea realizada", opciones_disponibles, key=f"task_{i}")
-            # Registramos la tarea actual para que los siguientes selectores no la muestren
             tareas_seleccionadas.append(task_key)
 
-            # Usamos el texto visible en el selectbox para determinar los campos.
-            # Esto ignora errores en la base de datos y se guía por lo que tú seleccionaste.
             clean_name = task_key.split(" - ", 1)[-1] if " - " in task_key else task_key
             selected_task = task_map[task_key]
 
             cantidad, minutos, cumplimiento, detalle, turno = _render_dynamic_fields(
-                clean_name, 
-                i, 
+                clean_name,
+                i,
                 task_tipo=selected_task.get("tipo_medicion"),
-                task_unidad=selected_task.get("unidad_base")
+                task_unidad=selected_task.get("unidad_base"),
+                task_data=selected_task,
             )
-            
+
             registros.append(
                 {
                     "task_key": task_key,
@@ -135,7 +142,6 @@ def render_worker(supabase: Client, user: dict) -> None:
             )
             st.divider()
 
-        # Cambiamos st.form_submit_button por un botón normal
         guardar = st.button("Guardar registros", type="primary", use_container_width=True)
 
         if guardar:
@@ -144,23 +150,20 @@ def render_worker(supabase: Client, user: dict) -> None:
             errores = 0
             last_error = ""
             failed_payloads = []
-            
-            # Capturamos el momento exacto en horario Perú Lima
+
             lima_tz = ZoneInfo("America/Lima")
             now_lima = datetime.now(lima_tz)
             today_str = now_lima.date().isoformat()
 
-            # 1. Validar en el lote actual: Si hay un turno completo, no debe haber más registros
             has_full_shift_in_batch = any(item.get("turno") == "Turno mañana y tarde" for item in registros)
-            
+
             if has_full_shift_in_batch and len(registros) > 1:
                 st.error("Si seleccionas 'Turno mañana y tarde', no puedes registrar otras actividades el mismo día.")
                 return
 
-            # 2. Validar contra la base de datos (registros ya existentes hoy)
             existing_logs = list_worker_activity_logs(supabase, user.get("id"))
             logs_today = [l for l in existing_logs if str(l.get("fecha_registro")) == today_str]
-            
+
             if logs_today:
                 if has_full_shift_in_batch:
                     st.error("No puedes registrar un turno completo porque ya tienes actividades registradas hoy.")
@@ -235,31 +238,24 @@ def render_worker(supabase: Client, user: dict) -> None:
         rows = []
         for r in logs:
             tarea_nombre = task_name_by_id.get(r.get("tarea_id"))
-            
-            # --- CORRECCIÓN CRÍTICA DE HORARIO LIMA AL LEER DE SUPABASE ---
+
             created_at_str = r.get("created_at")
             fecha_display = str(r.get("fecha_registro") or "")
             if created_at_str:
                 try:
-                    # Supabase devuelve el string con 'Z' o con offsets (+00:00). 
-                    # Reemplazar 'Z' asegura compatibilidad total al parsear.
-                    clean_timestamp = created_at_str.replace('Z', '+00:00')
+                    clean_timestamp = created_at_str.replace("Z", "+00:00")
                     dt = datetime.fromisoformat(clean_timestamp)
-                    
-                    # Convertir explícitamente el objeto datetime a la zona de Lima
                     dt_lima = dt.astimezone(ZoneInfo("America/Lima"))
                     fecha_display = dt_lima.strftime("%d %b %y %H:%M:%S").title()
                 except Exception:
                     pass
-            # -------------------------------------------------------------
 
-            # Lógica para mostrar "Turno" en lugar de 1 o 2 en el historial
             final_name = tarea_nombre or ""
             tipo_act, _ = get_activity_capture_mode(final_name)
             val_cant = r.get("cantidad")
             val_turno = r.get("turno")
             cant_display = val_turno if val_turno else val_cant
-            
+
             if tipo_act == "turno" and not val_turno:
                 cant_display = "Turno mañana o tarde" if float(val_cant or 0) == 1.0 else "Turno mañana y tarde"
 
