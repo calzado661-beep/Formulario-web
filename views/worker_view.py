@@ -197,7 +197,6 @@ def render_worker(supabase: Client, user: dict) -> None:
                         "detalle": (item["detalle"] or "").strip() or None,
                         "turno": item.get("turno"),
                         "puntos_obtenidos": puntos,
-                        "created_at": now_lima.isoformat(),
                     }
                     create_worker_activity_log(supabase, payload)
                     guardados_bd += 1

@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from supabase import Client
@@ -6,6 +7,9 @@ from services.scoring import get_activity_capture_mode
 from services.security import hash_password
 
 _TASK_TABLE_NAME: str | None = None
+_ACTIVITY_LOG_RESOURCE_NAME: str | None = None
+_MISSING_COLUMN_RE = re.compile(r"Could not find the '([^']+)' column")
+_MISSING_RESOURCE_RE = re.compile(r"Could not find the table 'public\.([^']+)'")
 
 
 def _task_table_name(supabase: Client) -> str:
@@ -22,6 +26,53 @@ def _task_table_name(supabase: Client) -> str:
             continue
 
     raise RuntimeError("No se encontró la tabla de tareas. Asegúrate de que exista 'public.tarea' o 'public.tareas'.")
+
+
+def _activity_log_resource_name(supabase: Client) -> str:
+    global _ACTIVITY_LOG_RESOURCE_NAME
+    if _ACTIVITY_LOG_RESOURCE_NAME:
+        return _ACTIVITY_LOG_RESOURCE_NAME
+
+    for resource_name in ("v_registro_actividades", "registros_tareas", "registro_actividades"):
+        try:
+            supabase.table(resource_name).select("*").limit(1).execute()
+            _ACTIVITY_LOG_RESOURCE_NAME = resource_name
+            return resource_name
+        except Exception:
+            continue
+
+    raise RuntimeError(
+        "No se encontro 'public.registros_tareas', 'public.registro_actividades' ni "
+        "'public.v_registro_actividades'. "
+        "Ejecuta el script sql/003_reparar_registro_actividades.sql en Supabase."
+    )
+
+
+def _activity_log_resource_candidates(supabase: Client) -> list[str]:
+    return ["registros_tareas", "registro_actividades"]
+
+
+def _activity_log_user_columns(resource_name: str) -> tuple[str, ...]:
+    if resource_name in {"registros_tareas", "v_registro_actividades"}:
+        return ("usuario_id", "trabajador_id")
+    return ("trabajador_id", "usuario_id")
+
+
+def _normalize_activity_log(row: dict[str, Any]) -> dict[str, Any]:
+    normalized = row.copy()
+    if "usuario_id" in normalized and "trabajador_id" not in normalized:
+        normalized["trabajador_id"] = normalized.get("usuario_id")
+    if "observacion" in normalized and "detalle" not in normalized:
+        normalized["detalle"] = normalized.get("observacion")
+    if "dato_extra" in normalized and "tiempo_minutos" not in normalized:
+        normalized["tiempo_minutos"] = normalized.get("dato_extra")
+    if "tarea" in normalized and "actividad_nombre" not in normalized:
+        normalized["actividad_nombre"] = normalized.get("tarea")
+    return normalized
+
+
+def _normalize_activity_logs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_normalize_activity_log(row) for row in rows]
 
 
 def list_task_score_ranges(supabase: Client, tarea_id: Any) -> list[dict[str, Any]]:
@@ -157,6 +208,36 @@ def _filter_payload_columns(payload: dict[str, Any], columns: list[str] | None) 
     return {key: value for key, value in payload.items() if key in columns}
 
 
+def _missing_payload_column(error: Exception) -> str | None:
+    match = _MISSING_COLUMN_RE.search(str(error))
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _is_missing_resource(error: Exception) -> bool:
+    return _MISSING_RESOURCE_RE.search(str(error)) is not None
+
+
+def _activity_log_insert_payload(resource_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if resource_name != "registros_tareas":
+        return payload.copy()
+
+    mapped = {
+        "usuario_id": payload.get("usuario_id") or payload.get("trabajador_id"),
+        "tarea_id": payload.get("tarea_id"),
+        "fecha_registro": payload.get("fecha_registro"),
+        "cantidad": payload.get("cantidad"),
+        "turno": payload.get("turno"),
+        "observacion": payload.get("observacion") or payload.get("detalle"),
+        "puntos_obtenidos": payload.get("puntos_obtenidos"),
+    }
+    if payload.get("tiempo_minutos") is not None:
+        mapped["dato_extra"] = payload.get("tiempo_minutos")
+
+    return {key: value for key, value in mapped.items() if value is not None}
+
+
 def create_task(supabase: Client, payload: dict[str, Any]) -> dict[str, Any] | None:
     columns = _task_table_columns(supabase)
     filtered_payload = _filter_payload_columns(payload, columns)
@@ -172,80 +253,126 @@ def update_task(supabase: Client, task_id: Any, changes: dict[str, Any], existin
 
 
 def create_worker_activity_log(supabase: Client, payload: dict[str, Any]) -> None:
+    payload = payload.copy()
+    payload.pop("created_at", None)
+
     attempts: list[dict[str, Any]] = []
-    attempts.append(payload.copy())
-
-    no_activity_id = payload.copy()
-    no_activity_id.pop("actividad_id", None)
-    attempts.append(no_activity_id)
-
-    no_activity_name = payload.copy()
-    no_activity_name.pop("actividad_nombre", None)
-    attempts.append(no_activity_name)
-
-    minimal = payload.copy()
-    minimal.pop("actividad_id", None)
-    minimal.pop("actividad_nombre", None)
-    attempts.append(minimal)
+    optional_groups = [
+        (),
+        ("created_at",),
+        ("actividad_id",),
+        ("actividad_nombre",),
+        ("turno",),
+        ("created_at", "actividad_id"),
+        ("created_at", "actividad_nombre"),
+        ("created_at", "turno"),
+        ("actividad_id", "actividad_nombre"),
+        ("created_at", "actividad_id", "actividad_nombre"),
+        ("created_at", "actividad_id", "actividad_nombre", "turno"),
+    ]
+    seen_attempts: set[tuple[str, ...]] = set()
+    for optional_fields in optional_groups:
+        candidate = payload.copy()
+        for field in optional_fields:
+            candidate.pop(field, None)
+        signature = tuple(candidate.keys())
+        if signature in seen_attempts:
+            continue
+        seen_attempts.add(signature)
+        attempts.append(candidate)
 
     last_err: Exception | None = None
-    for candidate in attempts:
-        try:
-            supabase.table("registro_actividades").insert(candidate).execute()
-            return
-        except Exception as e:
-            last_err = e
-            continue
+    for resource_name in _activity_log_resource_candidates(supabase):
+        for candidate in attempts:
+            current_candidate = _activity_log_insert_payload(resource_name, candidate)
+            for _ in range(len(current_candidate) + 1):
+                try:
+                    supabase.table(resource_name).insert(current_candidate).execute()
+                    return
+                except Exception as e:
+                    if _is_missing_resource(e):
+                        if last_err is None:
+                            last_err = e
+                        break
+                    last_err = e
+                    missing_column = _missing_payload_column(e)
+                    if not missing_column or missing_column not in current_candidate:
+                        break
+                    current_candidate.pop(missing_column, None)
 
     if last_err:
         raise last_err
 
 
 def list_worker_activity_logs(supabase: Client, trabajador_id: Any) -> list[dict[str, Any]]:
-    try:
-        return (
-            supabase.table("registro_actividades")
-            .select("*")
-            .eq("trabajador_id", trabajador_id)
-            .order("fecha_registro", desc=True)
-            .execute()
-            .data
-            or []
-        )
-    except Exception:
-        try:
-            return (
-                supabase.table("registro_actividades")
-                .select("*")
-                .eq("trabajador_id", trabajador_id)
-                .order("created_at", desc=True)
-                .execute()
-                .data
-                or []
-            )
-        except Exception:
+    for resource_name in ("v_registro_actividades", "registros_tareas", "registro_actividades"):
+        for user_column in _activity_log_user_columns(resource_name):
             try:
-                return (
-                    supabase.table("registro_actividades")
+                rows = (
+                    supabase.table(resource_name)
                     .select("*")
-                    .eq("trabajador_id", trabajador_id)
+                    .eq(user_column, trabajador_id)
+                    .order("fecha_registro", desc=True)
                     .execute()
                     .data
                     or []
                 )
+                return _normalize_activity_logs(rows)
             except Exception:
-                return []
+                try:
+                    rows = (
+                        supabase.table(resource_name)
+                        .select("*")
+                        .eq(user_column, trabajador_id)
+                        .order("created_at", desc=True)
+                        .execute()
+                        .data
+                        or []
+                    )
+                    return _normalize_activity_logs(rows)
+                except Exception:
+                    try:
+                        rows = (
+                            supabase.table(resource_name)
+                            .select("*")
+                            .eq(user_column, trabajador_id)
+                            .execute()
+                            .data
+                            or []
+                        )
+                        return _normalize_activity_logs(rows)
+                    except Exception:
+                        continue
+    return []
 
 
 def list_all_activity_logs(supabase: Client) -> list[dict[str, Any]]:
-    try:
-        return (
-            supabase.table("registro_actividades")
-            .select("*")
-            .order("fecha_registro", desc=True)
-            .execute()
-            .data
-            or []
-        )
-    except Exception:
-        return []
+    for resource_name in ("v_registro_actividades", "registros_tareas", "registro_actividades"):
+        try:
+            rows = (
+                supabase.table(resource_name)
+                .select("*")
+                .order("fecha_registro", desc=True)
+                .execute()
+                .data
+                or []
+            )
+            return _normalize_activity_logs(rows)
+        except Exception:
+            try:
+                rows = (
+                    supabase.table(resource_name)
+                    .select("*")
+                    .order("created_at", desc=True)
+                    .execute()
+                    .data
+                    or []
+                )
+                return _normalize_activity_logs(rows)
+            except Exception:
+                try:
+                    rows = supabase.table(resource_name).select("*").execute().data or []
+                    return _normalize_activity_logs(rows)
+                except Exception:
+                    continue
+    return []
