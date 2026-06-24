@@ -25,6 +25,21 @@ def apply_styles():
             }
 
             /* Fondo general de la aplicación */
+            #MainMenu,
+            footer,
+            header,
+            [data-testid="stToolbar"],
+            [data-testid="stDecoration"],
+            [data-testid="stStatusWidget"],
+            .stDeployButton,
+            .viewerBadge_container__1QSob,
+            .viewerBadge_link__1S137,
+            .viewerBadge_text__1JaDK {
+                display: none !important;
+                visibility: hidden !important;
+                height: 0 !important;
+            }
+
             .stApp {
                 background-image: url("https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=2069&auto=format&fit=crop");
                 background-size: cover;

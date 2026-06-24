@@ -145,12 +145,57 @@ def _render_sticky_save_button_styles() -> None:
                 min-height: 3.25rem;
                 font-size: 1.05rem;
             }
+            .st-key-worker_add_record,
+            .st-key-worker_remove_record {
+                position: fixed;
+                right: 2rem;
+                z-index: 1000;
+                width: 4rem;
+                height: 4rem;
+            }
+            .st-key-worker_add_record {
+                bottom: 7.25rem;
+            }
+            .st-key-worker_remove_record {
+                bottom: 11.75rem;
+            }
+            .st-key-worker_add_record button,
+            .st-key-worker_remove_record button {
+                width: 4rem;
+                height: 4rem;
+                min-height: 4rem;
+                padding: 0 !important;
+                border-radius: 999px;
+                font-size: 2rem;
+                font-weight: 800;
+                line-height: 1;
+                box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
+            }
             @media (max-width: 640px) {
                 .st-key-worker_save_records {
                     left: 1rem;
                     right: 1rem;
                     bottom: 1rem;
                     width: auto;
+                }
+                .st-key-worker_add_record,
+                .st-key-worker_remove_record {
+                    right: 1rem;
+                    width: 3.5rem;
+                    height: 3.5rem;
+                }
+                .st-key-worker_add_record {
+                    bottom: 7rem;
+                }
+                .st-key-worker_remove_record {
+                    bottom: 11rem;
+                }
+                .st-key-worker_add_record button,
+                .st-key-worker_remove_record button {
+                    width: 3.5rem;
+                    height: 3.5rem;
+                    min-height: 3.5rem;
+                    font-size: 1.8rem;
                 }
             }
         </style>
@@ -268,11 +313,11 @@ def render_worker(supabase: Client, user: dict) -> None:
 
         col_add, col_remove = st.columns(2)
         with col_add:
-            if st.button("Añadir tarea realizada") and st.session_state.worker_items_count < len(sorted_task_keys):
+            if st.button("+", key="worker_add_record") and st.session_state.worker_items_count < len(sorted_task_keys):
                 st.session_state.worker_items_count += 1
                 st.rerun()
         with col_remove:
-            if st.button("Quitar última") and st.session_state.worker_items_count > 1:
+            if st.button("-", key="worker_remove_record") and st.session_state.worker_items_count > 1:
                 st.session_state.worker_items_count -= 1
                 st.rerun()
 
