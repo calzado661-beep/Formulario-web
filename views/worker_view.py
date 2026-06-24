@@ -15,6 +15,8 @@ from services.repositories import (
 )
 from services.scoring import calculate_points, get_activity_capture_mode
 
+NO_TASK_OPTION = "Ninguno"
+
 
 def _render_dynamic_fields(
     task_name: str,
@@ -74,11 +76,184 @@ def _render_dynamic_fields(
     return cantidad, minutos, cumplimiento, detalle, turno
 
 
+def _render_save_success_screen(message: str) -> None:
+    st.markdown(
+        f"""
+        <style>
+            .worker-success-screen {{
+                min-height: 62vh;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 1.25rem;
+                margin: 1rem 0 1.5rem;
+                padding: 3rem 2rem;
+                border-radius: 0.9rem;
+                background: linear-gradient(135deg, rgba(22, 163, 74, 0.96), rgba(21, 128, 61, 0.96));
+                color: #ffffff;
+                text-align: center;
+                box-shadow: 0 18px 45px rgba(0, 0, 0, 0.25);
+            }}
+            .worker-success-screen__title {{
+                margin: 0;
+                font-size: clamp(2.4rem, 6vw, 5.5rem);
+                line-height: 1.05;
+                font-weight: 800;
+                color: #ffffff !important;
+            }}
+            .worker-success-screen__message {{
+                margin: 0;
+                font-size: clamp(1.15rem, 2.2vw, 1.8rem);
+                font-weight: 600;
+            }}
+        </style>
+        <div class="worker-success-screen">
+            <h1 class="worker-success-screen__title">Se guardo correctamente</h1>
+            <p class="worker-success-screen__message">{message}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if st.button("Aceptar", type="primary", use_container_width=True, key="worker_success_accept"):
+        st.session_state.pop("worker_save_success", None)
+        st.rerun()
+
+
+def _render_sticky_save_button_styles() -> None:
+    st.markdown(
+        """
+        <style>
+            .main .block-container {
+                padding-bottom: 7rem;
+            }
+            .st-key-worker_save_records {
+                position: fixed;
+                right: 2rem;
+                bottom: 1.5rem;
+                z-index: 999;
+                width: min(420px, calc(100vw - 4rem));
+                padding: 0.75rem;
+                border-radius: 0.8rem;
+                background: rgba(255, 255, 255, 0.92);
+                box-shadow: 0 14px 35px rgba(0, 0, 0, 0.24);
+                backdrop-filter: blur(10px);
+                -webkit-backdrop-filter: blur(10px);
+            }
+            .st-key-worker_save_records button {
+                min-height: 3.25rem;
+                font-size: 1.05rem;
+            }
+            @media (max-width: 640px) {
+                .st-key-worker_save_records {
+                    left: 1rem;
+                    right: 1rem;
+                    bottom: 1rem;
+                    width: auto;
+                }
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+@st.dialog("Confirmar guardado")
+def _render_save_confirmation_dialog() -> None:
+    st.markdown(
+        """
+        <style>
+            .worker-confirm-screen {
+                padding: 1.5rem 1rem 1rem;
+                border-radius: 0.9rem;
+                background: rgba(254, 243, 199, 0.96);
+                border: 2px solid #f59e0b;
+                text-align: center;
+            }
+            .worker-confirm-screen__title {
+                margin: 0 0 0.75rem;
+                color: #92400e !important;
+                font-size: clamp(1.6rem, 3vw, 2.5rem);
+                line-height: 1.1;
+                font-weight: 800;
+            }
+            .worker-confirm-screen__message {
+                margin: 0;
+                color: #78350f;
+                font-size: clamp(1rem, 1.5vw, 1.25rem);
+                font-weight: 600;
+            }
+        </style>
+        <div class="worker-confirm-screen">
+            <h2 class="worker-confirm-screen__title">¿Esta seguro de guardar los registros?</h2>
+            <p class="worker-confirm-screen__message">Revise la informacion antes de confirmar.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col_confirm, col_cancel = st.columns(2)
+    with col_confirm:
+        if st.button("Si, guardar", type="primary", use_container_width=True, key="worker_confirm_save"):
+            st.session_state.pop("worker_save_confirm", None)
+            st.session_state.worker_save_confirmed = True
+            st.rerun()
+    with col_cancel:
+        if st.button("Cancelar", use_container_width=True, key="worker_cancel_save"):
+            st.session_state.pop("worker_save_confirm", None)
+            st.rerun()
+
+
+@st.dialog("Seleccione una tarea")
+def _render_missing_task_dialog() -> None:
+    st.markdown(
+        """
+        <style>
+            .worker-warning-screen {
+                padding: 1.5rem 1rem 1rem;
+                border-radius: 0.9rem;
+                background: rgba(254, 226, 226, 0.98);
+                border: 2px solid #ef4444;
+                text-align: center;
+            }
+            .worker-warning-screen__title {
+                margin: 0 0 0.75rem;
+                color: #991b1b !important;
+                font-size: clamp(1.55rem, 3vw, 2.4rem);
+                line-height: 1.1;
+                font-weight: 800;
+            }
+            .worker-warning-screen__message {
+                margin: 0;
+                color: #7f1d1d;
+                font-size: clamp(1rem, 1.5vw, 1.25rem);
+                font-weight: 600;
+            }
+        </style>
+        <div class="worker-warning-screen">
+            <h2 class="worker-warning-screen__title">Debe seleccionar una tarea</h2>
+            <p class="worker-warning-screen__message">Elija una tarea antes de guardar el registro.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if st.button("Aceptar", type="primary", use_container_width=True, key="worker_missing_task_accept"):
+        st.session_state.pop("worker_missing_task_alert", None)
+        st.rerun()
+
+
 def render_worker(supabase: Client, user: dict) -> None:
     tab2, tab3 = st.tabs(["Registrar actividad", "Historial"])
 
     with tab2:
         st.subheader("Registrar lo realizado")
+        _render_sticky_save_button_styles()
+        if "worker_save_success" in st.session_state:
+            _render_save_success_screen(st.session_state.worker_save_success)
+            return
+
         tasks = get_tasks_for_user(supabase, user)
 
         if not tasks:
@@ -115,7 +290,26 @@ def render_worker(supabase: Client, user: dict) -> None:
                 st.info("Has seleccionado todas las tareas únicas disponibles.")
                 break
 
+            if i == 0:
+                opciones_disponibles = [NO_TASK_OPTION, *opciones_disponibles]
+
             task_key = st.selectbox("Tarea realizada", opciones_disponibles, key=f"task_{i}")
+            if task_key == NO_TASK_OPTION:
+                registros.append(
+                    {
+                        "task_key": None,
+                        "task_name": "",
+                        "cantidad": None,
+                        "minutos": None,
+                        "cumplimiento": None,
+                        "detalle": "",
+                        "turno": None,
+                    }
+                )
+                st.caption("Seleccione una tarea para completar este registro.")
+                st.divider()
+                continue
+
             tareas_seleccionadas.append(task_key)
 
             clean_name = task_key.split(" - ", 1)[-1] if " - " in task_key else task_key
@@ -142,9 +336,30 @@ def render_worker(supabase: Client, user: dict) -> None:
             )
             st.divider()
 
-        guardar = st.button("Guardar registros", type="primary", use_container_width=True)
+        guardar = st.button(
+            "Guardar registros",
+            type="primary",
+            use_container_width=True,
+            key="worker_save_records",
+        )
 
         if guardar:
+            if any(item.get("task_key") is None for item in registros):
+                st.session_state.worker_missing_task_alert = True
+            else:
+                st.session_state.worker_save_confirm = True
+            st.rerun()
+
+        should_save = st.session_state.pop("worker_save_confirmed", False)
+        if st.session_state.get("worker_missing_task_alert"):
+            _render_missing_task_dialog()
+            return
+
+        if st.session_state.get("worker_save_confirm"):
+            _render_save_confirmation_dialog()
+            return
+
+        if should_save:
             total_puntos = 0
             guardados_bd = 0
             errores = 0
@@ -211,13 +426,19 @@ def render_worker(supabase: Client, user: dict) -> None:
                         }
                     )
 
-            if guardados_bd:
-                st.success(f"Se guardaron {guardados_bd} registros en base de datos. Puntos totales: {total_puntos}")
             if errores:
+                if guardados_bd:
+                    st.success(f"Se guardaron {guardados_bd} registros en base de datos. Puntos totales: {total_puntos}")
                 st.error(f"{errores} registros fallaron. Error: {last_error}")
                 st.caption("Detalle del error de guardado:")
                 st.json(failed_payloads)
                 return
+            if guardados_bd:
+                st.session_state.worker_save_success = (
+                    f"Registro guardado correctamente. Puntos totales: {total_puntos}"
+                    if guardados_bd == 1
+                    else f"Se guardaron {guardados_bd} registros correctamente. Puntos totales: {total_puntos}"
+                )
             st.session_state.worker_items_count = 1
             st.rerun()
 
