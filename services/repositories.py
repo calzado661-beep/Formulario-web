@@ -1,15 +1,13 @@
-import re
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from supabase import Client
 
 from services.scoring import get_activity_capture_mode
-from services.security import hash_password
 
 _TASK_TABLE_NAME: str | None = None
-_ACTIVITY_LOG_RESOURCE_NAME: str | None = None
-_MISSING_COLUMN_RE = re.compile(r"Could not find the '([^']+)' column")
-_MISSING_RESOURCE_RE = re.compile(r"Could not find the table 'public\.([^']+)'")
+_ATTENDANCE_TABLE_NAME: str | None = None
 
 
 def _task_table_name(supabase: Client) -> str:
@@ -28,51 +26,20 @@ def _task_table_name(supabase: Client) -> str:
     raise RuntimeError("No se encontró la tabla de tareas. Asegúrate de que exista 'public.tarea' o 'public.tareas'.")
 
 
-def _activity_log_resource_name(supabase: Client) -> str:
-    global _ACTIVITY_LOG_RESOURCE_NAME
-    if _ACTIVITY_LOG_RESOURCE_NAME:
-        return _ACTIVITY_LOG_RESOURCE_NAME
+def _attendance_table_name(supabase: Client) -> str:
+    global _ATTENDANCE_TABLE_NAME
+    if _ATTENDANCE_TABLE_NAME:
+        return _ATTENDANCE_TABLE_NAME
 
-    for resource_name in ("v_registro_actividades", "registros_tareas", "registro_actividades"):
+    for table_name in ("asistencias", "asistencia"):
         try:
-            supabase.table(resource_name).select("*").limit(1).execute()
-            _ACTIVITY_LOG_RESOURCE_NAME = resource_name
-            return resource_name
+            supabase.table(table_name).select("id").limit(1).execute()
+            _ATTENDANCE_TABLE_NAME = table_name
+            return table_name
         except Exception:
             continue
 
-    raise RuntimeError(
-        "No se encontro 'public.registros_tareas', 'public.registro_actividades' ni "
-        "'public.v_registro_actividades'. "
-        "Ejecuta el script sql/003_reparar_registro_actividades.sql en Supabase."
-    )
-
-
-def _activity_log_resource_candidates(supabase: Client) -> list[str]:
-    return ["registros_tareas", "registro_actividades"]
-
-
-def _activity_log_user_columns(resource_name: str) -> tuple[str, ...]:
-    if resource_name in {"registros_tareas", "v_registro_actividades"}:
-        return ("usuario_id", "trabajador_id")
-    return ("trabajador_id", "usuario_id")
-
-
-def _normalize_activity_log(row: dict[str, Any]) -> dict[str, Any]:
-    normalized = row.copy()
-    if "usuario_id" in normalized and "trabajador_id" not in normalized:
-        normalized["trabajador_id"] = normalized.get("usuario_id")
-    if "observacion" in normalized and "detalle" not in normalized:
-        normalized["detalle"] = normalized.get("observacion")
-    if "dato_extra" in normalized and "tiempo_minutos" not in normalized:
-        normalized["tiempo_minutos"] = normalized.get("dato_extra")
-    if "tarea" in normalized and "actividad_nombre" not in normalized:
-        normalized["actividad_nombre"] = normalized.get("tarea")
-    return normalized
-
-
-def _normalize_activity_logs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [_normalize_activity_log(row) for row in rows]
+    raise RuntimeError("No se encontró la tabla de asistencia. Asegúrate de que exista 'public.asistencias' o 'public.asistencia'.")
 
 
 def list_task_score_ranges(supabase: Client, tarea_id: Any) -> list[dict[str, Any]]:
@@ -109,23 +76,26 @@ def set_task_score_ranges(supabase: Client, tarea_id: Any, ranges: list[dict[str
 
 
 def select_users(supabase: Client) -> list[dict[str, Any]]:
-    cols = "id,nombre,email,rol,activo,created_at"
+    cols = "id,nombre,email,rol,activo,created_at,fecha_cumpleanos"
     try:
         return supabase.table("usuarios").select(cols).order("id", desc=False).execute().data or []
     except Exception:
         return supabase.table("usuarios").select("*").order("id", desc=False).execute().data or []
 
 
+def list_workers(supabase: Client) -> list[dict[str, Any]]:
+    return [u for u in select_users(supabase) if str(u.get("rol", "")).lower() in {"trabajador", "operante"}]
+
+
 def verify_user(supabase: Client, email: str, password: str) -> dict[str, Any] | None:
-    hashed = hash_password(password)
     try:
-        r = supabase.table("usuarios").select("*").eq("email", email).eq("password_hash", hashed).limit(1).execute()
+        r = supabase.table("usuarios").select("*").eq("email", email).eq("password_hash", password).limit(1).execute()
         if r.data:
             return r.data[0]
     except Exception:
         pass
     try:
-        r = supabase.table("usuarios").select("*").eq("email", email).eq("password", hashed).limit(1).execute()
+        r = supabase.table("usuarios").select("*").eq("email", email).eq("password", password).limit(1).execute()
         if r.data:
             return r.data[0]
     except Exception:
@@ -135,7 +105,7 @@ def verify_user(supabase: Client, email: str, password: str) -> dict[str, Any] |
 
 def get_tasks_for_user(supabase: Client, user: dict[str, Any]) -> list[dict[str, Any]]:
     role = (user.get("rol") or "").lower()
-    if role != "trabajador":
+    if role not in {"trabajador", "operante"}:
         return supabase.table(_task_table_name(supabase)).select("*").execute().data or []
 
     user_id = user.get("id")
@@ -161,27 +131,25 @@ def get_tasks_for_user(supabase: Client, user: dict[str, Any]) -> list[dict[str,
 
 def create_user(supabase: Client, payload: dict[str, Any], plain_password: str) -> None:
     data = payload.copy()
-    pwd_hash = hash_password(plain_password)
     try:
-        data["password_hash"] = pwd_hash
+        data["password_hash"] = plain_password
         supabase.table("usuarios").insert(data).execute()
     except Exception:
         data.pop("password_hash", None)
-        data["password"] = pwd_hash
+        data["password"] = plain_password
         supabase.table("usuarios").insert(data).execute()
 
 
 def update_user(supabase: Client, user_id: Any, changes: dict[str, Any], new_password: str | None = None) -> None:
     data = changes.copy()
     if new_password:
-        pwd_hash = hash_password(new_password)
         try:
-            data["password_hash"] = pwd_hash
+            data["password_hash"] = new_password
             supabase.table("usuarios").update(data).eq("id", user_id).execute()
             return
         except Exception:
             data.pop("password_hash", None)
-            data["password"] = pwd_hash
+            data["password"] = new_password
     supabase.table("usuarios").update(data).eq("id", user_id).execute()
 
 
@@ -189,8 +157,40 @@ def delete_user(supabase: Client, user_id: Any) -> None:
     supabase.table("usuarios").delete().eq("id", user_id).execute()
 
 
+def list_attendances(supabase: Client) -> list[dict[str, Any]]:
+    try:
+        return supabase.table(_attendance_table_name(supabase)).select("*").order("fecha", desc=True).execute().data or []
+    except Exception:
+        return []
+
+
+def get_attendance_for_date(supabase: Client, fecha: str) -> list[dict[str, Any]]:
+    try:
+        return supabase.table(_attendance_table_name(supabase)).select("*").eq("fecha", fecha).execute().data or []
+    except Exception:
+        return []
+
+
+def mark_attendance(supabase: Client, usuario_id: Any, fecha: str, presente: bool = True) -> None:
+    table_name = _attendance_table_name(supabase)
+    data = {
+        "usuario_id": usuario_id,
+        "fecha": fecha,
+        "estado": "Presente" if presente else "Ausente",
+    }
+    if presente:
+        data["created_at"] = datetime.now(ZoneInfo("America/Lima")).isoformat()
+    else:
+        data["created_at"] = None
+    try:
+        supabase.table(table_name).upsert(data, on_conflict="usuario_id,fecha").execute()
+    except Exception:
+        supabase.table(table_name).insert(data).execute()
+
+
 def list_tasks(supabase: Client) -> list[dict[str, Any]]:
     return supabase.table(_task_table_name(supabase)).select("*").order("id", desc=False).execute().data or []
+
 
 def _task_table_columns(supabase: Client) -> list[str] | None:
     try:

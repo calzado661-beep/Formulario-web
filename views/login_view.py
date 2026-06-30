@@ -47,7 +47,7 @@ def render_login(supabase: Client) -> None:
     with center:
         st.markdown('<div class="login-card">', unsafe_allow_html=True)
         st.title("Ingreso al sistema")
-        st.caption("Roles soportados: administrador y trabajador")
+        st.caption("Roles soportados: administrador y operante")
 
         with st.form("login_form", clear_on_submit=False):
             email = st.text_input("Correo", placeholder="usuario@empresa.com").strip().lower()

@@ -11,7 +11,7 @@ from services.sidebar import render_sidebar
 
 load_dotenv()
 
-st.set_page_config(page_title="Formulario por Roles", page_icon="🧾", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Formulario por Roles", page_icon="F", layout="wide", initial_sidebar_state="expanded")
 
 def _get_env(name: str) -> str:
     value = os.getenv(name, "").strip()
@@ -45,15 +45,17 @@ def app() -> None:
     render_sidebar(user, logout)
     
     role = str(user.get("rol", "")).lower()
+    if role == "trabajador":
+        role = "operante"
     st.title("Sistema de Formularios")
     st.caption(f"Bienvenido al panel de {role}")
 
     if role == "administrador":
         render_admin(supabase)
-    elif role == "trabajador":
+    elif role == "operante":
         render_worker(supabase, user)
     else:
-        st.error("Rol no reconocido. Usa 'administrador' o 'trabajador'.")
+        st.error("Rol no reconocido. Usa 'administrador' o 'operante'.")
 
 if __name__ == "__main__":
     app()

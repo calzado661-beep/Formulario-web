@@ -1,71 +1,88 @@
 import streamlit as st
 
+
 def render_sidebar(user: dict, logout_func):
     """
-    Renderiza la barra lateral con la información del usuario y acciones globales.
+    Renderiza la barra lateral con la informacion del usuario y acciones globales.
     """
     role = str(user.get("rol", "")).lower()
+    if role == "trabajador":
+        role = "operante"
 
     if role == "administrador":
         render_admin_sidebar(user, logout_func)
-    elif role == "trabajador":
+    elif role == "operante":
         render_worker_sidebar(user, logout_func)
     else:
         with st.sidebar:
             st.error("Rol no identificado")
             _render_logout_section(logout_func)
 
+
 def render_admin_sidebar(user: dict, logout_func):
     """
     Sidebar personalizado para el perfil de Administrador.
     """
     with st.sidebar:
-        st.title("🛡️ Panel Administrativo")
+        st.title("Panel Administrativo")
         _render_user_profile(user)
         st.divider()
-        st.markdown("### 📊 Gestión de Operaciones")
-        
-        # Inicializar el estado del menú si no existe
+        st.markdown("### Gestion de Operaciones")
+
         if "admin_menu" not in st.session_state:
             st.session_state.admin_menu = "Usuarios"
 
-        # Botones de navegación en el sidebar
-        if st.button("👥 Usuarios", use_container_width=True, 
-                    type="primary" if st.session_state.admin_menu == "Usuarios" else "secondary"):
+        if st.button(
+            "Usuarios",
+            use_container_width=True,
+            type="primary" if st.session_state.admin_menu == "Usuarios" else "secondary",
+        ):
             st.session_state.admin_menu = "Usuarios"
             st.rerun()
-            
-        if st.button("📝 Tareas", use_container_width=True, 
-                    type="primary" if st.session_state.admin_menu == "Tareas" else "secondary"):
+
+        if st.button(
+            "Tareas",
+            use_container_width=True,
+            type="primary" if st.session_state.admin_menu == "Tareas" else "secondary",
+        ):
             st.session_state.admin_menu = "Tareas"
             st.rerun()
-            
-        if st.button("📊 Realizadas / Puntos", use_container_width=True, 
-                    type="primary" if st.session_state.admin_menu == "Realizadas / Puntos" else "secondary"):
-            st.session_state.admin_menu = "Realizadas / Puntos"
+
+        if st.button(
+            "Asistencia",
+            use_container_width=True,
+            type="primary" if st.session_state.admin_menu == "Asistencia" else "secondary",
+        ):
+            st.session_state.admin_menu = "Asistencia"
             st.rerun()
 
         _render_logout_section(logout_func)
+
 
 def render_worker_sidebar(user: dict, logout_func):
     """
     Sidebar personalizado para el perfil de Trabajador.
     """
     with st.sidebar:
-        st.title("👷 Panel de Trabajo")
+        st.title("Panel de Trabajo")
         _render_user_profile(user)
         st.divider()
-        st.info("💡 **Consejo:** No olvides registrar todas tus actividades para acumular puntos.")
+        st.info("Consejo: No olvides registrar todas tus actividades para acumular puntos.")
         _render_logout_section(logout_func)
 
+
 def _render_user_profile(user: dict):
-    """Muestra la información del usuario logueado de forma común."""
-    st.markdown("### 👤 Mi Perfil")
+    """Muestra la informacion del usuario logueado de forma comun."""
+    st.markdown("### Mi Perfil")
     st.markdown(f"**Nombre:** {user.get('nombre')}")
-    st.caption(f"Acceso: {str(user.get('rol', '')).capitalize()}")
+    role = str(user.get("rol", "")).lower()
+    if role == "trabajador":
+        role = "operante"
+    st.caption(f"Acceso: {role.capitalize()}")
+
 
 def _render_logout_section(logout_func):
-    """Botón de cierre de sesión y pie de página del sidebar."""
+    """Boton de cierre de sesion y pie de pagina del sidebar."""
     st.divider()
-    st.button("Cerrar sesión", on_click=logout_func, use_container_width=True, type="primary")
-    st.sidebar.caption("v1.2 - Sistema de Gestión")
+    st.button("Cerrar sesion", on_click=logout_func, use_container_width=True, type="primary")
+    st.sidebar.caption("v1.2 - Sistema de Gestion")

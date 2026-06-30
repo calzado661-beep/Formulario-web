@@ -5,10 +5,11 @@ create table if not exists public.usuarios (
   id bigserial primary key,
   nombre text not null,
   email text not null unique,
-  password_hash text not null,
-  rol text not null check (rol in ('administrador', 'trabajador')),
+  password_hash text not null, -- almacena la contraseña literal
+  rol text not null check (rol in ('administrador', 'operante')),
   activo boolean not null default true,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  fecha_cumpleanos date
 );
 
 create table if not exists public.tarea (
@@ -70,3 +71,12 @@ create index if not exists idx_registro_actividades_trabajador_fecha
 
 create index if not exists idx_registro_actividades_tarea_id
   on public.registro_actividades(tarea_id);
+
+create table if not exists public.asistencias (
+  id bigserial primary key,
+  usuario_id bigint not null references public.usuarios(id) on delete cascade,
+  fecha date not null,
+  estado varchar(20) not null default 'Presente',
+  created_at timestamp default current_timestamp,
+  constraint uq_asistencia unique (usuario_id, fecha)
+);
