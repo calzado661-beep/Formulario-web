@@ -57,12 +57,12 @@ def _render_dynamic_fields(
         cantidad = float(cantidad_raw) if cantidad_raw.strip() else None
         usa_tiempo = st.checkbox(
             "Agregar tiempo",
-            value=True,
+            value=False,
             key=f"usa_tiempo_{idx}",
         )
         if usa_tiempo:
-            horas = st.text_input("Horas", placeholder="", key=f"horas_{idx}")
-            mins = st.text_input("Minutos", placeholder="", key=f"mins_{idx}")
+            horas = st.text_input("Horas", placeholder="", key=f"horas_{idx}", disabled=False)
+            mins = st.text_input("Minutos", placeholder="", key=f"mins_{idx}", disabled=False)
             horas_val = _parse_int_or_none(horas)
             mins_val = _parse_int_or_none(mins)
             if horas_val is not None or mins_val is not None:
@@ -70,6 +70,9 @@ def _render_dynamic_fields(
                     "horas": horas_val or 0,
                     "minutos": mins_val or 0,
                 }
+        else:
+            horas = st.text_input("Horas", placeholder="", key=f"horas_{idx}", disabled=True)
+            mins = st.text_input("Minutos", placeholder="", key=f"mins_{idx}", disabled=True)
         cumplimiento = True
     elif tipo == "tiempo":
         horas = st.text_input("Horas", placeholder="", key=f"horas_{idx}")
