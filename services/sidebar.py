@@ -13,6 +13,8 @@ def render_sidebar(user: dict, logout_func):
         render_admin_sidebar(user, logout_func)
     elif role == "operante":
         render_worker_sidebar(user, logout_func)
+    elif role == "jefe de equipo":
+        render_team_leader_sidebar(user, logout_func)
     else:
         with st.sidebar:
             st.error("Rol no identificado")
@@ -56,6 +58,14 @@ def render_admin_sidebar(user: dict, logout_func):
             st.session_state.admin_menu = "Asistencia"
             st.rerun()
 
+        if st.button(
+            "Tiendas",
+            use_container_width=True,
+            type="primary" if st.session_state.admin_menu == "Tiendas" else "secondary",
+        ):
+            st.session_state.admin_menu = "Tiendas"
+            st.rerun()
+
         _render_logout_section(logout_func)
 
 
@@ -68,6 +78,16 @@ def render_worker_sidebar(user: dict, logout_func):
         _render_user_profile(user)
         st.divider()
         st.info("Consejo: No olvides registrar todas tus actividades para acumular puntos.")
+        _render_logout_section(logout_func)
+
+
+def render_team_leader_sidebar(user: dict, logout_func):
+    """
+    Sidebar personalizado para el perfil de Jefe de Equipo.
+    """
+    with st.sidebar:
+        st.title("Panel de Jefe de Equipo")
+        _render_user_profile(user)
         _render_logout_section(logout_func)
 
 

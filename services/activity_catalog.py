@@ -16,6 +16,7 @@
     {"actividad": "Cuadre Lote (Impresión Códigos)", "tipo_medicion": "cumplimiento", "unidad_base": None},
     {"actividad": "Pistoleado y Embalado (Despacho)", "tipo_medicion": "tiempo", "unidad_base": "minutos"},
     {"actividad": "Envío Nuevo", "tipo_medicion": "tiempo", "unidad_base": "minutos"},
+    {"actividad": "Etiquetado", "tipo_medicion": "tiempo", "unidad_base": "minutos"},
     {"actividad": "Micro Inventario", "tipo_medicion": "cantidad", "unidad_base": "pares"},
     {"actividad": "Levantar Información (Merma)", "tipo_medicion": "cantidad", "unidad_base": "cajas"},
     {"actividad": "Pedido por Mayor", "tipo_medicion": "cumplimiento", "unidad_base": None},

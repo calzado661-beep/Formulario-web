@@ -78,6 +78,7 @@ def get_activity_capture_mode(task_name: str) -> tuple[str, str | None]:
     time_tasks = [
         "pistoleado y embalado despacho",
         "envio nuevo",
+        "etiquetado",
     ]
     if any(k in name for k in time_tasks):
         return "tiempo", "minutos"

@@ -26,6 +26,9 @@ alter table public.registros_tareas
   add column if not exists puntos_obtenidos numeric not null default 0,
   add column if not exists created_at timestamptz not null default now();
 
+alter table public.registro_actividades
+  add column if not exists dato_extra text;
+
 create index if not exists idx_registros_tareas_usuario_fecha
   on public.registros_tareas(usuario_id, fecha_registro desc);
 

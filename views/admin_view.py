@@ -9,19 +9,23 @@ from supabase import Client
 
 from services.repositories import (
     create_task,
+    create_tienda,
     create_user,
     delete_task_score_ranges,
+    delete_tienda,
     delete_user,
     get_attendance_for_date,
     list_all_activity_logs,
     list_attendances,
     list_task_score_ranges,
     list_tasks,
+    list_tiendas,
     list_workers,
     mark_attendance,
     select_users,
     set_task_score_ranges,
     update_task,
+    update_tienda,
     update_user,
 )
 from services.scoring import get_activity_capture_mode
@@ -35,6 +39,8 @@ def render_admin(supabase: Client) -> None:
         _tasks_panel(supabase)
     elif menu == "Asistencia":
         _attendance_panel(supabase)
+    elif menu == "Tiendas":
+        _stores_panel(supabase)
     else:
         _worker_points_panel(supabase)
 
@@ -67,7 +73,7 @@ def _users_crud(supabase: Client) -> None:
                 min_value=birthday_min,
                 max_value=birthday_max,
             )
-            rol = st.selectbox("Rol", ["administrador", "operante"])
+            rol = st.selectbox("Rol", ["administrador", "operante", "jefe de equipo"])
             activo = st.checkbox("Activo", value=True)
             ok = st.form_submit_button("Crear usuario")
 
@@ -107,10 +113,13 @@ def _users_crud(supabase: Client) -> None:
                     min_value=birthday_min,
                     max_value=birthday_max,
                 )
+                role_options = ["administrador", "operante", "jefe de equipo"]
+                current_role = _normalize_role(selected.get("rol"))
+                role_index = role_options.index(current_role) if current_role in role_options else 0
                 new_rol = st.selectbox(
                     "Rol",
-                    ["administrador", "operante"],
-                    index=0 if _normalize_role(selected.get("rol")) == "administrador" else 1,
+                    role_options,
+                    index=role_index,
                 )
                 new_activo = st.checkbox("Activo", value=bool(selected.get("activo", True)))
                 new_password = st.text_input("Nueva contrasena (opcional)", type="password")
@@ -174,6 +183,8 @@ def _normalize_role_label(role: Any) -> str:
         return "operante"
     if value == "administrador":
         return "administrador"
+    if value == "jefe de equipo":
+        return "jefe de equipo"
     return str(role or "")
 
 
@@ -550,6 +561,72 @@ def _attendance_panel(supabase: Client) -> None:
         )
 
 
+def _stores_panel(supabase: Client) -> None:
+    st.subheader("Gestion de tiendas")
+    stores = list_tiendas(supabase)
+    if stores:
+        st.dataframe(pd.DataFrame(stores), width="stretch")
+    else:
+        st.info("No hay tiendas registradas.")
+
+    tab1, tab2, tab3 = st.tabs(["Crear", "Editar", "Eliminar"])
+
+    with tab1:
+        with st.form("create_store"):
+            nombre = st.text_input("Nombre de tienda")
+            activo = st.checkbox("Activo", value=True, key="store_create_active")
+            ok = st.form_submit_button("Crear tienda")
+
+        if ok:
+            if not nombre.strip():
+                st.error("El nombre de la tienda es obligatorio.")
+            else:
+                try:
+                    create_tienda(supabase, {"nombre": nombre.strip(), "activo": activo})
+                    st.success("Tienda creada.")
+                    st.rerun()
+                except RuntimeError as exc:
+                    st.error(str(exc))
+
+    with tab2:
+        if not stores:
+            st.info("No hay tiendas para editar.")
+        else:
+            store_map = {f"{t.get('id')} - {t.get('nombre')}": t for t in stores}
+            sel = st.selectbox("Tienda", list(store_map.keys()), key="edit_store_sel")
+            selected = store_map[sel]
+            with st.form("edit_store"):
+                nombre = st.text_input("Nombre de tienda", value=str(selected.get("nombre", "")))
+                activo = st.checkbox("Activo", value=bool(selected.get("activo", True)), key="store_edit_active")
+                save = st.form_submit_button("Guardar cambios")
+
+            if save:
+                if not nombre.strip():
+                    st.error("El nombre de la tienda es obligatorio.")
+                else:
+                    try:
+                        update_tienda(supabase, selected["id"], {"nombre": nombre.strip(), "activo": activo})
+                        st.success("Tienda actualizada.")
+                        st.rerun()
+                    except RuntimeError as exc:
+                        st.error(str(exc))
+
+    with tab3:
+        if not stores:
+            st.info("No hay tiendas para eliminar.")
+        else:
+            store_map = {f"{t.get('id')} - {t.get('nombre')}": t for t in stores}
+            sel = st.selectbox("Tienda a eliminar", list(store_map.keys()), key="del_store_sel")
+            target = store_map[sel]
+            if st.button("Eliminar tienda", type="primary"):
+                try:
+                    delete_tienda(supabase, target["id"])
+                    st.success("Tienda eliminada.")
+                    st.rerun()
+                except RuntimeError as exc:
+                    st.error(str(exc))
+
+
 def _worker_points_panel(supabase: Client) -> None:
     st.subheader("Tareas realizadas y puntos por trabajador")
     logs = list_all_activity_logs(supabase)
@@ -557,7 +634,7 @@ def _worker_points_panel(supabase: Client) -> None:
         st.info("No hay registros todavía.")
         return
     users = select_users(supabase)
-    workers = [u for u in users if _normalize_role(u.get("rol")) == "operante"]
+    workers = [u for u in users if _normalize_role(u.get("rol")) in {"operante", "jefe de equipo"}]
     worker_ids = {u.get("id") for u in workers}
     user_name_by_id = {u.get("id"): (u.get("nombre") or u.get("email")) for u in workers}
     user_email_by_id = {u.get("id"): u.get("email") for u in workers}

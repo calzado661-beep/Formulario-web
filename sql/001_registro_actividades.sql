@@ -6,6 +6,7 @@
   actividad_nombre text not null,
   cantidad numeric,
   tiempo_minutos integer,
+  dato_extra text,
   cumplimiento boolean,
   detalle text,
   puntos_obtenidos numeric not null default 0,

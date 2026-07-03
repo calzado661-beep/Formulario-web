@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Any
+import re
 from zoneinfo import ZoneInfo
 
 from supabase import Client
@@ -8,6 +9,8 @@ from services.scoring import get_activity_capture_mode
 
 _TASK_TABLE_NAME: str | None = None
 _ATTENDANCE_TABLE_NAME: str | None = None
+_MISSING_COLUMN_RE = re.compile(r"Could not find the '([^']+)' column")
+_MISSING_RESOURCE_RE = re.compile(r"Could not find the table 'public\.([^']+)'")
 
 
 def _task_table_name(supabase: Client) -> str:
@@ -84,7 +87,11 @@ def select_users(supabase: Client) -> list[dict[str, Any]]:
 
 
 def list_workers(supabase: Client) -> list[dict[str, Any]]:
-    return [u for u in select_users(supabase) if str(u.get("rol", "")).lower() in {"trabajador", "operante"}]
+    return [u for u in select_users(supabase) if str(u.get("rol", "")).lower() in {"trabajador", "operante", "jefe de equipo"}]
+
+
+def list_operantes_and_team_leads(supabase: Client) -> list[dict[str, Any]]:
+    return [u for u in select_users(supabase) if str(u.get("rol", "")).lower() in {"operante", "jefe de equipo"}]
 
 
 def verify_user(supabase: Client, email: str, password: str) -> dict[str, Any] | None:
@@ -105,7 +112,7 @@ def verify_user(supabase: Client, email: str, password: str) -> dict[str, Any] |
 
 def get_tasks_for_user(supabase: Client, user: dict[str, Any]) -> list[dict[str, Any]]:
     role = (user.get("rol") or "").lower()
-    if role not in {"trabajador", "operante"}:
+    if role not in {"trabajador", "operante", "jefe de equipo"}:
         return supabase.table(_task_table_name(supabase)).select("*").execute().data or []
 
     user_id = user.get("id")
@@ -131,30 +138,64 @@ def get_tasks_for_user(supabase: Client, user: dict[str, Any]) -> list[dict[str,
 
 def create_user(supabase: Client, payload: dict[str, Any], plain_password: str) -> None:
     data = payload.copy()
-    try:
-        data["password_hash"] = plain_password
-        supabase.table("usuarios").insert(data).execute()
-    except Exception:
-        data.pop("password_hash", None)
-        data["password"] = plain_password
-        supabase.table("usuarios").insert(data).execute()
+    data["password_hash"] = plain_password
+    supabase.table("usuarios").insert(data).execute()
 
 
 def update_user(supabase: Client, user_id: Any, changes: dict[str, Any], new_password: str | None = None) -> None:
     data = changes.copy()
     if new_password:
-        try:
-            data["password_hash"] = new_password
-            supabase.table("usuarios").update(data).eq("id", user_id).execute()
-            return
-        except Exception:
-            data.pop("password_hash", None)
-            data["password"] = new_password
+        data["password_hash"] = new_password
     supabase.table("usuarios").update(data).eq("id", user_id).execute()
 
 
 def delete_user(supabase: Client, user_id: Any) -> None:
     supabase.table("usuarios").delete().eq("id", user_id).execute()
+
+
+def list_tiendas(supabase: Client) -> list[dict[str, Any]]:
+    try:
+        return supabase.table("tiendas").select("*").order("id", desc=False).execute().data or []
+    except Exception:
+        return []
+
+
+def create_tienda(supabase: Client, payload: dict[str, Any]) -> None:
+    try:
+        supabase.table("tiendas").insert(payload).execute()
+    except Exception as exc:
+        if _is_missing_table_error(exc, "tiendas"):
+            raise RuntimeError("La tabla 'public.tiendas' no existe todavia. Ejecuta el SQL de migracion para crearla.") from exc
+        raise
+
+
+def update_tienda(supabase: Client, tienda_id: Any, changes: dict[str, Any]) -> None:
+    try:
+        supabase.table("tiendas").update(changes).eq("id", tienda_id).execute()
+    except Exception as exc:
+        if _is_missing_table_error(exc, "tiendas"):
+            raise RuntimeError("La tabla 'public.tiendas' no existe todavia. Ejecuta el SQL de migracion para crearla.") from exc
+        raise
+
+
+def delete_tienda(supabase: Client, tienda_id: Any) -> None:
+    try:
+        supabase.table("tiendas").delete().eq("id", tienda_id).execute()
+    except Exception as exc:
+        if _is_missing_table_error(exc, "tiendas"):
+            raise RuntimeError("La tabla 'public.tiendas' no existe todavia. Ejecuta el SQL de migracion para crearla.") from exc
+        raise
+
+
+def list_incidentes(supabase: Client) -> list[dict[str, Any]]:
+    try:
+        return supabase.table("incidentes").select("*").order("created_at", desc=True).execute().data or []
+    except Exception:
+        return []
+
+
+def create_incidente(supabase: Client, payload: dict[str, Any]) -> None:
+    supabase.table("incidentes").insert(payload).execute()
 
 
 def list_attendances(supabase: Client) -> list[dict[str, Any]]:
@@ -219,9 +260,17 @@ def _is_missing_resource(error: Exception) -> bool:
     return _MISSING_RESOURCE_RE.search(str(error)) is not None
 
 
+def _is_missing_table_error(error: Exception, table_name: str) -> bool:
+    message = str(error).lower()
+    return table_name.lower() in message and "schema cache" in message
+
+
 def _activity_log_insert_payload(resource_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     if resource_name != "registros_tareas":
-        return payload.copy()
+        mapped = payload.copy()
+        if mapped.get("tiempo_minutos") is not None and "dato_extra" not in mapped:
+            mapped["dato_extra"] = mapped.get("tiempo_minutos")
+        return mapped
 
     mapped = {
         "usuario_id": payload.get("usuario_id") or payload.get("trabajador_id"),
@@ -236,6 +285,37 @@ def _activity_log_insert_payload(resource_name: str, payload: dict[str, Any]) ->
         mapped["dato_extra"] = payload.get("tiempo_minutos")
 
     return {key: value for key, value in mapped.items() if value is not None}
+
+
+def _activity_log_resource_candidates(supabase: Client) -> list[str]:
+    return ["registros_tareas", "registro_actividades"]
+
+
+def _activity_log_user_columns(resource_name: str) -> tuple[str, ...]:
+    if resource_name == "registros_tareas":
+        return ("usuario_id", "trabajador_id")
+    return ("trabajador_id", "usuario_id")
+
+
+def _normalize_activity_log(row: dict[str, Any]) -> dict[str, Any]:
+    normalized = row.copy()
+    if "usuario_id" in normalized and "trabajador_id" not in normalized:
+        normalized["trabajador_id"] = normalized.get("usuario_id")
+    if "observacion" in normalized and "detalle" not in normalized:
+        normalized["detalle"] = normalized.get("observacion")
+    if "dato_extra" in normalized and "tiempo_minutos" not in normalized:
+        raw_extra = normalized.get("dato_extra")
+        try:
+            normalized["tiempo_minutos"] = int(float(raw_extra)) if raw_extra is not None else raw_extra
+        except Exception:
+            normalized["tiempo_minutos"] = raw_extra
+    if "tarea" in normalized and "actividad_nombre" not in normalized:
+        normalized["actividad_nombre"] = normalized.get("tarea")
+    return normalized
+
+
+def _normalize_activity_logs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_normalize_activity_log(row) for row in rows]
 
 
 def create_task(supabase: Client, payload: dict[str, Any]) -> dict[str, Any] | None:

@@ -5,6 +5,7 @@ from supabase import create_client, Client
 
 from views.login_view import render_login
 from views.admin_view import render_admin
+from views.team_leader_view import render_team_leader_workspace
 from views.worker_view import render_worker
 from services.styles import apply_styles
 from services.sidebar import render_sidebar
@@ -54,8 +55,10 @@ def app() -> None:
         render_admin(supabase)
     elif role == "operante":
         render_worker(supabase, user)
+    elif role == "jefe de equipo":
+        render_team_leader_workspace(supabase, user)
     else:
-        st.error("Rol no reconocido. Usa 'administrador' o 'operante'.")
+        st.error("Rol no reconocido. Usa 'administrador', 'operante' o 'jefe de equipo'.")
 
 if __name__ == "__main__":
     app()

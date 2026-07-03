@@ -18,13 +18,23 @@ from services.scoring import calculate_points, get_activity_capture_mode
 NO_TASK_OPTION = "Ninguno"
 
 
+def _parse_int_or_none(value: str) -> int | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(float(raw))
+    except Exception:
+        return None
+
+
 def _render_dynamic_fields(
     task_name: str,
     idx: int,
     task_tipo: str = None,
     task_unidad: str = None,
     task_data: dict[str, Any] | None = None,
-) -> tuple[float | None, int | None, bool | None, str, str | None]:
+) -> tuple[float | None, int | None, bool | None, str, str | None, dict[str, int] | None]:
     tipo_bd = (task_tipo or "").strip().lower()
     tipos_validos = {"cantidad", "tiempo", "fijo", "cumplimiento", "turno"}
     if tipo_bd in tipos_validos:
@@ -36,22 +46,41 @@ def _render_dynamic_fields(
     minutos = None
     cumplimiento = None
     turno = None
+    tiempo_extra = None
 
     if tipo == "cantidad":
-        cantidad = st.number_input(
+        cantidad_raw = st.text_input(
             f"Cantidad ({unidad or 'unidades'})",
-            min_value=0.0,
-            step=1.0,
-            value=0.0,
+            placeholder="",
             key=f"cantidad_{idx}",
         )
+        cantidad = float(cantidad_raw) if cantidad_raw.strip() else None
+        usa_tiempo = st.checkbox(
+            "Agregar tiempo",
+            value=True,
+            key=f"usa_tiempo_{idx}",
+        )
+        if usa_tiempo:
+            horas = st.text_input("Horas", placeholder="", key=f"horas_{idx}")
+            mins = st.text_input("Minutos", placeholder="", key=f"mins_{idx}")
+            horas_val = _parse_int_or_none(horas)
+            mins_val = _parse_int_or_none(mins)
+            if horas_val is not None or mins_val is not None:
+                tiempo_extra = {
+                    "horas": horas_val or 0,
+                    "minutos": mins_val or 0,
+                }
         cumplimiento = True
     elif tipo == "tiempo":
-        horas = st.number_input("Horas", min_value=0, step=1, key=f"horas_{idx}")
-        mins = st.number_input("Minutos", min_value=0, max_value=59, step=1, key=f"mins_{idx}")
-        minutos = int(horas) * 60 + int(mins)
-        st.caption(f"Tiempo total: {minutos} min")
-        cantidad = 0.0
+        horas = st.text_input("Horas", placeholder="", key=f"horas_{idx}")
+        mins = st.text_input("Minutos", placeholder="", key=f"mins_{idx}")
+        horas_val = _parse_int_or_none(horas)
+        mins_val = _parse_int_or_none(mins)
+        if horas_val is not None or mins_val is not None:
+            tiempo_extra = {
+                "horas": horas_val or 0,
+                "minutos": mins_val or 0,
+            }
         cumplimiento = True
     if tipo in {"fijo", "cumplimiento"}:
         cantidad = 1.0
@@ -73,52 +102,30 @@ def _render_dynamic_fields(
             st.caption(f"Puntaje configurado: mañana/tarde = {simple}, completo = {completo}")
 
     detalle = st.text_area("Detalle (opcional)", placeholder="Comentarios de lo realizado", key=f"detalle_{idx}")
-    return cantidad, minutos, cumplimiento, detalle, turno
+    return cantidad, minutos, cumplimiento, detalle, turno, tiempo_extra
 
 
-def _render_save_success_screen(message: str) -> None:
+def _render_save_success_message(message: str) -> None:
     st.markdown(
         f"""
         <style>
-            .worker-success-screen {{
-                min-height: 62vh;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                gap: 1.25rem;
-                margin: 1rem 0 1.5rem;
-                padding: 3rem 2rem;
-                border-radius: 0.9rem;
-                background: linear-gradient(135deg, rgba(22, 163, 74, 0.96), rgba(21, 128, 61, 0.96));
-                color: #ffffff;
-                text-align: center;
-                box-shadow: 0 18px 45px rgba(0, 0, 0, 0.25);
-            }}
-            .worker-success-screen__title {{
-                margin: 0;
-                font-size: clamp(2.4rem, 6vw, 5.5rem);
-                line-height: 1.05;
-                font-weight: 800;
-                color: #ffffff !important;
-            }}
-            .worker-success-screen__message {{
-                margin: 0;
-                font-size: clamp(1.15rem, 2.2vw, 1.8rem);
+            .worker-success-inline {{
+                margin-top: 0.75rem;
+                padding: 0.7rem 0.9rem;
+                border-radius: 0.6rem;
+                background: rgba(220, 252, 231, 0.95);
+                border: 1px solid rgba(34, 197, 94, 0.35);
+                color: #166534;
+                font-size: 0.95rem;
                 font-weight: 600;
             }}
         </style>
-        <div class="worker-success-screen">
-            <h1 class="worker-success-screen__title">Se guardo correctamente</h1>
-            <p class="worker-success-screen__message">{message}</p>
+        <div class="worker-success-inline">
+            {message}
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-    if st.button("Aceptar", type="primary", use_container_width=True, key="worker_success_accept"):
-        st.session_state.pop("worker_save_success", None)
-        st.rerun()
 
 
 def _render_sticky_save_button_styles() -> None:
@@ -126,128 +133,39 @@ def _render_sticky_save_button_styles() -> None:
         """
         <style>
             .main .block-container {
-                padding-bottom: 7rem;
-            }
-            .st-key-worker_save_records {
-                position: fixed;
-                right: 2rem;
-                bottom: 1.5rem;
-                z-index: 999;
-                width: min(420px, calc(100vw - 4rem));
-                padding: 0.75rem;
-                border-radius: 0.8rem;
-                background: rgba(255, 255, 255, 0.92);
-                box-shadow: 0 14px 35px rgba(0, 0, 0, 0.24);
-                backdrop-filter: blur(10px);
-                -webkit-backdrop-filter: blur(10px);
-            }
-            .st-key-worker_save_records button {
-                min-height: 3.25rem;
-                font-size: 1.05rem;
+                padding-bottom: 2rem;
             }
             .st-key-worker_add_record,
             .st-key-worker_remove_record {
-                position: fixed;
-                right: 2rem;
-                z-index: 1000;
-                width: 4rem;
-                height: 4rem;
-            }
-            .st-key-worker_add_record {
-                bottom: 7.25rem;
-            }
-            .st-key-worker_remove_record {
-                bottom: 11.75rem;
+                width: 100%;
             }
             .st-key-worker_add_record button,
             .st-key-worker_remove_record button {
-                width: 4rem;
-                height: 4rem;
-                min-height: 4rem;
-                padding: 0 !important;
-                border-radius: 999px;
-                font-size: 2rem;
-                font-weight: 800;
-                line-height: 1;
-                box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
+                width: 100%;
+                min-height: 2.9rem;
+                padding: 0.45rem 1rem;
+                border-radius: 0.7rem;
+                font-size: 1rem;
+                font-weight: 700;
+                line-height: 1.2;
+                box-shadow: 0 8px 18px rgba(0, 0, 0, 0.14);
             }
             @media (max-width: 640px) {
-                .st-key-worker_save_records {
-                    left: 1rem;
-                    right: 1rem;
-                    bottom: 1rem;
-                    width: auto;
-                }
                 .st-key-worker_add_record,
                 .st-key-worker_remove_record {
-                    right: 1rem;
-                    width: 3.5rem;
-                    height: 3.5rem;
-                }
-                .st-key-worker_add_record {
-                    bottom: 7rem;
-                }
-                .st-key-worker_remove_record {
-                    bottom: 11rem;
+                    width: 100%;
                 }
                 .st-key-worker_add_record button,
                 .st-key-worker_remove_record button {
-                    width: 3.5rem;
-                    height: 3.5rem;
-                    min-height: 3.5rem;
-                    font-size: 1.8rem;
+                    width: 100%;
+                    min-height: 2.7rem;
+                    font-size: 0.98rem;
                 }
             }
         </style>
         """,
         unsafe_allow_html=True,
     )
-
-
-@st.dialog("Confirmar guardado")
-def _render_save_confirmation_dialog() -> None:
-    st.markdown(
-        """
-        <style>
-            .worker-confirm-screen {
-                padding: 1.5rem 1rem 1rem;
-                border-radius: 0.9rem;
-                background: rgba(254, 243, 199, 0.96);
-                border: 2px solid #f59e0b;
-                text-align: center;
-            }
-            .worker-confirm-screen__title {
-                margin: 0 0 0.75rem;
-                color: #92400e !important;
-                font-size: clamp(1.6rem, 3vw, 2.5rem);
-                line-height: 1.1;
-                font-weight: 800;
-            }
-            .worker-confirm-screen__message {
-                margin: 0;
-                color: #78350f;
-                font-size: clamp(1rem, 1.5vw, 1.25rem);
-                font-weight: 600;
-            }
-        </style>
-        <div class="worker-confirm-screen">
-            <h2 class="worker-confirm-screen__title">¿Esta seguro de guardar los registros?</h2>
-            <p class="worker-confirm-screen__message">Revise la informacion antes de confirmar.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    col_confirm, col_cancel = st.columns(2)
-    with col_confirm:
-        if st.button("Si, guardar", type="primary", use_container_width=True, key="worker_confirm_save"):
-            st.session_state.pop("worker_save_confirm", None)
-            st.session_state.worker_save_confirmed = True
-            st.rerun()
-    with col_cancel:
-        if st.button("Cancelar", use_container_width=True, key="worker_cancel_save"):
-            st.session_state.pop("worker_save_confirm", None)
-            st.rerun()
 
 
 @st.dialog("Seleccione una tarea")
@@ -295,10 +213,6 @@ def render_worker(supabase: Client, user: dict) -> None:
     with tab2:
         st.subheader("Registrar lo realizado")
         _render_sticky_save_button_styles()
-        if "worker_save_success" in st.session_state:
-            _render_save_success_screen(st.session_state.worker_save_success)
-            return
-
         tasks = get_tasks_for_user(supabase, user)
 
         if not tasks:
@@ -313,11 +227,11 @@ def render_worker(supabase: Client, user: dict) -> None:
 
         col_add, col_remove = st.columns(2)
         with col_add:
-            if st.button("+", key="worker_add_record") and st.session_state.worker_items_count < len(sorted_task_keys):
+            if st.button("Agregar tareas", key="worker_add_record", use_container_width=True) and st.session_state.worker_items_count < len(sorted_task_keys):
                 st.session_state.worker_items_count += 1
                 st.rerun()
         with col_remove:
-            if st.button("-", key="worker_remove_record") and st.session_state.worker_items_count > 1:
+            if st.button("Quitar tareas", key="worker_remove_record", use_container_width=True) and st.session_state.worker_items_count > 1:
                 st.session_state.worker_items_count -= 1
                 st.rerun()
 
@@ -339,6 +253,21 @@ def render_worker(supabase: Client, user: dict) -> None:
                 opciones_disponibles = [NO_TASK_OPTION, *opciones_disponibles]
 
             task_key = st.selectbox("Tarea realizada", opciones_disponibles, key=f"task_{i}")
+            task_state_key = f"task_prev_{i}"
+            prev_task_key = st.session_state.get(task_state_key)
+            if prev_task_key != task_key:
+                for field_key in (
+                    f"cantidad_{i}",
+                    f"horas_{i}",
+                    f"mins_{i}",
+                    f"cumpl_{i}",
+                    f"detalle_{i}",
+                    f"turno_{i}",
+                    f"usa_tiempo_{i}",
+                ):
+                    st.session_state.pop(field_key, None)
+                st.session_state[task_state_key] = task_key
+
             if task_key == NO_TASK_OPTION:
                 registros.append(
                     {
@@ -360,7 +289,7 @@ def render_worker(supabase: Client, user: dict) -> None:
             clean_name = task_key.split(" - ", 1)[-1] if " - " in task_key else task_key
             selected_task = task_map[task_key]
 
-            cantidad, minutos, cumplimiento, detalle, turno = _render_dynamic_fields(
+            cantidad, minutos, cumplimiento, detalle, turno, tiempo_extra = _render_dynamic_fields(
                 clean_name,
                 i,
                 task_tipo=selected_task.get("tipo_medicion"),
@@ -377,31 +306,23 @@ def render_worker(supabase: Client, user: dict) -> None:
                     "cumplimiento": cumplimiento,
                     "detalle": detalle,
                     "turno": turno,
+                    "tiempo_extra": tiempo_extra,
                 }
             )
             st.divider()
 
-        guardar = st.button(
-            "Guardar registros",
-            type="primary",
-            use_container_width=True,
-            key="worker_save_records",
-        )
+        guardar = st.button("Guardar registros", type="primary", use_container_width=True, key="worker_save_records")
 
         if guardar:
             if any(item.get("task_key") is None for item in registros):
                 st.session_state.worker_missing_task_alert = True
             else:
-                st.session_state.worker_save_confirm = True
+                st.session_state.worker_save_confirmed = True
             st.rerun()
 
         should_save = st.session_state.pop("worker_save_confirmed", False)
         if st.session_state.get("worker_missing_task_alert"):
             _render_missing_task_dialog()
-            return
-
-        if st.session_state.get("worker_save_confirm"):
-            _render_save_confirmation_dialog()
             return
 
         if should_save:
@@ -446,13 +367,20 @@ def render_worker(supabase: Client, user: dict) -> None:
                         item["cumplimiento"],
                     )
 
+                    tiempo_extra = item.get("tiempo_extra")
+                    tiempo_extra_minutos = (
+                        int(tiempo_extra["horas"]) * 60 + int(tiempo_extra["minutos"])
+                        if tiempo_extra
+                        else None
+                    )
+
                     payload = {
                         "trabajador_id": user.get("id"),
                         "tarea_id": task_map[item["task_key"]].get("id"),
                         "actividad_nombre": item["task_name"],
                         "fecha_registro": now_lima.date().isoformat(),
                         "cantidad": item["cantidad"],
-                        "tiempo_minutos": item["minutos"],
+                        "tiempo_minutos": tiempo_extra_minutos if tiempo_extra_minutos is not None else item["minutos"],
                         "cumplimiento": item["cumplimiento"],
                         "detalle": (item["detalle"] or "").strip() or None,
                         "turno": item.get("turno"),
@@ -473,16 +401,16 @@ def render_worker(supabase: Client, user: dict) -> None:
 
             if errores:
                 if guardados_bd:
-                    st.success(f"Se guardaron {guardados_bd} registros en base de datos. Puntos totales: {total_puntos}")
+                    st.success(f"Se guardaron {guardados_bd} registros en base de datos.")
                 st.error(f"{errores} registros fallaron. Error: {last_error}")
                 st.caption("Detalle del error de guardado:")
                 st.json(failed_payloads)
                 return
             if guardados_bd:
                 st.session_state.worker_save_success = (
-                    f"Registro guardado correctamente. Puntos totales: {total_puntos}"
+                    "Registro guardado correctamente."
                     if guardados_bd == 1
-                    else f"Se guardaron {guardados_bd} registros correctamente. Puntos totales: {total_puntos}"
+                    else f"Se guardaron {guardados_bd} registros correctamente."
                 )
             st.session_state.worker_items_count = 1
             st.rerun()
