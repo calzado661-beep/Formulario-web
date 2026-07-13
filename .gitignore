@@ -7,3 +7,9 @@ venv/
 # Caché de Python
 __pycache__/
 *.pyc
+
+# React / Vite
+node_modules/
+dist/
+.vite/
+*.local

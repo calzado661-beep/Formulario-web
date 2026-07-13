@@ -1,0 +1,593 @@
+import { requireSupabase } from "./supabaseClient";
+import { isWorkerRole, normalizeRole } from "./scoring";
+import { nowLimaISODateTime } from "./dates";
+
+let taskTableName;
+let attendanceTableName;
+
+const missingColumnRegex = /Could not find the '([^']+)' column/i;
+const missingResourceRegex = /Could not find the table 'public\.([^']+)'/i;
+
+function db() {
+  return requireSupabase();
+}
+
+function apiEndpoints(path) {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const configuredOrigin = import.meta.env?.VITE_API_URL;
+  const origins = [configuredOrigin, "http://127.0.0.1:5180", "http://localhost:5180"]
+    .filter(Boolean)
+    .map((origin) => String(origin).replace(/\/+$/, ""));
+
+  return Array.from(new Set([normalizedPath, ...origins.map((origin) => `${origin}${normalizedPath}`)]));
+}
+
+async function requestLocalApi(path, options = {}, config = {}) {
+  for (const endpoint of apiEndpoints(path)) {
+    try {
+      const response = await fetch(endpoint, {
+        ...options,
+        headers: {
+          "content-type": "application/json",
+          ...(options.headers || {})
+        }
+      });
+
+      if (response.status === 404) continue;
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) continue;
+
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok) return payload;
+      if (config.nullOnAuthFailure && [400, 401, 403].includes(response.status)) return null;
+
+      throw new Error(payload.error || payload.message || `Error ${response.status} al consultar el backend local.`);
+    } catch (error) {
+      if (error instanceof TypeError) continue;
+      throw error;
+    }
+  }
+
+  return null;
+}
+
+function errorMessage(error) {
+  return error?.message || String(error || "Error desconocido");
+}
+
+function ensureOk(result) {
+  if (result.error) throw result.error;
+  return result.data;
+}
+
+async function trySelectTable(tableName) {
+  const result = await db().from(tableName).select("id").limit(1);
+  return !result.error;
+}
+
+export async function getTaskTableName() {
+  if (taskTableName) return taskTableName;
+
+  for (const candidate of ["tarea", "tareas"]) {
+    if (await trySelectTable(candidate)) {
+      taskTableName = candidate;
+      return taskTableName;
+    }
+  }
+
+  throw new Error("No se encontro la tabla de tareas. Crea public.tarea o public.tareas.");
+}
+
+async function getAttendanceTableName() {
+  if (attendanceTableName) return attendanceTableName;
+
+  for (const candidate of ["asistencias", "asistencia"]) {
+    if (await trySelectTable(candidate)) {
+      attendanceTableName = candidate;
+      return attendanceTableName;
+    }
+  }
+
+  throw new Error("No se encontro la tabla de asistencia. Crea public.asistencias o public.asistencia.");
+}
+
+function isMissingResource(error) {
+  const message = errorMessage(error);
+  return missingResourceRegex.test(message) || /relation .* does not exist/i.test(message);
+}
+
+function missingColumn(error) {
+  return missingColumnRegex.exec(errorMessage(error))?.[1] || null;
+}
+
+function isMissingTableError(error, tableName) {
+  const message = errorMessage(error).toLowerCase();
+  return message.includes(tableName.toLowerCase()) && message.includes("schema cache");
+}
+
+async function tableColumns(tableName) {
+  const result = await db().from(tableName).select("*").limit(1);
+  if (result.error || !result.data?.length) return null;
+  return Object.keys(result.data[0]);
+}
+
+function filterPayloadColumns(payload, columns) {
+  if (!columns) return payload;
+  return Object.fromEntries(Object.entries(payload).filter(([key]) => columns.includes(key)));
+}
+
+function isActiveValue(value) {
+  return !["false", "0", "no"].includes(String(value ?? true).trim().toLowerCase());
+}
+
+export function friendlyError(error) {
+  const message = errorMessage(error);
+  if (/row-level security/i.test(message)) {
+    return "Supabase rechazo la operacion por politicas RLS. Revisa permisos de la clave publica.";
+  }
+  if (/duplicate key/i.test(message)) {
+    return "Ya existe un registro con esos datos.";
+  }
+  if (/violates foreign key/i.test(message)) {
+    return "No se puede guardar porque falta un registro relacionado.";
+  }
+  return message;
+}
+
+export async function selectUsers() {
+  const apiResult = await requestLocalApi("/api/users");
+  if (apiResult?.users) return apiResult.users;
+
+  const cols = "id,nombre,email,rol,activo,created_at,fecha_cumpleanos";
+  const precise = await db().from("usuarios").select(cols).order("id", { ascending: true });
+  if (!precise.error) return precise.data || [];
+  return ensureOk(await db().from("usuarios").select("*").order("id", { ascending: true })) || [];
+}
+
+export async function listWorkers() {
+  const users = await selectUsers();
+  return users.filter((user) => ["trabajador", "operante", "jefe de equipo"].includes(normalizeRole(user.rol)));
+}
+
+export async function listAssignableWorkers() {
+  const users = await selectUsers();
+  return users.filter((user) => isWorkerRole(user.rol) && isActiveValue(user.activo));
+}
+
+export async function listOperantesAndTeamLeads() {
+  const users = await selectUsers();
+  return users.filter((user) => ["operante", "jefe de equipo"].includes(normalizeRole(user.rol)));
+}
+
+export async function verifyUser(email, password) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+
+  const rpcResult = await db().rpc("verify_usuario_login", {
+    p_email: normalizedEmail,
+    p_password: password
+  });
+  if (!rpcResult.error && rpcResult.data?.length) return rpcResult.data[0];
+
+  const apiUser = await verifyUserWithLocalApi(normalizedEmail, password);
+  if (apiUser) return apiUser;
+
+  const byHash = await db()
+    .from("usuarios")
+    .select("*")
+    .eq("email", normalizedEmail)
+    .eq("password_hash", password)
+    .limit(1);
+  if (!byHash.error && byHash.data?.length) return byHash.data[0];
+
+  const byPassword = await db()
+    .from("usuarios")
+    .select("*")
+    .eq("email", normalizedEmail)
+    .eq("password", password)
+    .limit(1);
+  if (!byPassword.error && byPassword.data?.length) return byPassword.data[0];
+
+  return null;
+}
+
+async function verifyUserWithLocalApi(email, password) {
+  const payload = await requestLocalApi(
+    "/api/login",
+    {
+      method: "POST",
+      body: JSON.stringify({ email, password })
+    },
+    { nullOnAuthFailure: true }
+  );
+  return payload?.user || null;
+}
+
+export async function createUser(payload, plainPassword) {
+  ensureOk(await db().from("usuarios").insert({ ...payload, password_hash: plainPassword }));
+}
+
+export async function updateUser(userId, changes, newPassword) {
+  const payload = newPassword ? { ...changes, password_hash: newPassword } : changes;
+  ensureOk(await db().from("usuarios").update(payload).eq("id", userId));
+}
+
+export async function deleteUser(userId) {
+  ensureOk(await db().from("usuarios").delete().eq("id", userId));
+}
+
+export async function listTasks() {
+  const apiResult = await requestLocalApi("/api/tasks");
+  if (apiResult?.tasks) return apiResult.tasks;
+
+  const tableName = await getTaskTableName();
+  return ensureOk(await db().from(tableName).select("*").order("id", { ascending: true })) || [];
+}
+
+export async function getTasksForUser(user) {
+  const role = normalizeRole(user?.rol);
+  const tasks = await listTasks();
+
+  if (!["trabajador", "operante", "jefe de equipo"].includes(role)) {
+    return tasks;
+  }
+
+  const assignedTasks = tasks.filter((task) => {
+    const idMatches = ["asignado_a", "trabajador_id", "usuario_id"].some(
+      (column) => task[column] !== undefined && String(task[column]) === String(user?.id)
+    );
+    const emailMatches = ["email_trabajador", "correo_trabajador", "email"].some(
+      (column) => task[column] !== undefined && String(task[column]).toLowerCase() === String(user?.email || "").toLowerCase()
+    );
+    return idMatches || emailMatches;
+  });
+
+  return assignedTasks.length ? assignedTasks : tasks.filter((task) => isActiveValue(task.activo));
+}
+
+export async function listTaskScoreRanges(taskId) {
+  const apiResult = await requestLocalApi(`/api/task-score-ranges?taskId=${encodeURIComponent(taskId)}`);
+  if (apiResult?.ranges) return apiResult.ranges;
+
+  const result = await db()
+    .from("rangos_puntaje")
+    .select("*")
+    .eq("tarea_id", taskId)
+    .order("puntos", { ascending: true });
+  if (result.error) return [];
+  return result.data || [];
+}
+
+export async function deleteTaskScoreRanges(taskId) {
+  const apiResult = await requestLocalApi(`/api/task-score-ranges?taskId=${encodeURIComponent(taskId)}`, {
+    method: "DELETE"
+  });
+  if (apiResult) return;
+
+  const result = await db().from("rangos_puntaje").delete().eq("tarea_id", taskId);
+  if (result.error) throw result.error;
+}
+
+export async function setTaskScoreRanges(taskId, ranges) {
+  const normalized = (ranges || []).map((item) => ({
+    tarea_id: taskId,
+    cantidad_desde: item.cantidad_desde,
+    cantidad_hasta: item.cantidad_hasta,
+    puntos: item.puntos
+  }));
+
+  const apiResult = await requestLocalApi("/api/task-score-ranges", {
+    method: "PUT",
+    body: JSON.stringify({ taskId, ranges: normalized })
+  });
+  if (apiResult) return;
+
+  await deleteTaskScoreRanges(taskId);
+  if (!normalized.length) return;
+
+  ensureOk(await db().from("rangos_puntaje").insert(normalized));
+}
+
+export async function createTask(payload) {
+  const apiResult = await requestLocalApi("/api/tasks", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  if (apiResult?.task) return apiResult.task;
+
+  const tableName = await getTaskTableName();
+  const columns = await tableColumns(tableName);
+  const filteredPayload = filterPayloadColumns(payload, columns);
+  const result = await db().from(tableName).insert(filteredPayload).select("id").single();
+  if (result.error) throw result.error;
+  return result.data;
+}
+
+export async function updateTask(taskId, changes, existingRow) {
+  const apiResult = await requestLocalApi(`/api/tasks/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes)
+  });
+  if (apiResult?.task) return apiResult.task;
+
+  const tableName = await getTaskTableName();
+  const columns = existingRow ? Object.keys(existingRow) : await tableColumns(tableName);
+  ensureOk(await db().from(tableName).update(filterPayloadColumns(changes, columns)).eq("id", taskId));
+}
+
+export async function listTiendas() {
+  const result = await db().from("tiendas").select("*").order("id", { ascending: true });
+  if (result.error) return [];
+  return result.data || [];
+}
+
+export async function createTienda(payload) {
+  const result = await db().from("tiendas").insert(payload);
+  if (result.error) {
+    if (isMissingTableError(result.error, "tiendas")) {
+      throw new Error("La tabla public.tiendas no existe. Ejecuta la migracion SQL.");
+    }
+    throw result.error;
+  }
+}
+
+export async function updateTienda(tiendaId, changes) {
+  const result = await db().from("tiendas").update(changes).eq("id", tiendaId);
+  if (result.error) throw result.error;
+}
+
+export async function deleteTienda(tiendaId) {
+  const result = await db().from("tiendas").delete().eq("id", tiendaId);
+  if (result.error) throw result.error;
+}
+
+export async function listAttendances() {
+  const tableName = await getAttendanceTableName();
+  const result = await db().from(tableName).select("*").order("fecha", { ascending: false });
+  if (result.error) return [];
+  return result.data || [];
+}
+
+export async function getAttendanceForDate(fecha) {
+  const tableName = await getAttendanceTableName();
+  const result = await db().from(tableName).select("*").eq("fecha", fecha);
+  if (result.error) return [];
+  return result.data || [];
+}
+
+export async function markAttendance(usuarioId, fecha, presente = true) {
+  const tableName = await getAttendanceTableName();
+  const payload = {
+    usuario_id: usuarioId,
+    fecha,
+    estado: presente ? "Presente" : "Ausente",
+    created_at: presente ? nowLimaISODateTime() : null
+  };
+  const result = await db().from(tableName).upsert(payload, { onConflict: "usuario_id,fecha" });
+  if (result.error) {
+    ensureOk(await db().from(tableName).insert(payload));
+  }
+}
+
+function activityLogInsertPayload(resourceName, payload) {
+  if (resourceName !== "registros_tareas") {
+    const mapped = { ...payload };
+    if (mapped.tiempo_minutos !== null && mapped.tiempo_minutos !== undefined && !("dato_extra" in mapped)) {
+      mapped.dato_extra = mapped.tiempo_minutos;
+    }
+    return mapped;
+  }
+
+  const mapped = {
+    usuario_id: payload.usuario_id || payload.trabajador_id,
+    tarea_id: payload.tarea_id,
+    fecha_registro: payload.fecha_registro,
+    cantidad: payload.cantidad,
+    turno: payload.turno,
+    observacion: payload.observacion || payload.detalle,
+    puntos_obtenidos: payload.puntos_obtenidos
+  };
+
+  if (payload.tiempo_minutos !== null && payload.tiempo_minutos !== undefined) {
+    mapped.dato_extra = payload.tiempo_minutos;
+  }
+
+  return Object.fromEntries(Object.entries(mapped).filter(([, value]) => value !== undefined && value !== null));
+}
+
+export async function createWorkerActivityLog(payload) {
+  const apiResult = await requestLocalApi("/api/activity-logs", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  if (apiResult?.log) return apiResult.log;
+
+  const cleanPayload = { ...payload };
+  delete cleanPayload.created_at;
+
+  const optionalGroups = [
+    [],
+    ["created_at"],
+    ["actividad_id"],
+    ["actividad_nombre"],
+    ["turno"],
+    ["created_at", "actividad_id"],
+    ["created_at", "actividad_nombre"],
+    ["created_at", "turno"],
+    ["actividad_id", "actividad_nombre"],
+    ["created_at", "actividad_id", "actividad_nombre"],
+    ["created_at", "actividad_id", "actividad_nombre", "turno"]
+  ];
+
+  const attempts = [];
+  const seen = new Set();
+  optionalGroups.forEach((fields) => {
+    const candidate = { ...cleanPayload };
+    fields.forEach((field) => delete candidate[field]);
+    const signature = Object.keys(candidate).sort().join("|");
+    if (!seen.has(signature)) {
+      seen.add(signature);
+      attempts.push(candidate);
+    }
+  });
+
+  let lastError = null;
+  for (const resourceName of ["registros_tareas", "registro_actividades"]) {
+    for (const candidate of attempts) {
+      let currentCandidate = activityLogInsertPayload(resourceName, candidate);
+      for (let index = 0; index <= Object.keys(currentCandidate).length; index += 1) {
+        const result = await db().from(resourceName).insert(currentCandidate);
+        if (!result.error) return;
+        if (isMissingResource(result.error)) {
+          lastError = result.error;
+          break;
+        }
+        lastError = result.error;
+        const missing = missingColumn(result.error);
+        if (!missing || !(missing in currentCandidate)) break;
+        currentCandidate = { ...currentCandidate };
+        delete currentCandidate[missing];
+      }
+    }
+  }
+
+  throw lastError || new Error("No se pudo guardar el registro de actividad.");
+}
+
+function normalizeActivityLog(row) {
+  const normalized = { ...row };
+  if ("usuario_id" in normalized && !("trabajador_id" in normalized)) normalized.trabajador_id = normalized.usuario_id;
+  if ("observacion" in normalized && !("detalle" in normalized)) normalized.detalle = normalized.observacion;
+  if ("dato_extra" in normalized && !("tiempo_minutos" in normalized)) {
+    const rawExtra = normalized.dato_extra;
+    const parsed = Number(rawExtra);
+    normalized.tiempo_minutos = Number.isNaN(parsed) ? rawExtra : parsed;
+  }
+  if ("tarea" in normalized && !("actividad_nombre" in normalized)) normalized.actividad_nombre = normalized.tarea;
+  return normalized;
+}
+
+async function listActivityLogsForResource(resourceName, userColumn, workerId) {
+  for (const orderColumn of ["fecha_registro", "created_at", null]) {
+    let query = db().from(resourceName).select("*").eq(userColumn, workerId);
+    if (orderColumn) query = query.order(orderColumn, { ascending: false });
+    const result = await query;
+    if (!result.error) return (result.data || []).map(normalizeActivityLog);
+  }
+  return null;
+}
+
+export async function listWorkerActivityLogs(workerId) {
+  const apiResult = await requestLocalApi(`/api/activity-logs?workerId=${encodeURIComponent(workerId)}`);
+  if (apiResult?.logs) return apiResult.logs.map(normalizeActivityLog);
+
+  const resources = ["v_registro_actividades", "registros_tareas", "registro_actividades"];
+  for (const resourceName of resources) {
+    const userColumns = resourceName === "registros_tareas" ? ["usuario_id", "trabajador_id"] : ["trabajador_id", "usuario_id"];
+    for (const userColumn of userColumns) {
+      const rows = await listActivityLogsForResource(resourceName, userColumn, workerId);
+      if (rows) return rows;
+    }
+  }
+  return [];
+}
+
+export async function listAllActivityLogs() {
+  const apiResult = await requestLocalApi("/api/activity-logs");
+  if (apiResult?.logs) return apiResult.logs.map(normalizeActivityLog);
+
+  for (const resourceName of ["v_registro_actividades", "registros_tareas", "registro_actividades"]) {
+    for (const orderColumn of ["fecha_registro", "created_at", null]) {
+      let query = db().from(resourceName).select("*");
+      if (orderColumn) query = query.order(orderColumn, { ascending: false });
+      const result = await query;
+      if (!result.error) return (result.data || []).map(normalizeActivityLog);
+    }
+  }
+  return [];
+}
+
+export async function listIncidentes() {
+  const result = await db().from("incidentes").select("*").order("created_at", { ascending: false });
+  if (result.error) return [];
+  return result.data || [];
+}
+
+export async function createIncidente(payload) {
+  ensureOk(await db().from("incidentes").insert(payload));
+}
+
+function normalizeGroupLeaderLog(row) {
+  return {
+    ...row,
+    encargado_nombre: row.encargado_nombre || row.encargado?.nombre,
+    encargado_email: row.encargado_email || row.encargado?.email,
+    trabajador_nombre: row.trabajador_nombre || row.trabajador?.nombre,
+    trabajador_email: row.trabajador_email || row.trabajador?.email,
+    tarea_nombre: row.tarea_nombre || row.tarea?.titulo || row.tarea?.nombre
+  };
+}
+
+export async function createGroupLeaderRecord(payload) {
+  const apiResult = await requestLocalApi("/api/group-leader/records", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  if (apiResult?.record) return apiResult.record;
+
+  const result = await db().from("registros_jefe_grupo").insert(payload);
+  if (result.error) throw result.error;
+  return null;
+}
+
+export async function loadGroupLeaderContext() {
+  const apiContext = await requestLocalApi("/api/group-leader/context");
+  if (apiContext) {
+    return {
+      workers: apiContext.workers || [],
+      tasks: apiContext.tasks || [],
+      leaders: apiContext.leaders || [],
+      records: (apiContext.records || []).map(normalizeGroupLeaderLog)
+    };
+  }
+
+  const [workers, tasks, records] = await Promise.all([
+    listAssignableWorkers(),
+    listTasks(),
+    listGroupLeaderRecords()
+  ]);
+  return { workers, tasks, leaders: [], records };
+}
+
+export async function listGroupLeaderRecords(encargadoId = null) {
+  const apiContext = await requestLocalApi("/api/group-leader/context");
+  if (apiContext?.records) {
+    const records = (apiContext.records || []).map(normalizeGroupLeaderLog);
+    if (!encargadoId) return records;
+    return records.filter((record) => String(record.encargado_id) === String(encargadoId));
+  }
+
+  let viewQuery = db().from("v_registros_jefe_grupo").select("*").order("created_at", { ascending: false });
+  if (encargadoId) viewQuery = viewQuery.eq("encargado_id", encargadoId);
+  const viewResult = await viewQuery;
+  if (!viewResult.error && (!viewResult.data?.length || "lote" in viewResult.data[0])) {
+    return (viewResult.data || []).map(normalizeGroupLeaderLog);
+  }
+
+  for (const taskRelation of ["tareas(nombre)", "tarea(titulo)"]) {
+    let tableQuery = db()
+      .from("registros_jefe_grupo")
+      .select(
+        `*, encargado:usuarios!registros_jefe_grupo_encargado_id_fkey(nombre,email), trabajador:usuarios!registros_jefe_grupo_trabajador_id_fkey(nombre,email), tarea:${taskRelation}`
+      )
+      .order("created_at", { ascending: false });
+    if (encargadoId) tableQuery = tableQuery.eq("encargado_id", encargadoId);
+    const tableResult = await tableQuery;
+    if (!tableResult.error) return (tableResult.data || []).map(normalizeGroupLeaderLog);
+  }
+
+  let plainQuery = db().from("registros_jefe_grupo").select("*").order("created_at", { ascending: false });
+  if (encargadoId) plainQuery = plainQuery.eq("encargado_id", encargadoId);
+  const plainResult = await plainQuery;
+  if (plainResult.error) throw plainResult.error;
+  return (plainResult.data || []).map(normalizeGroupLeaderLog);
+}
