@@ -6,7 +6,7 @@ create table if not exists public.usuarios (
   nombre text not null,
   email text not null unique,
   password_hash text not null, -- almacena la contraseña literal
-  rol text not null check (rol in ('administrador', 'operante', 'jefe de equipo')),
+  rol text not null check (rol in ('administrador', 'operante', 'jefe de equipo', 'jefe de grupo')),
   activo boolean not null default true,
   created_at timestamptz not null default now(),
   fecha_cumpleanos date
@@ -105,3 +105,95 @@ create table if not exists public.incidentes (
 create index if not exists idx_incidentes_tienda_id on public.incidentes(tienda_id);
 create index if not exists idx_incidentes_tarea_id on public.incidentes(tarea_id);
 create index if not exists idx_incidentes_created_at on public.incidentes(created_at desc);
+
+create table if not exists public.registros_jefe_grupo (
+  id bigserial primary key,
+  encargado_id bigint not null references public.usuarios(id) on delete restrict,
+  trabajador_id bigint not null references public.usuarios(id) on delete restrict,
+  tarea_id bigint not null references public.tarea(id) on delete restrict,
+  tarea_nombre text,
+  fecha_registro date not null default current_date,
+  cantidad numeric,
+  tiempo_minutos integer,
+  codigo_guia text,
+  lote text,
+  detalle text,
+  created_at timestamptz not null default now(),
+  constraint chk_registro_jefe_grupo_valor
+    check (
+      cantidad is not null
+      or tiempo_minutos is not null
+      or codigo_guia is not null
+      or detalle is not null
+    )
+);
+
+create index if not exists idx_registros_jefe_grupo_encargado
+  on public.registros_jefe_grupo(encargado_id, created_at desc);
+
+create index if not exists idx_registros_jefe_grupo_trabajador
+  on public.registros_jefe_grupo(trabajador_id, created_at desc);
+
+create index if not exists idx_registros_jefe_grupo_tarea
+  on public.registros_jefe_grupo(tarea_id);
+
+create or replace view public.v_registros_jefe_grupo as
+select
+  r.id,
+  r.encargado_id,
+  encargado.nombre as encargado_nombre,
+  encargado.email as encargado_email,
+  r.trabajador_id,
+  trabajador.nombre as trabajador_nombre,
+  trabajador.email as trabajador_email,
+  r.tarea_id,
+  coalesce(r.tarea_nombre, t.titulo, ('Tarea ' || r.tarea_id::text)) as tarea_nombre,
+  r.fecha_registro,
+  r.cantidad,
+  r.tiempo_minutos,
+  r.codigo_guia,
+  r.lote,
+  r.detalle,
+  r.created_at
+from public.registros_jefe_grupo r
+join public.usuarios encargado on encargado.id = r.encargado_id
+join public.usuarios trabajador on trabajador.id = r.trabajador_id
+left join public.tarea t on t.id = r.tarea_id;
+
+create or replace function public.verify_usuario_login(
+  p_email text,
+  p_password text
+)
+returns table (
+  id bigint,
+  nombre text,
+  email text,
+  rol text,
+  activo boolean,
+  created_at timestamptz,
+  fecha_cumpleanos date
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  return query
+  select
+    u.id,
+    u.nombre,
+    u.email,
+    u.rol,
+    u.activo,
+    u.created_at,
+    u.fecha_cumpleanos
+  from public.usuarios u
+  where lower(trim(u.email)) = lower(trim(p_email))
+    and u.password_hash = p_password
+  limit 1;
+end;
+$$;
+
+revoke all on function public.verify_usuario_login(text, text) from public;
+grant execute on function public.verify_usuario_login(text, text) to anon;
+grant execute on function public.verify_usuario_login(text, text) to authenticated;

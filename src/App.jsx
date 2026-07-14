@@ -6,6 +6,7 @@ import Login from "./components/Login";
 import TeamLeaderDashboard from "./components/TeamLeaderDashboard";
 import WorkerDashboard from "./components/WorkerDashboard";
 import { Alert } from "./components/ui";
+import { clearApiSession } from "./lib/repository";
 import { normalizeRole } from "./lib/scoring";
 
 const SESSION_KEY = "formulario_usuario";
@@ -36,7 +37,10 @@ export default function App() {
       user={user}
       adminSection={adminSection}
       onAdminSectionChange={setAdminSection}
-      onLogout={() => setUser(null)}
+      onLogout={() => {
+        clearApiSession();
+        setUser(null);
+      }}
     >
       {role === "administrador" ? <AdminDashboard section={adminSection} /> : null}
       {role === "operante" ? <WorkerDashboard user={user} /> : null}

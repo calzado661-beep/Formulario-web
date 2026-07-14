@@ -12,6 +12,16 @@ function db() {
   return requireSupabase();
 }
 
+const API_SESSION_KEY = "formulario_api_session";
+
+function apiSessionToken() {
+  try {
+    return localStorage.getItem(API_SESSION_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
 function apiEndpoints(path) {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const configuredOrigin = import.meta.env?.VITE_API_URL;
@@ -29,6 +39,7 @@ async function requestLocalApi(path, options = {}, config = {}) {
         ...options,
         headers: {
           "content-type": "application/json",
+          ...(apiSessionToken() ? { authorization: `Bearer ${apiSessionToken()}` } : {}),
           ...(options.headers || {})
         }
       });
@@ -162,14 +173,14 @@ export async function listOperantesAndTeamLeads() {
 export async function verifyUser(email, password) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
 
+  const apiUser = await verifyUserWithLocalApi(normalizedEmail, password);
+  if (apiUser) return apiUser;
+
   const rpcResult = await db().rpc("verify_usuario_login", {
     p_email: normalizedEmail,
     p_password: password
   });
   if (!rpcResult.error && rpcResult.data?.length) return rpcResult.data[0];
-
-  const apiUser = await verifyUserWithLocalApi(normalizedEmail, password);
-  if (apiUser) return apiUser;
 
   const byHash = await db()
     .from("usuarios")
@@ -199,19 +210,51 @@ async function verifyUserWithLocalApi(email, password) {
     },
     { nullOnAuthFailure: true }
   );
+  if (payload?.sessionToken) {
+    try {
+      localStorage.setItem(API_SESSION_KEY, payload.sessionToken);
+    } catch {
+      // El inicio de sesion sigue funcionando aunque el navegador bloquee storage.
+    }
+  }
   return payload?.user || null;
 }
 
+export function clearApiSession() {
+  try {
+    localStorage.removeItem(API_SESSION_KEY);
+  } catch {
+    // Nada que limpiar si storage no esta disponible.
+  }
+}
+
 export async function createUser(payload, plainPassword) {
-  ensureOk(await db().from("usuarios").insert({ ...payload, password_hash: plainPassword }));
+  const apiResult = await requestLocalApi("/api/users", {
+    method: "POST",
+    body: JSON.stringify({ ...payload, password_hash: plainPassword })
+  });
+  if (apiResult?.user) return apiResult.user;
+
+  return ensureOk(await db().from("usuarios").insert({ ...payload, password_hash: plainPassword }).select("*").single());
 }
 
 export async function updateUser(userId, changes, newPassword) {
   const payload = newPassword ? { ...changes, password_hash: newPassword } : changes;
-  ensureOk(await db().from("usuarios").update(payload).eq("id", userId));
+  const apiResult = await requestLocalApi(`/api/users/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+  if (apiResult?.user) return apiResult.user;
+
+  return ensureOk(await db().from("usuarios").update(payload).eq("id", userId).select("*").single());
 }
 
 export async function deleteUser(userId) {
+  const apiResult = await requestLocalApi(`/api/users/${encodeURIComponent(userId)}`, {
+    method: "DELETE"
+  });
+  if (apiResult?.deleted) return;
+
   ensureOk(await db().from("usuarios").delete().eq("id", userId));
 }
 
