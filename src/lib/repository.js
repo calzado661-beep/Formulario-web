@@ -1,5 +1,5 @@
 import { requireSupabase } from "./supabaseClient";
-import { isGroupLeaderTimeTask, isWorkerRole, normalizeRole } from "./scoring";
+import { applyScoringRules, isGroupLeaderTimeTask, isWorkerRole, normalizeRole, normalizeScoringRule } from "./scoring";
 import { nowLimaISODateTime } from "./dates";
 
 let taskTableName;
@@ -266,10 +266,26 @@ export async function deleteUser(userId) {
 
 export async function listTasks() {
   const apiResult = await requestLocalApi("/api/tasks");
-  if (apiResult?.tasks) return apiResult.tasks;
+  let tasks = apiResult?.tasks;
 
-  const tableName = await getTaskTableName();
-  return ensureOk(await db().from(tableName).select("*").order("id", { ascending: true })) || [];
+  if (!tasks) {
+    const tableName = await getTaskTableName();
+    tasks = ensureOk(await db().from(tableName).select("*").order("id", { ascending: true })) || [];
+  }
+
+  let rules = [];
+  try {
+    rules = await listTaskScoringRules();
+  } catch (error) {
+    console.warn("Las tareas se cargaron, pero no fue posible leer reglas_puntaje.", error);
+  }
+  const rulesByTask = new Map();
+  rules.forEach((rule) => {
+    const current = rulesByTask.get(String(rule.tarea_id)) || [];
+    current.push(rule);
+    rulesByTask.set(String(rule.tarea_id), current);
+  });
+  return tasks.map((task) => applyScoringRules(task, rulesByTask.get(String(task.id)) || []));
 }
 
 export async function getTasksForUser(user) {
@@ -306,47 +322,62 @@ export async function listBrands() {
   return result.data || [];
 }
 
-export async function listTaskScoreRanges(taskId) {
-  const apiResult = await requestLocalApi(`/api/task-score-ranges?taskId=${encodeURIComponent(taskId)}`);
-  if (apiResult?.ranges) return apiResult.ranges;
+export async function listTaskScoringRules(taskId = null) {
+  const query = taskId ? `?taskId=${encodeURIComponent(taskId)}` : "";
+  const apiResult = await requestLocalApi(`/api/task-score-ranges${query}`);
+  if (apiResult?.rules || apiResult?.ranges) {
+    return (apiResult.rules || apiResult.ranges || []).map(normalizeScoringRule);
+  }
 
-  const result = await db()
-    .from("rangos_puntaje")
-    .select("*")
-    .eq("tarea_id", taskId)
-    .order("puntos", { ascending: true });
-  if (result.error) return [];
-  return result.data || [];
+  let dbQuery = db().from("reglas_puntaje").select("*").order("puntos", { ascending: true });
+  if (taskId) dbQuery = dbQuery.eq("tarea_id", taskId);
+  const result = await dbQuery;
+  if (result.error) throw result.error;
+  return (result.data || []).map(normalizeScoringRule);
 }
 
-export async function deleteTaskScoreRanges(taskId) {
+export async function listTaskScoreRanges(taskId) {
+  return (await listTaskScoringRules(taskId)).filter((rule) => rule.tipo_regla === "CANTIDAD");
+}
+
+export async function deleteTaskScoringRules(taskId) {
   const apiResult = await requestLocalApi(`/api/task-score-ranges?taskId=${encodeURIComponent(taskId)}`, {
     method: "DELETE"
   });
   if (apiResult) return;
 
-  const result = await db().from("rangos_puntaje").delete().eq("tarea_id", taskId);
+  const result = await db().from("reglas_puntaje").delete().eq("tarea_id", taskId);
   if (result.error) throw result.error;
 }
 
-export async function setTaskScoreRanges(taskId, ranges) {
-  const normalized = (ranges || []).map((item) => ({
+export async function deleteTaskScoreRanges(taskId) {
+  return deleteTaskScoringRules(taskId);
+}
+
+export async function setTaskScoringRules(taskId, rules) {
+  const normalized = (rules || []).map((item) => ({
     tarea_id: taskId,
-    cantidad_desde: item.cantidad_desde,
-    cantidad_hasta: item.cantidad_hasta,
+    tipo_regla: String(item.tipo_regla || "CANTIDAD").toUpperCase(),
+    desde: item.desde ?? item.cantidad_desde ?? null,
+    hasta: item.hasta ?? item.cantidad_hasta ?? null,
+    turno: item.turno || null,
     puntos: item.puntos
   }));
 
   const apiResult = await requestLocalApi("/api/task-score-ranges", {
     method: "PUT",
-    body: JSON.stringify({ taskId, ranges: normalized })
+    body: JSON.stringify({ taskId, rules: normalized })
   });
   if (apiResult) return;
 
-  await deleteTaskScoreRanges(taskId);
+  await deleteTaskScoringRules(taskId);
   if (!normalized.length) return;
 
-  ensureOk(await db().from("rangos_puntaje").insert(normalized));
+  ensureOk(await db().from("reglas_puntaje").insert(normalized));
+}
+
+export async function setTaskScoreRanges(taskId, ranges) {
+  return setTaskScoringRules(taskId, ranges);
 }
 
 export async function createTask(payload) {

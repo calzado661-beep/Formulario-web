@@ -14,7 +14,7 @@ import { Button } from "./ui";
 
 const adminItems = [
   { key: "Usuarios", icon: UsersRound },
-  { key: "Tareas", icon: ClipboardList },
+  { key: "Tareas", label: "Tareas y puntajes", icon: ClipboardList },
   { key: "Asistencia", icon: CalendarCheck2 },
   { key: "Tiendas", icon: Store },
   { key: "Puntos", icon: BarChart3 }
@@ -51,7 +51,7 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
           </div>
           {role === "administrador" ? (
             <nav className="side-nav" aria-label="Gestion administrativa">
-              {adminItems.map(({ key, icon: Icon }) => (
+              {adminItems.map(({ key, label, icon: Icon }) => (
                 <button
                   key={key}
                   type="button"
@@ -59,7 +59,7 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
                   onClick={() => onAdminSectionChange(key)}
                 >
                   <Icon />
-                  <span>{key}</span>
+                  <span>{label || key}</span>
                 </button>
               ))}
             </nav>

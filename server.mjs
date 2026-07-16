@@ -183,6 +183,20 @@ function nullableNumber(value) {
   return Number.isNaN(number) ? null : number;
 }
 
+let taskTableName;
+
+async function getTaskTableName() {
+  if (taskTableName) return taskTableName;
+  for (const candidate of ["tarea", "tareas"]) {
+    const result = await supabase.from(candidate).select("id").limit(1);
+    if (!result.error) {
+      taskTableName = candidate;
+      return candidate;
+    }
+  }
+  throw new Error("No se encontro la tabla public.tarea ni public.tareas.");
+}
+
 function normalizeActivityLog(row) {
   const normalized = { ...row };
   if ("usuario_id" in normalized && !("trabajador_id" in normalized)) {
@@ -201,19 +215,30 @@ function normalizeActivityLog(row) {
   return normalized;
 }
 
-function taskPayloadForDb(body) {
-  const payload = {
-    nombre: body.nombre ?? body.titulo,
-    tipo_medicion: body.tipo_medicion,
-    activo: body.activo,
-    requiere_dato_extra: body.requiere_dato_extra,
-    nombre_dato_extra: body.nombre_dato_extra,
-    puntaje_fijo: body.puntaje_fijo,
-    puntos_turno_simple: body.puntos_turno_simple ?? body.puntaje_turno_simple,
-    puntos_turno_completo: body.puntos_turno_completo ?? body.puntaje_turno_completo,
-    tipo_tarea: body.tipo_tarea,
-    requiere_marca: body.requiere_marca
-  };
+function taskPayloadForDb(body, tableName) {
+  const payload = tableName === "tarea"
+    ? {
+        nombre: body.nombre ?? body.titulo,
+        activo: body.activo,
+        unidad_medida: body.unidad_medida ?? body.unidad_base,
+        tipo_tarea: body.tipo_tarea,
+        requiere_marca: body.requiere_marca,
+        requiere_tiempo: body.requiere_tiempo,
+        requiere_lote: body.requiere_lote,
+        requiere_numero_guia: body.requiere_numero_guia
+      }
+    : {
+        nombre: body.nombre ?? body.titulo,
+        tipo_medicion: body.tipo_medicion,
+        activo: body.activo,
+        requiere_dato_extra: body.requiere_dato_extra,
+        nombre_dato_extra: body.nombre_dato_extra,
+        puntaje_fijo: body.puntaje_fijo,
+        puntos_turno_simple: body.puntos_turno_simple ?? body.puntaje_turno_simple,
+        puntos_turno_completo: body.puntos_turno_completo ?? body.puntaje_turno_completo,
+        tipo_tarea: body.tipo_tarea,
+        requiere_marca: body.requiere_marca
+      };
 
   if (payload.activo === undefined && body.estado !== undefined) {
     payload.activo = !["inactivo", "cerrado", "false", "0", "no"].includes(
@@ -333,7 +358,8 @@ async function handleDeleteUser(_request, response, userId) {
 }
 
 async function selectTasks() {
-  const result = await supabase.from("tareas").select("*").order("id", { ascending: true });
+  const tableName = await getTaskTableName();
+  const result = await supabase.from(tableName).select("*").order("id", { ascending: true });
   if (result.error) throw result.error;
   return result.data || [];
 }
@@ -391,7 +417,7 @@ async function attachBrandBreakdown(rows, tableName, recordColumn) {
 }
 
 async function selectTaskScoreRanges(taskId = null) {
-  let query = supabase.from("rangos_puntaje").select("*").order("puntos", { ascending: true });
+  let query = supabase.from("reglas_puntaje").select("*").order("puntos", { ascending: true });
   if (taskId) query = query.eq("tarea_id", taskId);
   const result = await query;
   if (result.error) throw result.error;
@@ -447,14 +473,16 @@ async function handleReadTasks(_request, response) {
 
 async function handleCreateTask(request, response) {
   try {
+    if (!requireAdministrator(request, response)) return;
     const body = JSON.parse((await readBody(request)) || "{}");
-    const payload = taskPayloadForDb(body);
+    const tableName = await getTaskTableName();
+    const payload = taskPayloadForDb(body, tableName);
     if (!String(payload.nombre || "").trim()) {
       sendJson(response, 400, { error: "El nombre de la tarea es obligatorio." });
       return;
     }
 
-    const result = await supabase.from("tareas").insert(payload).select("*").single();
+    const result = await supabase.from(tableName).insert(payload).select("*").single();
     if (result.error) {
       sendJson(response, 500, { error: result.error.message });
       return;
@@ -468,9 +496,11 @@ async function handleCreateTask(request, response) {
 
 async function handleUpdateTask(request, response, taskId) {
   try {
+    if (!requireAdministrator(request, response)) return;
     const body = JSON.parse((await readBody(request)) || "{}");
-    const payload = taskPayloadForDb(body);
-    const result = await supabase.from("tareas").update(payload).eq("id", taskId).select("*").single();
+    const tableName = await getTaskTableName();
+    const payload = taskPayloadForDb(body, tableName);
+    const result = await supabase.from(tableName).update(payload).eq("id", taskId).select("*").single();
     if (result.error) {
       sendJson(response, 500, { error: result.error.message });
       return;
@@ -486,7 +516,8 @@ async function handleReadTaskScoreRanges(request, response) {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
     const taskId = url.searchParams.get("taskId");
-    sendJson(response, 200, { ranges: await selectTaskScoreRanges(taskId) });
+    const rules = await selectTaskScoreRanges(taskId);
+    sendJson(response, 200, { rules, ranges: rules });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron cargar los rangos." });
   }
@@ -494,35 +525,53 @@ async function handleReadTaskScoreRanges(request, response) {
 
 async function handleReplaceTaskScoreRanges(request, response) {
   try {
+    if (!requireAdministrator(request, response)) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const taskId = Number(body.taskId || body.tarea_id);
-    const ranges = Array.isArray(body.ranges) ? body.ranges : [];
+    const rules = Array.isArray(body.rules) ? body.rules : Array.isArray(body.ranges) ? body.ranges : [];
     if (!taskId) {
       sendJson(response, 400, { error: "La tarea es obligatoria." });
       return;
     }
 
-    const deleteResult = await supabase.from("rangos_puntaje").delete().eq("tarea_id", taskId);
+    const normalized = rules.map((item) => ({
+      tarea_id: taskId,
+      tipo_regla: String(item.tipo_regla || "CANTIDAD").trim().toUpperCase(),
+      desde: nullableNumber(item.desde ?? item.cantidad_desde),
+      hasta: nullableNumber(item.hasta ?? item.cantidad_hasta),
+      turno: item.turno ? String(item.turno).trim() : null,
+      puntos: nullableNumber(item.puntos)
+    }));
+    const invalid = normalized.find((rule) => (
+      !["CANTIDAD", "FIJO", "TURNO"].includes(rule.tipo_regla) ||
+      !Number.isInteger(rule.puntos) || rule.puntos < 1 || rule.puntos > 10 ||
+      (rule.tipo_regla === "CANTIDAD" && (rule.desde === null || rule.desde < 0)) ||
+      (rule.hasta !== null && (rule.desde === null || rule.hasta < rule.desde))
+    ));
+    if (invalid) {
+      sendJson(response, 400, { error: "Hay una regla invalida. Revisa tipo, rango y puntaje (1 a 10)." });
+      return;
+    }
+
+    const previousRules = await selectTaskScoreRanges(taskId);
+    const deleteResult = await supabase.from("reglas_puntaje").delete().eq("tarea_id", taskId);
     if (deleteResult.error) {
       sendJson(response, 500, { error: deleteResult.error.message });
       return;
     }
 
-    if (ranges.length) {
-      const payload = ranges.map((item) => ({
-        tarea_id: taskId,
-        cantidad_desde: nullableNumber(item.cantidad_desde) ?? 0,
-        cantidad_hasta: nullableNumber(item.cantidad_hasta),
-        puntos: nullableNumber(item.puntos) ?? 0
-      }));
-      const insertResult = await supabase.from("rangos_puntaje").insert(payload);
+    if (normalized.length) {
+      const insertResult = await supabase.from("reglas_puntaje").insert(normalized);
       if (insertResult.error) {
+        const rollback = previousRules.map(({ id: _id, ...rule }) => rule);
+        if (rollback.length) await supabase.from("reglas_puntaje").insert(rollback);
         sendJson(response, 500, { error: insertResult.error.message });
         return;
       }
     }
 
-    sendJson(response, 200, { ranges: await selectTaskScoreRanges(taskId) });
+    const savedRules = await selectTaskScoreRanges(taskId);
+    sendJson(response, 200, { rules: savedRules, ranges: savedRules });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron guardar los rangos." });
   }
@@ -530,13 +579,14 @@ async function handleReplaceTaskScoreRanges(request, response) {
 
 async function handleDeleteTaskScoreRanges(request, response) {
   try {
+    if (!requireAdministrator(request, response)) return;
     const url = new URL(request.url, `http://${request.headers.host}`);
     const taskId = Number(url.searchParams.get("taskId"));
     if (!taskId) {
       sendJson(response, 400, { error: "La tarea es obligatoria." });
       return;
     }
-    const result = await supabase.from("rangos_puntaje").delete().eq("tarea_id", taskId);
+    const result = await supabase.from("reglas_puntaje").delete().eq("tarea_id", taskId);
     if (result.error) {
       sendJson(response, 500, { error: result.error.message });
       return;
@@ -562,7 +612,8 @@ async function handleCreateActivityLog(request, response) {
     const session = requireSessionRole(request, response, ["operante", "jefe de equipo", "jefe de grupo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
-    const taskResult = await supabase.from("tareas").select("id,nombre,tipo_medicion,activo").eq("id", Number(body.tarea_id)).maybeSingle();
+    const tableName = await getTaskTableName();
+    const taskResult = await supabase.from(tableName).select("*").eq("id", Number(body.tarea_id)).maybeSingle();
     if (taskResult.error || !taskResult.data) {
       sendJson(response, 400, { error: "La tarea seleccionada no existe." });
       return;
@@ -643,9 +694,10 @@ function enrichGroupRecords(records, users, tasks) {
 }
 
 async function loadGroupLeaderData() {
+  const tableName = await getTaskTableName();
   const [usersResult, tasksResult, recordsResult] = await Promise.all([
     supabase.from("usuarios").select("id,nombre,email,rol,activo").order("id", { ascending: true }),
-    supabase.from("tareas").select("*").order("id", { ascending: true }),
+    supabase.from(tableName).select("*").order("id", { ascending: true }),
     supabase
       .from("registros_jefe_grupo")
       .select("id,encargado_id,trabajador_id,tarea_id,tarea_nombre,fecha_registro,cantidad,tiempo_minutos,codigo_guia,lote,detalle,created_at")
@@ -688,9 +740,10 @@ async function handleCreateGroupLeaderRecord(request, response) {
       return;
     }
 
+    const tableName = await getTaskTableName();
     const taskResult = await supabase
-      .from("tareas")
-      .select("id,nombre,tipo_medicion,activo")
+      .from(tableName)
+      .select("*")
       .eq("id", taskId)
       .maybeSingle();
     if (taskResult.error || !taskResult.data || !isGroupLeaderTimeTask(taskResult.data)) {
@@ -764,9 +817,10 @@ async function handleCreateGroupLeaderRecord(request, response) {
 }
 
 async function loadIncidentData() {
+  const tableName = await getTaskTableName();
   const [usersResult, tasksResult, storesResult, incidentsResult] = await Promise.all([
     supabase.from("usuarios").select("id,nombre,email,rol,activo").order("id", { ascending: true }),
-    supabase.from("tareas").select("id,nombre,activo").order("id", { ascending: true }),
+    supabase.from(tableName).select("id,nombre,activo").order("id", { ascending: true }),
     supabase.from("tiendas").select("id,nombre,activo").order("id", { ascending: true }),
     supabase
       .from("incidentes")
@@ -826,9 +880,10 @@ async function handleCreateIncident(request, response) {
       return;
     }
 
+    const tableName = await getTaskTableName();
     const [workerResult, taskResult, storeResult] = await Promise.all([
       supabase.from("usuarios").select("id,nombre,email,rol,activo").eq("id", workerId).maybeSingle(),
-      supabase.from("tareas").select("id,nombre,activo").eq("id", taskId).maybeSingle(),
+      supabase.from(tableName).select("id,nombre,activo").eq("id", taskId).maybeSingle(),
       supabase.from("tiendas").select("id,nombre,activo").eq("id", storeId).maybeSingle()
     ]);
 

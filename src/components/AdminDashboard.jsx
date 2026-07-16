@@ -4,20 +4,18 @@ import {
   createTask,
   createTienda,
   createUser,
-  deleteTaskScoreRanges,
   deleteTienda,
   deleteUser,
   friendlyError,
   getAttendanceForDate,
   listAllActivityLogs,
   listAttendances,
-  listTaskScoreRanges,
   listTasks,
   listTiendas,
   listWorkers,
   markAttendance,
   selectUsers,
-  setTaskScoreRanges,
+  setTaskScoringRules,
   updateTask,
   updateTienda,
   updateUser
@@ -25,13 +23,13 @@ import {
 import { birthdayMaxISO, formatDateTimeLima, todayLimaISO } from "../lib/dates";
 import {
   displayShiftFromQuantity,
+  emptyQuantityRanges,
   getActivityCaptureMode,
   getTaskTitle,
   normalizeMeasurementType,
   normalizeRole,
-  quantityThresholdDefaults,
-  thresholdsAreAscending,
-  thresholdsToRanges
+  quantityRangesFromRules,
+  validateQuantityRanges
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
 import {
@@ -280,13 +278,15 @@ function UsersPanel() {
 function defaultTaskForm() {
   return {
     titulo: "",
-    descripcion: "",
-    estado: "pendiente",
-    asignado_a: "",
+    activo: true,
+    tipo_tarea: "General",
     tipo_medicion: "cantidad",
-    unidad_base: "",
+    unidad_base: "Ninguna",
     requiere_marca: false,
-    thresholds: Array(10).fill(0),
+    requiere_tiempo: false,
+    requiere_lote: false,
+    requiere_numero_guia: false,
+    ranges: emptyQuantityRanges(),
     puntaje_fijo: 1,
     puntaje_turno_simple: 1,
     puntaje_turno_completo: 1
@@ -295,38 +295,55 @@ function defaultTaskForm() {
 
 function taskPayloadFromForm(form) {
   const tipo = normalizeMeasurementType(form.tipo_medicion);
-  const payload = {
+  return {
+    nombre: form.titulo.trim(),
     titulo: form.titulo.trim(),
-    descripcion: form.descripcion.trim(),
-    estado: form.estado.trim() || "pendiente",
+    activo: Boolean(form.activo),
+    tipo_tarea: form.tipo_tarea || "General",
     tipo_medicion: tipo,
+    unidad_medida: form.unidad_base.trim() || "Ninguna",
     unidad_base: form.unidad_base.trim() || null,
     requiere_marca: Boolean(form.requiere_marca),
-    puntaje_fijo: null,
-    puntaje_turno_simple: null,
-    puntaje_turno_completo: null
+    requiere_tiempo: Boolean(form.requiere_tiempo || tipo === "tiempo"),
+    requiere_lote: Boolean(form.requiere_lote),
+    requiere_numero_guia: Boolean(form.requiere_numero_guia)
   };
+}
 
-  if (tipo === "fijo") payload.puntaje_fijo = Number(form.puntaje_fijo || 1);
+function scoringRulesFromForm(form) {
+  const tipo = normalizeMeasurementType(form.tipo_medicion);
+  if (tipo === "cantidad") {
+    return form.ranges.map((range, index) => ({
+      tipo_regla: "CANTIDAD",
+      desde: Number(range.desde),
+      hasta: range.hasta === "" || range.hasta === null ? null : Number(range.hasta),
+      turno: null,
+      puntos: index + 1
+    }));
+  }
+  if (tipo === "fijo") {
+    return [{ tipo_regla: "FIJO", desde: null, hasta: null, turno: null, puntos: Number(form.puntaje_fijo) }];
+  }
   if (tipo === "turno") {
-    payload.puntaje_turno_simple = Number(form.puntaje_turno_simple || 1);
-    payload.puntaje_turno_completo = Number(form.puntaje_turno_completo || 1);
+    return [
+      { tipo_regla: "TURNO", desde: null, hasta: null, turno: "Simple", puntos: Number(form.puntaje_turno_simple) },
+      { tipo_regla: "TURNO", desde: null, hasta: null, turno: "Completo", puntos: Number(form.puntaje_turno_completo) }
+    ];
   }
-  if (String(form.asignado_a || "").trim()) {
-    const parsed = Number.parseInt(form.asignado_a, 10);
-    if (!Number.isNaN(parsed)) payload.asignado_a = parsed;
-  }
-  return payload;
+  return [];
 }
 
 async function loadTaskBundle() {
   const tasks = await listTasks();
-  const entries = await Promise.all(tasks.map(async (task) => [task.id, await listTaskScoreRanges(task.id)]));
-  return { tasks, rangesByTaskId: Object.fromEntries(entries) };
+  const rulesByTaskId = {};
+  tasks.forEach((task) => {
+    rulesByTaskId[String(task.id)] = task.reglas_puntaje || [];
+  });
+  return { tasks, rulesByTaskId };
 }
 
 function TasksPanel() {
-  const { data, loading, error, reload } = useAsyncData(loadTaskBundle, [], { tasks: [], rangesByTaskId: {} });
+  const { data, loading, error, reload } = useAsyncData(loadTaskBundle, [], { tasks: [], rulesByTaskId: {} });
   const [tab, setTab] = useState("Crear tarea");
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -335,25 +352,28 @@ function TasksPanel() {
   const [editForm, setEditForm] = useState(defaultTaskForm());
 
   const tasks = data?.tasks || [];
-  const rangesByTaskId = data?.rangesByTaskId || {};
+  const rulesByTaskId = data?.rulesByTaskId || {};
   const selectedTask = tasks.find((task) => String(task.id) === String(selectedTaskId));
 
   useEffect(() => {
     if (!selectedTask) return;
+    const rules = rulesByTaskId[String(selectedTask.id)] || [];
     setEditForm({
       titulo: getTaskTitle(selectedTask),
-      descripcion: selectedTask.descripcion || "",
-      estado: selectedTask.estado || "pendiente",
-      asignado_a: selectedTask.asignado_a || "",
+      activo: boolValue(selectedTask.activo),
+      tipo_tarea: selectedTask.tipo_tarea || "General",
       tipo_medicion: normalizeMeasurementType(selectedTask.tipo_medicion),
-      unidad_base: selectedTask.unidad_base || selectedTask.unidad || "",
+      unidad_base: selectedTask.unidad_medida || selectedTask.unidad_base || selectedTask.unidad || "Ninguna",
       requiere_marca: Boolean(selectedTask.requiere_marca),
-      thresholds: quantityThresholdDefaults(rangesByTaskId[selectedTask.id] || []),
+      requiere_tiempo: Boolean(selectedTask.requiere_tiempo),
+      requiere_lote: Boolean(selectedTask.requiere_lote),
+      requiere_numero_guia: Boolean(selectedTask.requiere_numero_guia),
+      ranges: quantityRangesFromRules(rules),
       puntaje_fijo: Number(selectedTask.puntaje_fijo || selectedTask.puntaje || 1),
       puntaje_turno_simple: Number(selectedTask.puntaje_turno_simple || selectedTask.puntos_turno_simple || 1),
       puntaje_turno_completo: Number(selectedTask.puntaje_turno_completo || selectedTask.puntos_turno_completo || 1)
     });
-  }, [selectedTask?.id, rangesByTaskId]);
+  }, [selectedTask?.id, rulesByTaskId]);
 
   async function handleCreate(event) {
     event.preventDefault();
@@ -362,16 +382,17 @@ function TasksPanel() {
       setStatus({ type: "error", message: "El nombre de tarea es obligatorio." });
       return;
     }
-    if (normalizeMeasurementType(createForm.tipo_medicion) === "cantidad" && !thresholdsAreAscending(createForm.thresholds)) {
-      setStatus({ type: "error", message: "Los valores de cantidad deben ir de menor a mayor." });
+    const rangesError = normalizeMeasurementType(createForm.tipo_medicion) === "cantidad"
+      ? validateQuantityRanges(createForm.ranges)
+      : "";
+    if (rangesError) {
+      setStatus({ type: "error", message: rangesError });
       return;
     }
     setSaving(true);
     try {
       const created = await createTask(taskPayloadFromForm(createForm));
-      if (created?.id && normalizeMeasurementType(createForm.tipo_medicion) === "cantidad") {
-        await setTaskScoreRanges(created.id, thresholdsToRanges(createForm.thresholds));
-      }
+      if (created?.id) await setTaskScoringRules(created.id, scoringRulesFromForm(createForm));
       setCreateForm(defaultTaskForm());
       setStatus({ type: "success", message: "Tarea creada correctamente." });
       reload();
@@ -390,18 +411,17 @@ function TasksPanel() {
       setStatus({ type: "error", message: "El nombre de tarea es obligatorio." });
       return;
     }
-    if (normalizeMeasurementType(editForm.tipo_medicion) === "cantidad" && !thresholdsAreAscending(editForm.thresholds)) {
-      setStatus({ type: "error", message: "Los valores de cantidad deben ir de menor a mayor." });
+    const rangesError = normalizeMeasurementType(editForm.tipo_medicion) === "cantidad"
+      ? validateQuantityRanges(editForm.ranges)
+      : "";
+    if (rangesError) {
+      setStatus({ type: "error", message: rangesError });
       return;
     }
     setSaving(true);
     try {
       await updateTask(selectedTask.id, taskPayloadFromForm(editForm), selectedTask);
-      if (normalizeMeasurementType(editForm.tipo_medicion) === "cantidad") {
-        await setTaskScoreRanges(selectedTask.id, thresholdsToRanges(editForm.thresholds));
-      } else {
-        await deleteTaskScoreRanges(selectedTask.id);
-      }
+      await setTaskScoringRules(selectedTask.id, scoringRulesFromForm(editForm));
       setStatus({ type: "success", message: "Tarea actualizada correctamente." });
       reload();
     } catch (err) {
@@ -416,8 +436,9 @@ function TasksPanel() {
     const row = { Actividad: getTaskTitle(task), "Tipo de puntaje": tipo };
     for (let point = 1; point <= 10; point += 1) row[`${point} punto`] = "";
     if (tipo === "cantidad") {
-      quantityThresholdDefaults(rangesByTaskId[task.id] || []).forEach((threshold, index) => {
-        row[`${index + 1} punto`] = threshold;
+      quantityRangesFromRules(rulesByTaskId[String(task.id)] || []).forEach((range, index) => {
+        if (range.desde === "") return;
+        row[`${index + 1} punto`] = `${range.desde} - ${range.hasta === "" || range.hasta === null ? "sin limite" : range.hasta}`;
       });
     }
     if (tipo === "fijo") {
@@ -472,15 +493,14 @@ function TaskForm({ form, setForm, onSubmit, saving, submitLabel }) {
     <form className="stack" onSubmit={onSubmit}>
       <div className="form-grid">
         <TextInput label="Nombre de tarea" value={form.titulo} onChange={(titulo) => setForm({ ...form, titulo })} />
-        <TextInput label="Estado" value={form.estado} onChange={(estado) => setForm({ ...form, estado })} />
-        <TextInput
-          label="Asignado a"
-          value={form.asignado_a}
-          onChange={(asignado_a) => setForm({ ...form, asignado_a })}
-          placeholder="ID de usuario opcional"
+        <SelectInput
+          label="Categoria"
+          value={form.tipo_tarea}
+          onChange={(tipo_tarea) => setForm({ ...form, tipo_tarea })}
+          options={["Ingreso", "Despacho", "General"]}
         />
         <SelectInput
-          label="Tipo de medicion"
+          label="Tipo de puntaje"
           value={form.tipo_medicion}
           onChange={(tipo_medicion) => setForm({ ...form, tipo_medicion })}
           options={taskTypes}
@@ -489,15 +509,17 @@ function TaskForm({ form, setForm, onSubmit, saving, submitLabel }) {
           label="Unidad base"
           value={form.unidad_base}
           onChange={(unidad_base) => setForm({ ...form, unidad_base })}
-          placeholder="pares, cajas, bultos"
+          placeholder="Pares, cajas, bultos o Ninguna"
         />
-        <TextArea label="Descripcion" value={form.descripcion} onChange={(descripcion) => setForm({ ...form, descripcion })} />
+        <CheckboxInput label="Tarea activa" checked={form.activo} onChange={(activo) => setForm({ ...form, activo })} />
         <CheckboxInput
-          label="Marcas activas por defecto"
+          label="Requiere marca"
           checked={form.requiere_marca}
           onChange={(requiere_marca) => setForm({ ...form, requiere_marca })}
-          hint="El operante o jefe de grupo podrá cambiarlo en cada registro."
         />
+        <CheckboxInput label="Requiere tiempo" checked={form.requiere_tiempo} onChange={(requiere_tiempo) => setForm({ ...form, requiere_tiempo })} />
+        <CheckboxInput label="Requiere lote" checked={form.requiere_lote} onChange={(requiere_lote) => setForm({ ...form, requiere_lote })} />
+        <CheckboxInput label="Requiere numero de guia" checked={form.requiere_numero_guia} onChange={(requiere_numero_guia) => setForm({ ...form, requiere_numero_guia })} />
       </div>
       <ScoreFields form={form} setForm={setForm} />
       <div className="form-actions">
@@ -512,22 +534,38 @@ function ScoreFields({ form, setForm }) {
   if (tipo === "cantidad") {
     return (
       <div className="score-matrix">
-        <div className="matrix-title">Matriz de puntajes por cantidad</div>
+        <div className="matrix-title">Rangos de cantidad para puntajes del 1 al 10</div>
+        <Alert>Define desde y hasta para cada puntaje. En 10 puntos puedes dejar “Hasta” vacio para indicar que no tiene limite.</Alert>
         <div className="score-grid">
-          {form.thresholds.map((threshold, index) => (
+          {form.ranges.map((range, index) => (
             <label key={index} className="score-cell">
-              <span>{index + 1} punto</span>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={threshold}
-                onChange={(event) => {
-                  const thresholds = [...form.thresholds];
-                  thresholds[index] = Number(event.target.value || 0);
-                  setForm({ ...form, thresholds });
-                }}
-              />
+              <span>{index + 1} punto{index ? "s" : ""}</span>
+              <div className="range-inputs">
+                <input
+                  aria-label={`Desde para ${index + 1} puntos`}
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Desde"
+                  value={range.desde}
+                  onChange={(event) => {
+                    const ranges = form.ranges.map((item, itemIndex) => itemIndex === index ? { ...item, desde: event.target.value } : item);
+                    setForm({ ...form, ranges });
+                  }}
+                />
+                <input
+                  aria-label={`Hasta para ${index + 1} puntos`}
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder={index === 9 ? "Sin limite" : "Hasta"}
+                  value={range.hasta}
+                  onChange={(event) => {
+                    const ranges = form.ranges.map((item, itemIndex) => itemIndex === index ? { ...item, hasta: event.target.value } : item);
+                    setForm({ ...form, ranges });
+                  }}
+                />
+              </div>
             </label>
           ))}
         </div>

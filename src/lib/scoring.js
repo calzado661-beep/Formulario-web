@@ -41,9 +41,56 @@ export function isWorkerRole(role) {
 
 export function normalizeMeasurementType(value) {
   const raw = normalizeText(value);
+  if (raw === "cantidad") return "cantidad";
+  if (raw === "fijo") return "fijo";
+  if (raw === "turno") return "turno";
   if (raw === "cumplimiento") return "fijo";
-  if (["cantidad", "tiempo", "fijo", "turno"].includes(raw)) return raw;
+  if (raw === "tiempo") return "tiempo";
   return "cantidad";
+}
+
+export function normalizeScoringRule(rule = {}) {
+  const type = normalizeText(rule.tipo_regla || rule.tipo || "cantidad").toUpperCase();
+  const from = rule.desde ?? rule.cantidad_desde ?? null;
+  const to = rule.hasta ?? rule.cantidad_hasta ?? null;
+
+  return {
+    ...rule,
+    tipo_regla: type,
+    desde: from === "" ? null : from,
+    hasta: to === "" ? null : to,
+    cantidad_desde: from === "" ? null : from,
+    cantidad_hasta: to === "" ? null : to,
+    puntos: Number.parseInt(rule.puntos || 0, 10),
+    turno: rule.turno || null
+  };
+}
+
+export function applyScoringRules(task, rules = []) {
+  const normalizedRules = (rules || []).map(normalizeScoringRule);
+  const firstType = normalizedRules[0]?.tipo_regla;
+  const enriched = {
+    ...task,
+    reglas_puntaje: normalizedRules,
+    rangos_puntaje: normalizedRules.filter((rule) => rule.tipo_regla === "CANTIDAD")
+  };
+
+  if (!firstType && task?.requiere_tiempo) enriched.tipo_medicion = "tiempo";
+
+  if (firstType === "CANTIDAD") enriched.tipo_medicion = "cantidad";
+  if (firstType === "FIJO") {
+    enriched.tipo_medicion = "fijo";
+    enriched.puntaje_fijo = normalizedRules.find((rule) => rule.tipo_regla === "FIJO")?.puntos || 1;
+  }
+  if (firstType === "TURNO") {
+    enriched.tipo_medicion = "turno";
+    const simple = normalizedRules.find((rule) => normalizeText(rule.turno) === "simple");
+    const complete = normalizedRules.find((rule) => normalizeText(rule.turno) === "completo");
+    enriched.puntaje_turno_simple = simple?.puntos || 1;
+    enriched.puntaje_turno_completo = complete?.puntos || 1;
+  }
+
+  return enriched;
 }
 
 export function getTaskTitle(task) {
@@ -341,15 +388,19 @@ export function calculatePoints(task, cantidad, tiempoMinutos, cumplimiento) {
   }
 
   if (tipoMedicion === "cantidad") {
-    const ranges = Array.isArray(task?.rangos_puntaje) ? task.rangos_puntaje : [];
+    const ranges = Array.isArray(task?.reglas_puntaje)
+      ? task.reglas_puntaje.filter((rule) => normalizeText(rule?.tipo_regla) === "cantidad")
+      : Array.isArray(task?.rangos_puntaje) ? task.rangos_puntaje : [];
     const quantity = Number(cantidad || 0);
     let candidatePoints = 0;
 
     ranges
       .map((range) => ({
         points: Number.parseInt(range?.puntos || 0, 10),
-        from: Number(range?.cantidad_desde || 0),
-        to: range?.cantidad_hasta === null || range?.cantidad_hasta === undefined ? null : Number(range.cantidad_hasta)
+        from: Number(range?.desde ?? range?.cantidad_desde ?? 0),
+        to: (range?.hasta ?? range?.cantidad_hasta) === null || (range?.hasta ?? range?.cantidad_hasta) === undefined
+          ? null
+          : Number(range?.hasta ?? range?.cantidad_hasta)
       }))
       .sort((a, b) => (a.points || 999) - (b.points || 999))
       .forEach((range) => {
@@ -418,4 +469,51 @@ export function thresholdsToRanges(thresholds) {
 
 export function thresholdsAreAscending(thresholds) {
   return thresholds.every((threshold, index) => index === 0 || Number(threshold) >= Number(thresholds[index - 1]));
+}
+
+export function emptyQuantityRanges() {
+  return Array.from({ length: 10 }, (_, index) => ({ desde: "", hasta: "", puntos: index + 1 }));
+}
+
+export function quantityRangesFromRules(existingRules = []) {
+  const ranges = emptyQuantityRanges();
+  existingRules
+    .map(normalizeScoringRule)
+    .filter((rule) => rule.tipo_regla === "CANTIDAD" && rule.puntos >= 1 && rule.puntos <= 10)
+    .forEach((rule) => {
+      ranges[rule.puntos - 1] = {
+        desde: rule.desde ?? "",
+        hasta: rule.hasta ?? "",
+        puntos: rule.puntos
+      };
+    });
+  return ranges;
+}
+
+export function validateQuantityRanges(ranges = []) {
+  if (ranges.length !== 10) return "Debes configurar los 10 niveles de puntaje.";
+
+  for (let index = 0; index < ranges.length; index += 1) {
+    const range = ranges[index];
+    const from = range.desde === "" || range.desde === null ? null : Number(range.desde);
+    const to = range.hasta === "" || range.hasta === null ? null : Number(range.hasta);
+    if (from === null || !Number.isFinite(from) || from < 0) {
+      return `Ingresa una cantidad inicial valida para ${index + 1} punto${index ? "s" : ""}.`;
+    }
+    if (index < ranges.length - 1 && (to === null || !Number.isFinite(to))) {
+      return `Ingresa una cantidad final para ${index + 1} punto${index ? "s" : ""}.`;
+    }
+    if (to !== null && (!Number.isFinite(to) || to < from)) {
+      return `El final del rango de ${index + 1} punto${index ? "s" : ""} no puede ser menor que el inicio.`;
+    }
+    if (index > 0) {
+      const previousTo = ranges[index - 1].hasta === "" || ranges[index - 1].hasta === null
+        ? null
+        : Number(ranges[index - 1].hasta);
+      if (previousTo === null || from <= previousTo) {
+        return `El rango de ${index + 1} puntos se cruza con el rango anterior.`;
+      }
+    }
+  }
+  return "";
 }
