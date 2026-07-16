@@ -104,10 +104,15 @@ export function SelectInput({ label, value, onChange, options, hint, error, ...p
   );
 }
 
-export function CheckboxInput({ label, checked, onChange, hint }) {
+export function CheckboxInput({ label, checked, onChange, hint, disabled = false }) {
   return (
-    <label className="check-row">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+    <label className={`check-row ${disabled ? "disabled" : ""}`}>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange?.(event.target.checked)}
+      />
       <span>
         <strong>{label}</strong>
         {hint ? <small>{hint}</small> : null}

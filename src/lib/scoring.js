@@ -50,6 +50,33 @@ export function getTaskTitle(task) {
   return String(task?.titulo || task?.nombre || "");
 }
 
+const groupLeaderTimeTaskNames = new Set([
+  "etiquetado",
+  "envio nuevo",
+  "visita de tienda",
+  "picking",
+  "embalado y rotulado de guia"
+]);
+
+const defaultBrandTaskNames = new Set([
+  "etiquetado",
+  "visita de tienda",
+  "pedido mayorista",
+  "picking",
+  "pistoleado",
+  "embalado y rotulado de guia",
+  "inventario"
+]);
+
+export function isGroupLeaderTimeTask(task) {
+  return groupLeaderTimeTaskNames.has(normalizeText(getTaskTitle(task)));
+}
+
+export function taskUsesBrandsByDefault(task) {
+  if (typeof task?.requiere_marca === "boolean") return task.requiere_marca;
+  return defaultBrandTaskNames.has(normalizeText(getTaskTitle(task)));
+}
+
 export function getActivityCaptureMode(taskName) {
   const name = normalizeText(taskName);
 

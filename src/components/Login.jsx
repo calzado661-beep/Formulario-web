@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LockKeyhole, LogIn, Mail } from "lucide-react";
+import { LockKeyhole, LogIn, UserRound } from "lucide-react";
 import { verifyUser } from "../lib/repository";
 import { isSupabaseConfigured } from "../lib/supabaseClient";
 import { Alert, Button } from "./ui";
@@ -20,7 +20,7 @@ export default function Login({ onLogin }) {
     setMessage("");
 
     if (!email.trim() || !password) {
-      setMessage("Completa correo y contrasena.");
+      setMessage("Completa usuario y contrasena.");
       return;
     }
 
@@ -45,9 +45,6 @@ export default function Login({ onLogin }) {
 
   return (
     <main className="login-screen">
-      <video className="login-video" autoPlay muted loop playsInline poster="/fondo.jpeg">
-        <source src="/fondovideo.mp4" type="video/mp4" />
-      </video>
       <div className="login-overlay" />
       <section className="login-card" aria-label="Inicio de sesion">
         <div className="brand-mark">F</div>
@@ -65,13 +62,13 @@ export default function Login({ onLogin }) {
 
         <form className="login-form" onSubmit={handleSubmit}>
           <label className="input-with-icon">
-            <Mail />
+            <UserRound />
             <input
-              type="email"
-              placeholder="usuario@empresa.com"
+              type="text"
+              placeholder="Usuario o correo"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              autoComplete="email"
+              autoComplete="username"
             />
           </label>
           <label className="input-with-icon">

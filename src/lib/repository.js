@@ -1,5 +1,5 @@
 import { requireSupabase } from "./supabaseClient";
-import { isWorkerRole, normalizeRole } from "./scoring";
+import { isGroupLeaderTimeTask, isWorkerRole, normalizeRole } from "./scoring";
 import { nowLimaISODateTime } from "./dates";
 
 let taskTableName;
@@ -133,6 +133,12 @@ function isActiveValue(value) {
 
 export function friendlyError(error) {
   const message = errorMessage(error);
+  if (/incidentes|usuario_id/i.test(message) && /could not find|does not exist|schema cache/i.test(message)) {
+    return "Falta ejecutar la migración de incidencias en Supabase: sql/010_incidentes_estructura.sql.";
+  }
+  if (/registro_tarea_marcas|registro_jefe_grupo_marcas/i.test(message) && /could not find|does not exist|schema cache/i.test(message)) {
+    return "Falta ejecutar la migración de marcas en Supabase: sql/008_tareas_marcas_y_tiempos.sql.";
+  }
   if (/row-level security/i.test(message)) {
     return "Supabase rechazo la operacion por politicas RLS. Revisa permisos de la clave publica.";
   }
@@ -268,13 +274,17 @@ export async function listTasks() {
 
 export async function getTasksForUser(user) {
   const role = normalizeRole(user?.rol);
-  const tasks = await listTasks();
+  const tasks = (await listTasks()).filter((task) => isActiveValue(task.activo));
 
-  if (!["trabajador", "operante", "jefe de equipo"].includes(role)) {
+  if (!["trabajador", "operante", "jefe de equipo", "jefe de grupo"].includes(role)) {
     return tasks;
   }
 
-  const assignedTasks = tasks.filter((task) => {
+  const roleTasks = role === "operante" || role === "trabajador"
+    ? tasks
+    : tasks.filter((task) => !isGroupLeaderTimeTask(task));
+
+  const assignedTasks = roleTasks.filter((task) => {
     const idMatches = ["asignado_a", "trabajador_id", "usuario_id"].some(
       (column) => task[column] !== undefined && String(task[column]) === String(user?.id)
     );
@@ -284,7 +294,16 @@ export async function getTasksForUser(user) {
     return idMatches || emailMatches;
   });
 
-  return assignedTasks.length ? assignedTasks : tasks.filter((task) => isActiveValue(task.activo));
+  return assignedTasks.length ? assignedTasks : roleTasks;
+}
+
+export async function listBrands() {
+  const apiResult = await requestLocalApi("/api/brands");
+  if (apiResult?.brands) return apiResult.brands;
+
+  const result = await db().from("marcas").select("id,nombre").order("nombre", { ascending: true });
+  if (result.error) throw result.error;
+  return result.data || [];
 }
 
 export async function listTaskScoreRanges(taskId) {
@@ -444,6 +463,10 @@ export async function createWorkerActivityLog(payload) {
   });
   if (apiResult?.log) return apiResult.log;
 
+  if (payload.marcas?.length) {
+    throw new Error("El backend local debe estar activo para guardar la distribucion por marcas.");
+  }
+
   const cleanPayload = { ...payload };
   delete cleanPayload.created_at;
 
@@ -559,6 +582,26 @@ export async function createIncidente(payload) {
   ensureOk(await db().from("incidentes").insert(payload));
 }
 
+export async function loadIncidentContext() {
+  const apiResult = await requestLocalApi("/api/incidents/context");
+  if (!apiResult) throw new Error("El backend local debe estar activo para registrar incidencias.");
+  return {
+    workers: apiResult.workers || [],
+    tasks: apiResult.tasks || [],
+    stores: apiResult.stores || [],
+    incidents: apiResult.incidents || []
+  };
+}
+
+export async function createIncident(payload) {
+  const apiResult = await requestLocalApi("/api/incidents", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  if (!apiResult?.incident) throw new Error("No se pudo guardar la incidencia.");
+  return apiResult.incident;
+}
+
 function normalizeGroupLeaderLog(row) {
   return {
     ...row,
@@ -577,6 +620,10 @@ export async function createGroupLeaderRecord(payload) {
   });
   if (apiResult?.record) return apiResult.record;
 
+  if (payload.marcas?.length) {
+    throw new Error("El backend local debe estar activo para guardar la distribucion por marcas.");
+  }
+
   const result = await db().from("registros_jefe_grupo").insert(payload);
   if (result.error) throw result.error;
   return null;
@@ -588,17 +635,19 @@ export async function loadGroupLeaderContext() {
     return {
       workers: apiContext.workers || [],
       tasks: apiContext.tasks || [],
+      brands: apiContext.brands || [],
       leaders: apiContext.leaders || [],
       records: (apiContext.records || []).map(normalizeGroupLeaderLog)
     };
   }
 
-  const [workers, tasks, records] = await Promise.all([
+  const [workers, tasks, brands, records] = await Promise.all([
     listAssignableWorkers(),
-    listTasks(),
+    listTasks().then((tasks) => tasks.filter(isGroupLeaderTimeTask)),
+    listBrands(),
     listGroupLeaderRecords()
   ]);
-  return { workers, tasks, leaders: [], records };
+  return { workers, tasks, brands, leaders: [], records };
 }
 
 export async function listGroupLeaderRecords(encargadoId = null) {

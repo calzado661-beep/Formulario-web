@@ -3,7 +3,6 @@ import AdminDashboard from "./components/AdminDashboard";
 import GroupLeaderDashboard from "./components/GroupLeaderDashboard";
 import Layout from "./components/Layout";
 import Login from "./components/Login";
-import TeamLeaderDashboard from "./components/TeamLeaderDashboard";
 import WorkerDashboard from "./components/WorkerDashboard";
 import { Alert } from "./components/ui";
 import { clearApiSession } from "./lib/repository";
@@ -44,8 +43,7 @@ export default function App() {
     >
       {role === "administrador" ? <AdminDashboard section={adminSection} /> : null}
       {role === "operante" ? <WorkerDashboard user={user} /> : null}
-      {role === "jefe de equipo" ? <TeamLeaderDashboard user={user} /> : null}
-      {role === "jefe de grupo" ? <GroupLeaderDashboard user={user} /> : null}
+      {["jefe de equipo", "jefe de grupo"].includes(role) ? <GroupLeaderDashboard user={user} /> : null}
       {!["administrador", "operante", "jefe de equipo", "jefe de grupo"].includes(role) ? (
         <Alert type="error">Rol no reconocido. Usa administrador, operante, jefe de equipo o jefe de grupo.</Alert>
       ) : null}

@@ -4,6 +4,7 @@ import {
   createWorkerActivityLog,
   friendlyError,
   getTasksForUser,
+  listBrands,
   listTaskScoreRanges,
   listTasks,
   listWorkerActivityLogs
@@ -15,10 +16,12 @@ import {
   FULL_SHIFT,
   getActivityCaptureMode,
   getTaskTitle,
+  isGroupLeaderTimeTask,
   isFullShift,
   NO_TASK_OPTION,
   normalizeMeasurementType,
-  SIMPLE_SHIFT
+  SIMPLE_SHIFT,
+  taskUsesBrandsByDefault
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
 import {
@@ -33,6 +36,7 @@ import {
   TextArea,
   TextInput
 } from "./ui";
+import { BrandDistribution, brandTotal, emptyBrandShare } from "./BrandDistribution";
 
 function emptyRecord() {
   return {
@@ -41,6 +45,8 @@ function emptyRecord() {
     horas: "",
     minutos: "",
     usaTiempo: false,
+    usaMarcas: false,
+    marcas: [emptyBrandShare()],
     cumplimiento: true,
     turno: SIMPLE_SHIFT,
     detalle: ""
@@ -59,7 +65,16 @@ export default function WorkerDashboard({ user, embedded = false }) {
 }
 
 function RegisterActivity({ user }) {
-  const { data: tasks = [], loading, error, reload } = useAsyncData(() => getTasksForUser(user), [user?.id], []);
+  const { data, loading, error, reload } = useAsyncData(
+    async () => {
+      const [tasks, brands] = await Promise.all([getTasksForUser(user), listBrands()]);
+      return { tasks, brands };
+    },
+    [user?.id],
+    { tasks: [], brands: [] }
+  );
+  const tasks = data.tasks || [];
+  const brands = data.brands || [];
   const [records, setRecords] = useState([emptyRecord()]);
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -82,9 +97,12 @@ function RegisterActivity({ user }) {
   }
 
   function handleTaskChange(index, taskKey) {
+    const task = taskMap[taskKey];
     setRecords((current) =>
       current.map((record, recordIndex) =>
-        recordIndex === index ? { ...emptyRecord(), taskKey } : record
+        recordIndex === index
+          ? { ...emptyRecord(), taskKey, usaMarcas: taskUsesBrandsByDefault(task) }
+          : record
       )
     );
   }
@@ -108,8 +126,11 @@ function RegisterActivity({ user }) {
     const title = getTaskTitle(task);
     const dbType = normalizeMeasurementType(task?.tipo_medicion);
     const [fallbackType, fallbackUnit] = getActivityCaptureMode(title);
-    const type = task?.tipo_medicion ? dbType : normalizeMeasurementType(fallbackType);
+    const type = isGroupLeaderTimeTask(task) ? "tiempo" : task?.tipo_medicion ? dbType : normalizeMeasurementType(fallbackType);
     const unit = task?.unidad_base || fallbackUnit;
+    const marcas = record.usaMarcas
+      ? record.marcas.map((item) => ({ marca_id: Number(item.marca_id), cantidad: Number(item.cantidad) }))
+      : [];
 
     let cantidad = null;
     let tiempoMinutos = null;
@@ -124,12 +145,13 @@ function RegisterActivity({ user }) {
       }
     }
     if (type === "tiempo") {
-      tiempoMinutos = Number(record.horas || 0) * 60 + Number(record.minutos || 0);
+      cantidad = record.cantidad === "" ? null : Number(record.cantidad);
+      tiempoMinutos = null;
       cumplimiento = true;
     }
     if (type === "fijo") {
       cantidad = 1;
-      cumplimiento = Boolean(record.cumplimiento);
+      cumplimiento = true;
     }
     if (type === "turno") {
       turno = record.turno;
@@ -137,7 +159,7 @@ function RegisterActivity({ user }) {
       cumplimiento = true;
     }
 
-    return { task, title, type, unit, cantidad, tiempoMinutos, cumplimiento, turno };
+    return { task, title, type, unit, cantidad, tiempoMinutos, cumplimiento, turno, marcas };
   }
 
   function validateRecords() {
@@ -151,11 +173,25 @@ function RegisterActivity({ user }) {
       seen.add(record.taskKey);
 
       const shape = recordPayloadShape(record);
-      if (shape.type === "cantidad" && (record.cantidad === "" || Number(record.cantidad) < 0)) {
+      if (record.usaMarcas) {
+        const total = Number(record.cantidad || 0);
+        const distributed = brandTotal(record.marcas);
+        if (total <= 0) return `Ingresa primero la cantidad total para ${shape.title}.`;
+        if (!record.marcas.length || record.marcas.some((item) => !item.marca_id || Number(item.cantidad) <= 0)) {
+          return `Completa cada marca y su cantidad para ${shape.title}.`;
+        }
+        if (new Set(record.marcas.map((item) => String(item.marca_id))).size !== record.marcas.length) {
+          return `No puedes repetir una marca en ${shape.title}.`;
+        }
+        if (distributed !== total) {
+          return `La distribución por marcas de ${shape.title} debe sumar exactamente ${total}. Actualmente suma ${distributed}.`;
+        }
+      }
+      if (shape.type === "cantidad" && !record.usaMarcas && (record.cantidad === "" || Number(record.cantidad) < 0)) {
         return `Ingresa una cantidad valida para ${shape.title}.`;
       }
-      if (shape.type === "tiempo" && Number(record.horas || 0) * 60 + Number(record.minutos || 0) <= 0) {
-        return `Ingresa horas o minutos para ${shape.title}.`;
+      if (shape.type === "tiempo" && (record.cantidad === "" || Number(record.cantidad) <= 0)) {
+        return `Ingresa la cantidad realizada para ${shape.title}.`;
       }
     }
 
@@ -215,7 +251,8 @@ function RegisterActivity({ user }) {
             cumplimiento: shape.cumplimiento,
             detalle: record.detalle.trim() || null,
             turno: shape.turno,
-            puntos_obtenidos: points
+            puntos_obtenidos: points,
+            marcas: shape.marcas
           });
           saved += 1;
           totalPoints += Number(points || 0);
@@ -286,6 +323,7 @@ function RegisterActivity({ user }) {
                 <DynamicRecordFields
                   record={record}
                   task={selectedTask}
+                  brands={brands}
                   onChange={(changes) => updateRecord(index, changes)}
                 />
               )}
@@ -301,11 +339,11 @@ function RegisterActivity({ user }) {
   );
 }
 
-function DynamicRecordFields({ record, task, onChange }) {
+function DynamicRecordFields({ record, task, brands, onChange }) {
   const title = getTaskTitle(task);
   const dbType = normalizeMeasurementType(task?.tipo_medicion);
   const [fallbackType, fallbackUnit] = getActivityCaptureMode(title);
-  const type = task?.tipo_medicion ? dbType : normalizeMeasurementType(fallbackType);
+  const type = isGroupLeaderTimeTask(task) ? "tiempo" : task?.tipo_medicion ? dbType : normalizeMeasurementType(fallbackType);
   const unit = task?.unidad_base || fallbackUnit || "unidades";
 
   if (type === "cantidad") {
@@ -318,6 +356,7 @@ function DynamicRecordFields({ record, task, onChange }) {
           value={record.cantidad}
           onChange={(cantidad) => onChange({ cantidad })}
         />
+        <BrandFields record={record} brands={brands} onChange={onChange} />
         <CheckboxInput label="Agregar tiempo" checked={record.usaTiempo} onChange={(usaTiempo) => onChange({ usaTiempo })} />
         <TextInput
           label="Horas"
@@ -343,8 +382,16 @@ function DynamicRecordFields({ record, task, onChange }) {
   if (type === "tiempo") {
     return (
       <div className="form-grid">
-        <TextInput label="Horas" type="number" min="0" value={record.horas} onChange={(horas) => onChange({ horas })} />
-        <TextInput label="Minutos" type="number" min="0" value={record.minutos} onChange={(minutos) => onChange({ minutos })} />
+        <TextInput
+          label="Cantidad realizada"
+          type="number"
+          min="1"
+          step="1"
+          value={record.cantidad}
+          onChange={(cantidad) => onChange({ cantidad })}
+        />
+        <BrandFields record={record} brands={brands} onChange={onChange} />
+        <Alert>El jefe de equipo agregará el tiempo después de que guardes este registro.</Alert>
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
     );
@@ -353,7 +400,12 @@ function DynamicRecordFields({ record, task, onChange }) {
   if (type === "fijo") {
     return (
       <div className="form-grid">
-        <CheckboxInput label="Cumplido" checked={record.cumplimiento} onChange={(cumplimiento) => onChange({ cumplimiento })} />
+        <CheckboxInput
+          label="Cumplido"
+          checked
+          disabled
+          hint="Esta tarea siempre se registra como cumplida."
+        />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
         <Alert>Esta tarea usa el puntaje fijo definido por administracion.</Alert>
       </div>
@@ -377,6 +429,27 @@ function DynamicRecordFields({ record, task, onChange }) {
   );
 }
 
+function BrandFields({ record, brands, onChange }) {
+  return (
+    <>
+      <CheckboxInput
+        label="Añadir marcas"
+        checked={record.usaMarcas}
+        onChange={(usaMarcas) => onChange({ usaMarcas, marcas: record.marcas?.length ? record.marcas : [emptyBrandShare()] })}
+        hint="Actívalo para repartir la cantidad entre las marcas existentes."
+      />
+      {record.usaMarcas ? (
+        <BrandDistribution
+          brands={brands}
+          items={record.marcas}
+          expectedTotal={record.cantidad}
+          onChange={(marcas) => onChange({ marcas })}
+        />
+      ) : null}
+    </>
+  );
+}
+
 export function WorkerHistory({ user }) {
   const { data, loading, error, reload } = useAsyncData(
     async () => {
@@ -397,8 +470,14 @@ export function WorkerHistory({ user }) {
       Cantidad: log.cantidad ?? "",
       Turno: log.turno || (tipoAct === "turno" ? displayShiftFromQuantity(log.cantidad) : ""),
       "Tiempo (min)": log.tiempo_minutos,
+      "Estado tiempo": isGroupLeaderTimeTask(data.tasks?.find((task) => String(task.id) === String(log.tarea_id)))
+        ? Number(log.tiempo_minutos || 0) > 0
+          ? "Registrado por jefe"
+          : "Pendiente del jefe"
+        : "No aplica",
       Cumplimiento: log.cumplimiento,
       Puntos: log.puntos_obtenidos,
+      Marcas: (log.marcas || []).map((item) => `${item.marca_nombre}: ${item.cantidad}`).join(", "),
       Detalle: log.detalle
     };
   });

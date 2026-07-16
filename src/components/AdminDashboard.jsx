@@ -110,7 +110,7 @@ function UsersPanel() {
     event.preventDefault();
     setStatus(null);
     if (!createForm.nombre.trim() || !createForm.email.trim() || !createForm.password) {
-      setStatus({ type: "error", message: "Nombre, correo y contrasena son obligatorios." });
+      setStatus({ type: "error", message: "Nombre, usuario y contrasena son obligatorios." });
       return;
     }
     setSaving(true);
@@ -140,7 +140,7 @@ function UsersPanel() {
     if (!selectedUser) return;
     setStatus(null);
     if (!editForm.nombre.trim() || !editForm.email.trim()) {
-      setStatus({ type: "error", message: "Nombre y correo son obligatorios." });
+      setStatus({ type: "error", message: "Nombre y usuario son obligatorios." });
       return;
     }
     setSaving(true);
@@ -184,7 +184,7 @@ function UsersPanel() {
   const rows = users.map((user) => ({
     id: user.id,
     Nombre: user.nombre,
-    Correo: user.email,
+    Usuario: user.email,
     Rol: normalizeRole(user.rol),
     Activo: boolValue(user.activo),
     "Fecha nacimiento": user.fecha_cumpleanos || ""
@@ -204,7 +204,7 @@ function UsersPanel() {
         {tab === "Crear" ? (
           <form className="form-grid" onSubmit={handleCreate}>
             <TextInput label="Nombre" value={createForm.nombre} onChange={(nombre) => setCreateForm({ ...createForm, nombre })} />
-            <TextInput label="Correo" type="email" value={createForm.email} onChange={(email) => setCreateForm({ ...createForm, email })} />
+            <TextInput label="Usuario o correo" value={createForm.email} onChange={(email) => setCreateForm({ ...createForm, email })} />
             <TextInput
               label="Contrasena"
               type="password"
@@ -241,7 +241,7 @@ function UsersPanel() {
             {tab === "Editar" && selectedUser ? (
               <form className="form-grid" onSubmit={handleEdit}>
                 <TextInput label="Nombre" value={editForm.nombre} onChange={(nombre) => setEditForm({ ...editForm, nombre })} />
-                <TextInput label="Correo" type="email" value={editForm.email} onChange={(email) => setEditForm({ ...editForm, email })} />
+                <TextInput label="Usuario o correo" value={editForm.email} onChange={(email) => setEditForm({ ...editForm, email })} />
                 <TextInput
                   label="Fecha de nacimiento"
                   type="date"
@@ -285,6 +285,7 @@ function defaultTaskForm() {
     asignado_a: "",
     tipo_medicion: "cantidad",
     unidad_base: "",
+    requiere_marca: false,
     thresholds: Array(10).fill(0),
     puntaje_fijo: 1,
     puntaje_turno_simple: 1,
@@ -300,6 +301,7 @@ function taskPayloadFromForm(form) {
     estado: form.estado.trim() || "pendiente",
     tipo_medicion: tipo,
     unidad_base: form.unidad_base.trim() || null,
+    requiere_marca: Boolean(form.requiere_marca),
     puntaje_fijo: null,
     puntaje_turno_simple: null,
     puntaje_turno_completo: null
@@ -345,6 +347,7 @@ function TasksPanel() {
       asignado_a: selectedTask.asignado_a || "",
       tipo_medicion: normalizeMeasurementType(selectedTask.tipo_medicion),
       unidad_base: selectedTask.unidad_base || selectedTask.unidad || "",
+      requiere_marca: Boolean(selectedTask.requiere_marca),
       thresholds: quantityThresholdDefaults(rangesByTaskId[selectedTask.id] || []),
       puntaje_fijo: Number(selectedTask.puntaje_fijo || selectedTask.puntaje || 1),
       puntaje_turno_simple: Number(selectedTask.puntaje_turno_simple || selectedTask.puntos_turno_simple || 1),
@@ -489,6 +492,12 @@ function TaskForm({ form, setForm, onSubmit, saving, submitLabel }) {
           placeholder="pares, cajas, bultos"
         />
         <TextArea label="Descripcion" value={form.descripcion} onChange={(descripcion) => setForm({ ...form, descripcion })} />
+        <CheckboxInput
+          label="Marcas activas por defecto"
+          checked={form.requiere_marca}
+          onChange={(requiere_marca) => setForm({ ...form, requiere_marca })}
+          hint="El operante o jefe de grupo podrá cambiarlo en cada registro."
+        />
       </div>
       <ScoreFields form={form} setForm={setForm} />
       <div className="form-actions">

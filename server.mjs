@@ -115,6 +115,15 @@ function requireAdministrator(request, response) {
   return true;
 }
 
+function requireSessionRole(request, response, allowedRoles) {
+  const session = readSession(request);
+  if (!session || !allowedRoles.includes(normalizeRole(session.rol))) {
+    sendJson(response, 403, { error: "Tu sesión no tiene permiso para realizar esta operación." });
+    return null;
+  }
+  return session;
+}
+
 async function handleLogin(request, response) {
   try {
     const rawBody = await readBody(request);
@@ -123,7 +132,7 @@ async function handleLogin(request, response) {
     const password = String(body.password || "");
 
     if (!email || !password) {
-      sendJson(response, 400, { error: "Completa correo y contrasena." });
+      sendJson(response, 400, { error: "Completa usuario y contrasena." });
       return;
     }
 
@@ -202,7 +211,8 @@ function taskPayloadForDb(body) {
     puntaje_fijo: body.puntaje_fijo,
     puntos_turno_simple: body.puntos_turno_simple ?? body.puntaje_turno_simple,
     puntos_turno_completo: body.puntos_turno_completo ?? body.puntaje_turno_completo,
-    tipo_tarea: body.tipo_tarea
+    tipo_tarea: body.tipo_tarea,
+    requiere_marca: body.requiere_marca
   };
 
   if (payload.activo === undefined && body.estado !== undefined) {
@@ -236,7 +246,7 @@ function userPayloadForDb(body, { creating = false } = {}) {
   };
 
   if (creating && (!payload.nombre || !payload.email || !payload.password_hash)) {
-    throw new Error("Nombre, correo y contrasena son obligatorios.");
+    throw new Error("Nombre, usuario y contrasena son obligatorios.");
   }
 
   return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined));
@@ -244,7 +254,7 @@ function userPayloadForDb(body, { creating = false } = {}) {
 
 function userMutationError(response, error, fallback) {
   if (error?.code === "23505") {
-    sendJson(response, 409, { error: "Ya existe un usuario con ese correo." });
+    sendJson(response, 409, { error: "Ya existe una cuenta con ese usuario o correo." });
     return;
   }
   if (error?.code === "23514") {
@@ -328,6 +338,58 @@ async function selectTasks() {
   return result.data || [];
 }
 
+async function selectBrands() {
+  const result = await supabase.from("marcas").select("id,nombre").order("nombre", { ascending: true });
+  if (result.error) throw result.error;
+  return result.data || [];
+}
+
+function isGroupLeaderTimeTask(task) {
+  const timeTasks = new Set([
+    "etiquetado",
+    "envio nuevo",
+    "visita de tienda",
+    "picking",
+    "embalado y rotulado de guia"
+  ]);
+  return timeTasks.has(normalizeRole(taskTitle(task)));
+}
+
+function normalizedBrandItems(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value.map((item) => {
+    const marca_id = Number(item.marca_id);
+    const cantidad = Number(item.cantidad);
+    if (!marca_id || !Number.isFinite(cantidad) || cantidad <= 0) {
+      throw new Error("Cada marca debe tener una cantidad mayor a cero.");
+    }
+    if (seen.has(marca_id)) throw new Error("No puedes repetir una marca en el mismo registro.");
+    seen.add(marca_id);
+    return { marca_id, cantidad };
+  });
+}
+
+async function attachBrandBreakdown(rows, tableName, recordColumn) {
+  if (!rows.length) return rows;
+  const ids = rows.map((row) => Number(row.id)).filter(Boolean);
+  const [detailsResult, brands] = await Promise.all([
+    supabase.from(tableName).select(`${recordColumn},marca_id,cantidad`).in(recordColumn, ids),
+    selectBrands()
+  ]);
+  if (detailsResult.error) return rows.map((row) => ({ ...row, marcas: [] }));
+
+  const brandName = new Map(brands.map((brand) => [Number(brand.id), brand.nombre]));
+  const byRecord = new Map();
+  for (const detail of detailsResult.data || []) {
+    const recordId = Number(detail[recordColumn]);
+    const current = byRecord.get(recordId) || [];
+    current.push({ ...detail, marca_nombre: brandName.get(Number(detail.marca_id)) || `Marca ${detail.marca_id}` });
+    byRecord.set(recordId, current);
+  }
+  return rows.map((row) => ({ ...row, marcas: byRecord.get(Number(row.id)) || [] }));
+}
+
 async function selectTaskScoreRanges(taskId = null) {
   let query = supabase.from("rangos_puntaje").select("*").order("puntos", { ascending: true });
   if (taskId) query = query.eq("tarea_id", taskId);
@@ -349,7 +411,10 @@ async function selectActivityLogs(workerId = null) {
     query = query.order(resource.orderColumn, { ascending: false });
 
     const result = await query;
-    if (!result.error) return (result.data || []).map(normalizeActivityLog);
+    if (!result.error) {
+      const rows = (result.data || []).map(normalizeActivityLog);
+      return attachBrandBreakdown(rows, "registro_tarea_marcas", "registro_tarea_id");
+    }
     lastError = result.error;
   }
 
@@ -361,6 +426,14 @@ async function handleReadUsers(_request, response) {
     sendJson(response, 200, { users: await selectUsers() });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron cargar los usuarios." });
+  }
+}
+
+async function handleReadBrands(_request, response) {
+  try {
+    sendJson(response, 200, { brands: await selectBrands() });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudieron cargar las marcas." });
   }
 }
 
@@ -486,14 +559,37 @@ async function handleReadActivityLogs(request, response) {
 
 async function handleCreateActivityLog(request, response) {
   try {
+    const session = requireSessionRole(request, response, ["operante", "jefe de equipo", "jefe de grupo"]);
+    if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
+    const taskResult = await supabase.from("tareas").select("id,nombre,tipo_medicion,activo").eq("id", Number(body.tarea_id)).maybeSingle();
+    if (taskResult.error || !taskResult.data) {
+      sendJson(response, 400, { error: "La tarea seleccionada no existe." });
+      return;
+    }
+    const isTimeTask = isGroupLeaderTimeTask(taskResult.data);
+    if (isTimeTask && body.tiempo_minutos !== null && body.tiempo_minutos !== undefined && body.tiempo_minutos !== "") {
+      sendJson(response, 403, { error: "El operante no puede registrar el tiempo. Debe hacerlo el jefe de equipo." });
+      return;
+    }
+    const brandItems = normalizedBrandItems(body.marcas);
+    const brandTotal = brandItems.reduce((total, item) => total + item.cantidad, 0);
+    const requestedQuantity = nullableNumber(body.cantidad);
+    if (isTimeTask && (!requestedQuantity || requestedQuantity <= 0)) {
+      sendJson(response, 400, { error: "Las tareas de tiempo también requieren una cantidad mayor a cero." });
+      return;
+    }
+    if (brandItems.length && (!requestedQuantity || requestedQuantity <= 0 || requestedQuantity !== brandTotal)) {
+      sendJson(response, 400, { error: `Las cantidades por marca deben sumar exactamente la cantidad total (${requestedQuantity || 0}).` });
+      return;
+    }
     const payload = {
-      usuario_id: Number(body.usuario_id || body.trabajador_id),
+      usuario_id: Number(session.id),
       tarea_id: Number(body.tarea_id),
       fecha_registro: body.fecha_registro ? String(body.fecha_registro) : new Date().toISOString().slice(0, 10),
-      cantidad: nullableNumber(body.cantidad),
+      cantidad: requestedQuantity,
       turno: body.turno ? String(body.turno) : null,
-      dato_extra: nullableNumber(body.dato_extra ?? body.tiempo_minutos),
+      dato_extra: isTimeTask ? null : nullableNumber(body.dato_extra ?? body.tiempo_minutos),
       observacion: body.observacion || body.detalle ? String(body.observacion || body.detalle).trim() : null,
       puntos_obtenidos: nullableNumber(body.puntos_obtenidos) ?? 0
     };
@@ -509,7 +605,18 @@ async function handleCreateActivityLog(request, response) {
       return;
     }
 
-    sendJson(response, 201, { log: normalizeActivityLog(result.data) });
+    if (brandItems.length) {
+      const details = brandItems.map((item) => ({ ...item, registro_tarea_id: result.data.id }));
+      const detailResult = await supabase.from("registro_tarea_marcas").insert(details);
+      if (detailResult.error) {
+        await supabase.from("registros_tareas").delete().eq("id", result.data.id);
+        sendJson(response, 500, { error: detailResult.error.message });
+        return;
+      }
+    }
+
+    const [log] = await attachBrandBreakdown([normalizeActivityLog(result.data)], "registro_tarea_marcas", "registro_tarea_id");
+    sendJson(response, 201, { log });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo guardar el registro." });
   }
@@ -550,16 +657,17 @@ async function loadGroupLeaderData() {
   if (recordsResult.error) throw recordsResult.error;
 
   const users = usersResult.data || [];
-  const tasks = (tasksResult.data || []).filter((task) => isActive(task.activo));
+  const tasks = (tasksResult.data || []).filter((task) => isActive(task.activo) && isGroupLeaderTimeTask(task));
   const workers = users.filter((user) => normalizeRole(user.rol) === "operante" && isActive(user.activo));
-  const leaders = users.filter((user) => normalizeRole(user.rol) === "jefe de grupo" && isActive(user.activo));
-  const records = enrichGroupRecords(recordsResult.data || [], users, tasks);
+  const leaders = users.filter((user) => ["jefe de equipo", "jefe de grupo"].includes(normalizeRole(user.rol)) && isActive(user.activo));
+  const records = enrichGroupRecords(recordsResult.data || [], users, tasksResult.data || []);
 
   return { workers, tasks, leaders, records };
 }
 
 async function handleGroupLeaderContext(request, response) {
   try {
+    if (!requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"])) return;
     const data = await loadGroupLeaderData();
     sendJson(response, 200, data);
   } catch (error) {
@@ -569,19 +677,63 @@ async function handleGroupLeaderContext(request, response) {
 
 async function handleCreateGroupLeaderRecord(request, response) {
   try {
+    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    if (!session) return;
     const rawBody = await readBody(request);
     const body = JSON.parse(rawBody || "{}");
+    const taskId = Number(body.tarea_id);
+    const workerId = Number(body.trabajador_id);
+    if (!Number.isInteger(taskId) || taskId <= 0 || !Number.isInteger(workerId) || workerId <= 0) {
+      sendJson(response, 400, { error: "Operante y tarea son obligatorios." });
+      return;
+    }
+
+    const taskResult = await supabase
+      .from("tareas")
+      .select("id,nombre,tipo_medicion,activo")
+      .eq("id", taskId)
+      .maybeSingle();
+    if (taskResult.error || !taskResult.data || !isGroupLeaderTimeTask(taskResult.data)) {
+      sendJson(response, 400, { error: "Selecciona una tarea por tiempo válida." });
+      return;
+    }
+    if (!isActive(taskResult.data.activo)) {
+      sendJson(response, 400, { error: "La tarea seleccionada no está activa." });
+      return;
+    }
+    const workerResult = await supabase
+      .from("usuarios")
+      .select("id,rol,activo")
+      .eq("id", workerId)
+      .maybeSingle();
+    if (
+      workerResult.error ||
+      !workerResult.data ||
+      normalizeRole(workerResult.data.rol) !== "operante" ||
+      !isActive(workerResult.data.activo)
+    ) {
+      sendJson(response, 400, { error: "Selecciona un operante activo." });
+      return;
+    }
+
+    const requestedQuantity = Number(body.cantidad);
+    const requestedMinutes = Number(body.tiempo_minutos);
+    if (!Number.isInteger(requestedQuantity) || requestedQuantity <= 0) {
+      sendJson(response, 400, { error: "La cantidad debe ser un número entero mayor a cero." });
+      return;
+    }
+    if (!Number.isInteger(requestedMinutes) || requestedMinutes <= 0) {
+      sendJson(response, 400, { error: "El tiempo debe ser una cantidad entera de minutos mayor a cero." });
+      return;
+    }
     const payload = {
-      encargado_id: Number(body.encargado_id),
-      trabajador_id: Number(body.trabajador_id),
-      tarea_id: Number(body.tarea_id),
-      tarea_nombre: body.tarea_nombre ? String(body.tarea_nombre) : null,
+      encargado_id: Number(session.id),
+      trabajador_id: workerId,
+      tarea_id: taskId,
+      tarea_nombre: taskTitle(taskResult.data),
       fecha_registro: body.fecha_registro ? String(body.fecha_registro) : new Date().toISOString().slice(0, 10),
-      cantidad: body.cantidad === null || body.cantidad === undefined || body.cantidad === "" ? null : Number(body.cantidad),
-      tiempo_minutos:
-        body.tiempo_minutos === null || body.tiempo_minutos === undefined || body.tiempo_minutos === ""
-          ? null
-          : Number(body.tiempo_minutos),
+      cantidad: requestedQuantity,
+      tiempo_minutos: requestedMinutes,
       codigo_guia: body.codigo_guia ? String(body.codigo_guia).trim() : null,
       lote: body.lote ? String(body.lote).trim().toUpperCase() : null,
       detalle: body.detalle ? String(body.detalle).trim() : null
@@ -608,6 +760,114 @@ async function handleCreateGroupLeaderRecord(request, response) {
     sendJson(response, 201, { record });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo guardar el registro." });
+  }
+}
+
+async function loadIncidentData() {
+  const [usersResult, tasksResult, storesResult, incidentsResult] = await Promise.all([
+    supabase.from("usuarios").select("id,nombre,email,rol,activo").order("id", { ascending: true }),
+    supabase.from("tareas").select("id,nombre,activo").order("id", { ascending: true }),
+    supabase.from("tiendas").select("id,nombre,activo").order("id", { ascending: true }),
+    supabase
+      .from("incidentes")
+      .select("id,turno,nombre,tarea_id,tarea_nombre,tienda_id,numero_guia,observacion,tipo_error,created_by,created_at,usuario_id")
+      .order("created_at", { ascending: false })
+  ]);
+
+  if (usersResult.error) throw usersResult.error;
+  if (tasksResult.error) throw tasksResult.error;
+  if (storesResult.error) throw storesResult.error;
+  if (incidentsResult.error) throw incidentsResult.error;
+
+  const stores = (storesResult.data || []).filter((store) => isActive(store.activo));
+  const storeNames = new Map((storesResult.data || []).map((store) => [Number(store.id), store.nombre]));
+  const incidents = (incidentsResult.data || []).map((incident) => ({
+    ...incident,
+    tienda_nombre: storeNames.get(Number(incident.tienda_id)) || ""
+  }));
+
+  return {
+    workers: (usersResult.data || []).filter(
+      (user) => normalizeRole(user.rol) === "operante" && isActive(user.activo)
+    ),
+    tasks: (tasksResult.data || []).filter((task) => isActive(task.activo)),
+    stores,
+    incidents
+  };
+}
+
+async function handleIncidentContext(request, response) {
+  try {
+    if (!requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"])) return;
+    sendJson(response, 200, await loadIncidentData());
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudieron cargar las incidencias." });
+  }
+}
+
+async function handleCreateIncident(request, response) {
+  try {
+    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    if (!session) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const workerId = Number(body.usuario_id);
+    const taskId = Number(body.tarea_id);
+    const storeId = Number(body.tienda_id);
+    const turno = String(body.turno || "").trim();
+    const guideNumber = String(body.numero_guia || "").trim();
+    const errorType = String(body.tipo_error || "").trim();
+
+    if (![workerId, taskId, storeId].every((id) => Number.isInteger(id) && id > 0)) {
+      sendJson(response, 400, { error: "Operante, tarea y tienda son obligatorios." });
+      return;
+    }
+    if (!turno || !guideNumber || !errorType) {
+      sendJson(response, 400, { error: "Turno, número de guía y tipo de error son obligatorios." });
+      return;
+    }
+
+    const [workerResult, taskResult, storeResult] = await Promise.all([
+      supabase.from("usuarios").select("id,nombre,email,rol,activo").eq("id", workerId).maybeSingle(),
+      supabase.from("tareas").select("id,nombre,activo").eq("id", taskId).maybeSingle(),
+      supabase.from("tiendas").select("id,nombre,activo").eq("id", storeId).maybeSingle()
+    ]);
+
+    const worker = workerResult.data;
+    const task = taskResult.data;
+    const store = storeResult.data;
+    if (workerResult.error || !worker || normalizeRole(worker.rol) !== "operante" || !isActive(worker.activo)) {
+      sendJson(response, 400, { error: "Selecciona un operante activo." });
+      return;
+    }
+    if (taskResult.error || !task || !isActive(task.activo)) {
+      sendJson(response, 400, { error: "Selecciona una tarea activa." });
+      return;
+    }
+    if (storeResult.error || !store || !isActive(store.activo)) {
+      sendJson(response, 400, { error: "Selecciona una tienda activa." });
+      return;
+    }
+
+    const payload = {
+      turno,
+      nombre: worker.nombre || worker.email || `Usuario ${worker.id}`,
+      tarea_id: task.id,
+      tarea_nombre: taskTitle(task),
+      tienda_id: store.id,
+      numero_guia: guideNumber,
+      observacion: body.observacion ? String(body.observacion).trim() : null,
+      tipo_error: errorType,
+      created_by: Number(session.id),
+      usuario_id: worker.id
+    };
+    const result = await supabase.from("incidentes").insert(payload).select("*").single();
+    if (result.error) {
+      sendJson(response, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(response, 201, { incident: { ...result.data, tienda_nombre: store.nombre } });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo guardar la incidencia." });
   }
 }
 
@@ -665,6 +925,11 @@ const server = http.createServer(async (request, response) => {
 
   if (request.url?.startsWith("/api/users") && request.method === "GET") {
     await handleReadUsers(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/brands") && request.method === "GET") {
+    await handleReadBrands(request, response);
     return;
   }
 
@@ -728,6 +993,16 @@ const server = http.createServer(async (request, response) => {
 
   if (request.url?.startsWith("/api/group-leader/records") && request.method === "POST") {
     await handleCreateGroupLeaderRecord(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/incidents/context") && request.method === "GET") {
+    await handleIncidentContext(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/incidents") && request.method === "POST") {
+    await handleCreateIncident(request, response);
     return;
   }
 
