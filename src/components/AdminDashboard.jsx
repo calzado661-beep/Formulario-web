@@ -4,6 +4,7 @@ import {
   createTask,
   createTienda,
   createUser,
+  deleteTask,
   deleteTienda,
   deleteUser,
   friendlyError,
@@ -26,6 +27,7 @@ import {
   emptyQuantityRanges,
   getActivityCaptureMode,
   getTaskTitle,
+  MAX_SCORE_QUANTITY,
   normalizeMeasurementType,
   normalizeRole,
   quantityRangesFromRules,
@@ -168,9 +170,14 @@ function UsersPanel() {
     setStatus(null);
     setSaving(true);
     try {
-      await deleteUser(selectedUser.id);
+      const result = await deleteUser(selectedUser.id);
       setEditId("");
-      setStatus({ type: "success", message: "Usuario eliminado correctamente." });
+      setStatus({
+        type: result?.archived ? "warning" : "success",
+        message: result?.archived
+          ? "El usuario tiene historial relacionado, por eso fue desactivado en lugar de borrar sus registros."
+          : "Usuario eliminado correctamente."
+      });
       reload();
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });
@@ -431,6 +438,27 @@ function TasksPanel() {
     }
   }
 
+  async function handleDeleteTask() {
+    if (!selectedTask) return;
+    setStatus(null);
+    setSaving(true);
+    try {
+      const result = await deleteTask(selectedTask.id);
+      setSelectedTaskId("");
+      setStatus({
+        type: result?.archived ? "warning" : "success",
+        message: result?.archived
+          ? "La tarea tiene registros relacionados, por eso fue desactivada para conservar el historial."
+          : "Tarea eliminada correctamente."
+      });
+      reload();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const summaryRows = tasks.map((task) => {
     const tipo = normalizeMeasurementType(task.tipo_medicion);
     const row = { Actividad: getTaskTitle(task), "Tipo de puntaje": tipo };
@@ -462,7 +490,7 @@ function TasksPanel() {
       </Panel>
 
       <Panel actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
-        <Tabs tabs={["Crear tarea", "Editar tarea"]} active={tab} onChange={setTab} />
+        <Tabs tabs={["Crear tarea", "Editar tarea", "Eliminar tarea"]} active={tab} onChange={setTab} />
         <StatusAlert status={status} />
 
         {tab === "Crear tarea" ? (
@@ -470,7 +498,7 @@ function TasksPanel() {
         ) : (
           <div className="stack">
             <SelectInput
-              label="Selecciona una tarea"
+              label={tab === "Editar tarea" ? "Selecciona una tarea" : "Tarea a eliminar"}
               value={selectedTaskId}
               onChange={setSelectedTaskId}
               options={[
@@ -478,8 +506,17 @@ function TasksPanel() {
                 ...tasks.map((task) => ({ value: String(task.id), label: `${task.id} - ${getTaskTitle(task) || "Sin titulo"}` }))
               ]}
             />
-            {selectedTask ? (
+            {tab === "Editar tarea" && selectedTask ? (
               <TaskForm form={editForm} setForm={setEditForm} onSubmit={handleEdit} saving={saving} submitLabel="Guardar cambios" />
+            ) : null}
+            {tab === "Eliminar tarea" && selectedTask ? (
+              <div className="danger-zone">
+                <p>
+                  Eliminaras la tarea {getTaskTitle(selectedTask)}. Si tiene actividades o incidencias relacionadas,
+                  se desactivara para conservar el historial.
+                </p>
+                <Button variant="danger" icon={Trash2} loading={saving} onClick={handleDeleteTask}>Eliminar tarea</Button>
+              </div>
             ) : null}
           </div>
         )}
@@ -490,7 +527,7 @@ function TasksPanel() {
 
 function TaskForm({ form, setForm, onSubmit, saving, submitLabel }) {
   return (
-    <form className="stack" onSubmit={onSubmit}>
+    <form className="stack" onSubmit={onSubmit} noValidate>
       <div className="form-grid">
         <TextInput label="Nombre de tarea" value={form.titulo} onChange={(titulo) => setForm({ ...form, titulo })} />
         <SelectInput
@@ -545,6 +582,7 @@ function ScoreFields({ form, setForm }) {
                   aria-label={`Desde para ${index + 1} puntos`}
                   type="number"
                   min="0"
+                  max={MAX_SCORE_QUANTITY}
                   step="1"
                   placeholder="Desde"
                   value={range.desde}
@@ -557,6 +595,7 @@ function ScoreFields({ form, setForm }) {
                   aria-label={`Hasta para ${index + 1} puntos`}
                   type="number"
                   min="0"
+                  max={MAX_SCORE_QUANTITY}
                   step="1"
                   placeholder={index === 9 ? "Sin limite" : "Hasta"}
                   value={range.hasta}
@@ -793,10 +832,15 @@ function StoresPanel() {
     if (!selectedStore) return;
     setSaving(true);
     try {
-      await deleteTienda(selectedStore.id);
+      const result = await deleteTienda(selectedStore.id);
       setSelectedId("");
       setNombre("");
-      setStatus({ type: "success", message: "Tienda eliminada correctamente." });
+      setStatus({
+        type: result?.archived ? "warning" : "success",
+        message: result?.archived
+          ? "La tienda tiene historial relacionado y fue desactivada en lugar de eliminarse."
+          : "Tienda eliminada correctamente."
+      });
       reload();
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });

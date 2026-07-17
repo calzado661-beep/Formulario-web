@@ -92,11 +92,11 @@ export default function GroupLeaderDashboard({ user }) {
 
 const initialIncidentForm = {
   usuario_id: "",
-  turno: "Mañana",
+  turno: "turno regular",
   tarea_id: "",
   tienda_id: "",
   numero_guia: "",
-  tipo_error: "",
+  tipo_error: "CONTENIDO",
   observacion: ""
 };
 
@@ -211,7 +211,7 @@ function IncidentDashboard({ user }) {
             label="Turno"
             value={form.turno}
             onChange={(turno) => updateForm({ turno })}
-            options={["Mañana", "Tarde"]}
+            options={["turno regular", "incidencia", "turno extra"]}
           />
           <SelectInput
             label="Tarea"
@@ -237,11 +237,11 @@ function IncidentDashboard({ user }) {
             onChange={(numero_guia) => updateForm({ numero_guia })}
             placeholder="Ej. GUIA-001"
           />
-          <TextInput
+          <SelectInput
             label="Tipo de error"
             value={form.tipo_error}
             onChange={(tipo_error) => updateForm({ tipo_error })}
-            placeholder="Describe el tipo de error"
+            options={["CONTENIDO", "LIBERADO"]}
           />
           <TextArea
             label="Observación"
@@ -441,7 +441,7 @@ function GroupTimeDashboard({ user }) {
           {error ? <Alert type="error">{error}</Alert> : null}
           {status ? <Alert type={status.type}>{status.message}</Alert> : null}
           <Alert>
-            Este formulario crea un registro nuevo en registros_jefe_grupo. No modifica actividades anteriores del operante.
+            Este formulario crea un registro de actividad por tiempo para el operante seleccionado.
           </Alert>
           {!loading && !workers.length ? <Alert>No hay trabajadores operantes activos.</Alert> : null}
           {!loading && !tasks.length ? <Alert>No hay tareas registradas en la base de datos.</Alert> : null}

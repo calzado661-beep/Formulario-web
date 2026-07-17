@@ -1,6 +1,7 @@
 export const NO_TASK_OPTION = "Ninguno";
 export const SIMPLE_SHIFT = "Turno manana o tarde";
 export const FULL_SHIFT = "Turno manana y tarde";
+export const MAX_SCORE_QUANTITY = 99_999_999.99;
 
 export function normalizeText(value) {
   const replacements = {
@@ -500,11 +501,17 @@ export function validateQuantityRanges(ranges = []) {
     if (from === null || !Number.isFinite(from) || from < 0) {
       return `Ingresa una cantidad inicial valida para ${index + 1} punto${index ? "s" : ""}.`;
     }
+    if (from > MAX_SCORE_QUANTITY) {
+      return `La cantidad inicial de ${index + 1} punto${index ? "s" : ""} no puede superar ${MAX_SCORE_QUANTITY.toLocaleString("es-PE")}.`;
+    }
     if (index < ranges.length - 1 && (to === null || !Number.isFinite(to))) {
       return `Ingresa una cantidad final para ${index + 1} punto${index ? "s" : ""}.`;
     }
     if (to !== null && (!Number.isFinite(to) || to < from)) {
       return `El final del rango de ${index + 1} punto${index ? "s" : ""} no puede ser menor que el inicio.`;
+    }
+    if (to !== null && to > MAX_SCORE_QUANTITY) {
+      return `La cantidad final de ${index + 1} punto${index ? "s" : ""} no puede superar ${MAX_SCORE_QUANTITY.toLocaleString("es-PE")}.`;
     }
     if (index > 0) {
       const previousTo = ranges[index - 1].hasta === "" || ranges[index - 1].hasta === null

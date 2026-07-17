@@ -36,6 +36,7 @@ const supabaseKey = env.SUPABASE_SECRET_KEY || env.SUPABASE_PUBLISHABLE_KEY;
 const sessionSecret = env.API_SESSION_SECRET || env.SUPABASE_SECRET_KEY;
 const port = Number(env.API_PORT || 5180);
 const distDir = path.join(__dirname, "dist");
+const MAX_SCORE_QUANTITY = 99_999_999.99;
 
 if (!supabaseUrl || !supabaseKey) {
   throw new Error("Faltan SUPABASE_URL y SUPABASE_SECRET_KEY en .env para el backend local.");
@@ -183,6 +184,16 @@ function nullableNumber(value) {
   return Number.isNaN(number) ? null : number;
 }
 
+function isPrimaryKeySequenceConflict(error) {
+  return error?.code === "23505" && /Key \(id\)|_pkey/i.test(`${error?.details || ""} ${error?.message || ""}`);
+}
+
+async function nextTableId(tableName) {
+  const result = await supabase.from(tableName).select("id").order("id", { ascending: false }).limit(1);
+  if (result.error) throw result.error;
+  return Number(result.data?.[0]?.id || 0) + 1;
+}
+
 let taskTableName;
 
 async function getTaskTableName() {
@@ -293,7 +304,15 @@ async function handleCreateUser(request, response) {
   try {
     if (!requireAdministrator(request, response)) return;
     const body = JSON.parse((await readBody(request)) || "{}");
-    const result = await supabase.from("usuarios").insert(userPayloadForDb(body, { creating: true })).select("*").single();
+    const payload = userPayloadForDb(body, { creating: true });
+    let result = await supabase.from("usuarios").insert(payload).select("*").single();
+    if (isPrimaryKeySequenceConflict(result.error)) {
+      result = await supabase
+        .from("usuarios")
+        .insert({ ...payload, id: await nextTableId("usuarios") })
+        .select("*")
+        .single();
+    }
     if (result.error) {
       userMutationError(response, result.error, "No se pudo crear el usuario.");
       return;
@@ -342,8 +361,22 @@ async function handleDeleteUser(_request, response, userId) {
       sendJson(response, 400, { error: "Usuario invalido." });
       return;
     }
+    const session = readSession(_request);
+    if (Number(session?.id) === userId) {
+      sendJson(response, 400, { error: "No puedes eliminar tu propia cuenta de administrador." });
+      return;
+    }
     const result = await supabase.from("usuarios").delete().eq("id", userId).select("id").maybeSingle();
     if (result.error) {
+      if (result.error.code === "23503") {
+        const archived = await supabase.from("usuarios").update({ activo: false }).eq("id", userId).select("id").maybeSingle();
+        if (archived.error) {
+          userMutationError(response, archived.error, "No se pudo desactivar el usuario.");
+          return;
+        }
+        sendJson(response, 200, { deleted: false, archived: true });
+        return;
+      }
       userMutationError(response, result.error, "No se pudo eliminar el usuario.");
       return;
     }
@@ -351,7 +384,7 @@ async function handleDeleteUser(_request, response, userId) {
       sendJson(response, 404, { error: "Usuario no encontrado." });
       return;
     }
-    sendJson(response, 200, { deleted: true });
+    sendJson(response, 200, { deleted: true, archived: false });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo eliminar el usuario." });
   }
@@ -427,7 +460,7 @@ async function selectTaskScoreRanges(taskId = null) {
 async function selectActivityLogs(workerId = null) {
   const resources = [
     { table: "v_registro_actividades", userColumn: "usuario_id", orderColumn: "fecha_registro" },
-    { table: "registros_tareas", userColumn: "usuario_id", orderColumn: "created_at" }
+    { table: "registros_tareas", userColumn: "usuario_id", orderColumn: "fecha_registro" }
   ];
 
   let lastError = null;
@@ -482,7 +515,14 @@ async function handleCreateTask(request, response) {
       return;
     }
 
-    const result = await supabase.from(tableName).insert(payload).select("*").single();
+    let result = await supabase.from(tableName).insert(payload).select("*").single();
+    if (isPrimaryKeySequenceConflict(result.error)) {
+      result = await supabase
+        .from(tableName)
+        .insert({ ...payload, id: await nextTableId(tableName) })
+        .select("*")
+        .single();
+    }
     if (result.error) {
       sendJson(response, 500, { error: result.error.message });
       return;
@@ -509,6 +549,73 @@ async function handleUpdateTask(request, response, taskId) {
     sendJson(response, 200, { task: result.data });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo actualizar la tarea." });
+  }
+}
+
+async function archiveTask(response, tableName, taskId) {
+  const archived = await supabase
+    .from(tableName)
+    .update({ activo: false })
+    .eq("id", taskId)
+    .select("id")
+    .maybeSingle();
+  if (archived.error) throw archived.error;
+  if (!archived.data) {
+    sendJson(response, 404, { error: "Tarea no encontrada." });
+    return false;
+  }
+  sendJson(response, 200, { deleted: false, archived: true });
+  return true;
+}
+
+async function handleDeleteTask(request, response, taskId) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      sendJson(response, 400, { error: "Tarea invalida." });
+      return;
+    }
+
+    const tableName = await getTaskTableName();
+    const existing = await supabase.from(tableName).select("id").eq("id", taskId).maybeSingle();
+    if (existing.error) throw existing.error;
+    if (!existing.data) {
+      sendJson(response, 404, { error: "Tarea no encontrada." });
+      return;
+    }
+
+    const historyResults = await Promise.all([
+      supabase.from("registros_tareas").select("id", { count: "exact", head: true }).eq("tarea_id", taskId),
+      supabase.from("registros_tareas_jefe_equipo").select("id", { count: "exact", head: true }).eq("tarea_id", taskId),
+      supabase.from("incidentes").select("id", { count: "exact", head: true }).eq("tarea_id", taskId)
+    ]);
+    const historyError = historyResults.find((result) => result.error)?.error;
+    if (historyError) throw historyError;
+    if (historyResults.some((result) => Number(result.count || 0) > 0)) {
+      await archiveTask(response, tableName, taskId);
+      return;
+    }
+
+    const previousRules = await selectTaskScoreRanges(taskId);
+    const deleteRules = await supabase.from("reglas_puntaje").delete().eq("tarea_id", taskId);
+    if (deleteRules.error) throw deleteRules.error;
+
+    const result = await supabase.from(tableName).delete().eq("id", taskId).select("id").maybeSingle();
+    if (result.error) {
+      if (previousRules.length) await supabase.from("reglas_puntaje").insert(previousRules);
+      if (result.error.code === "23503") {
+        await archiveTask(response, tableName, taskId);
+        return;
+      }
+      throw result.error;
+    }
+    if (!result.data) {
+      sendJson(response, 404, { error: "Tarea no encontrada." });
+      return;
+    }
+    sendJson(response, 200, { deleted: true, archived: false });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo eliminar la tarea." });
   }
 }
 
@@ -545,11 +652,17 @@ async function handleReplaceTaskScoreRanges(request, response) {
     const invalid = normalized.find((rule) => (
       !["CANTIDAD", "FIJO", "TURNO"].includes(rule.tipo_regla) ||
       !Number.isInteger(rule.puntos) || rule.puntos < 1 || rule.puntos > 10 ||
-      (rule.tipo_regla === "CANTIDAD" && (rule.desde === null || rule.desde < 0)) ||
-      (rule.hasta !== null && (rule.desde === null || rule.hasta < rule.desde))
+      (rule.tipo_regla === "CANTIDAD" && (
+        rule.desde === null || rule.desde < 0 || rule.desde > MAX_SCORE_QUANTITY
+      )) ||
+      (rule.hasta !== null && (
+        rule.desde === null || rule.hasta < rule.desde || rule.hasta > MAX_SCORE_QUANTITY
+      ))
     ));
     if (invalid) {
-      sendJson(response, 400, { error: "Hay una regla invalida. Revisa tipo, rango y puntaje (1 a 10)." });
+      sendJson(response, 400, {
+        error: "Hay una regla invalida. Los rangos deben estar entre 0 y 99,999,999.99 y el puntaje entre 1 y 10."
+      });
       return;
     }
 
@@ -561,7 +674,13 @@ async function handleReplaceTaskScoreRanges(request, response) {
     }
 
     if (normalized.length) {
-      const insertResult = await supabase.from("reglas_puntaje").insert(normalized);
+      let insertResult = await supabase.from("reglas_puntaje").insert(normalized);
+      if (isPrimaryKeySequenceConflict(insertResult.error)) {
+        const firstId = await nextTableId("reglas_puntaje");
+        insertResult = await supabase.from("reglas_puntaje").insert(
+          normalized.map((rule, index) => ({ ...rule, id: firstId + index }))
+        );
+      }
       if (insertResult.error) {
         const rollback = previousRules.map(({ id: _id, ...rule }) => rule);
         if (rollback.length) await supabase.from("reglas_puntaje").insert(rollback);
@@ -594,6 +713,137 @@ async function handleDeleteTaskScoreRanges(request, response) {
     sendJson(response, 200, { ok: true });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron eliminar los rangos." });
+  }
+}
+
+async function handleReadStores(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const result = await supabase.from("tiendas").select("*").order("id", { ascending: true });
+    if (result.error) throw result.error;
+    sendJson(response, 200, { stores: result.data || [] });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudieron cargar las tiendas." });
+  }
+}
+
+async function handleCreateStore(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const payload = { nombre: String(body.nombre || "").trim(), activo: body.activo !== false };
+    if (!payload.nombre) {
+      sendJson(response, 400, { error: "El nombre de la tienda es obligatorio." });
+      return;
+    }
+    let result = await supabase.from("tiendas").insert(payload).select("*").single();
+    if (isPrimaryKeySequenceConflict(result.error)) {
+      result = await supabase.from("tiendas").insert({ ...payload, id: await nextTableId("tiendas") }).select("*").single();
+    }
+    if (result.error) {
+      userMutationError(response, result.error, "No se pudo crear la tienda.");
+      return;
+    }
+    sendJson(response, 201, { store: result.data });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo crear la tienda." });
+  }
+}
+
+async function handleUpdateStore(request, response, storeId) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const payload = {};
+    if (body.nombre !== undefined) payload.nombre = String(body.nombre).trim();
+    if (body.activo !== undefined) payload.activo = Boolean(body.activo);
+    if (payload.nombre === "") {
+      sendJson(response, 400, { error: "El nombre de la tienda es obligatorio." });
+      return;
+    }
+    const result = await supabase.from("tiendas").update(payload).eq("id", storeId).select("*").maybeSingle();
+    if (result.error) {
+      userMutationError(response, result.error, "No se pudo actualizar la tienda.");
+      return;
+    }
+    if (!result.data) {
+      sendJson(response, 404, { error: "Tienda no encontrada." });
+      return;
+    }
+    sendJson(response, 200, { store: result.data });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo actualizar la tienda." });
+  }
+}
+
+async function handleDeleteStore(request, response, storeId) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const result = await supabase.from("tiendas").delete().eq("id", storeId).select("id").maybeSingle();
+    if (result.error?.code === "23503") {
+      const archived = await supabase.from("tiendas").update({ activo: false }).eq("id", storeId).select("id").maybeSingle();
+      if (archived.error) throw archived.error;
+      sendJson(response, 200, { deleted: false, archived: true });
+      return;
+    }
+    if (result.error) throw result.error;
+    if (!result.data) {
+      sendJson(response, 404, { error: "Tienda no encontrada." });
+      return;
+    }
+    sendJson(response, 200, { deleted: true, archived: false });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo eliminar la tienda." });
+  }
+}
+
+async function handleReadAttendances(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    let query = supabase.from("asistencias").select("*").order("fecha", { ascending: false });
+    if (url.searchParams.get("date")) query = query.eq("fecha", url.searchParams.get("date"));
+    const result = await query;
+    if (result.error) throw result.error;
+    sendJson(response, 200, { attendances: result.data || [] });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo cargar la asistencia." });
+  }
+}
+
+async function handleMarkAttendance(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const userId = Number(body.usuario_id);
+    const date = String(body.fecha || "").trim();
+    if (!Number.isInteger(userId) || userId <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      sendJson(response, 400, { error: "Usuario y fecha de asistencia son obligatorios." });
+      return;
+    }
+    const present = body.presente !== false;
+    const payload = {
+      usuario_id: userId,
+      fecha: date,
+      estado: present ? "Presente" : "Ausente",
+      created_at: present ? new Date().toISOString() : null
+    };
+    let result = await supabase
+      .from("asistencias")
+      .upsert(payload, { onConflict: "usuario_id,fecha" })
+      .select("*")
+      .single();
+    if (isPrimaryKeySequenceConflict(result.error)) {
+      result = await supabase
+        .from("asistencias")
+        .upsert({ ...payload, id: await nextTableId("asistencias") }, { onConflict: "usuario_id,fecha" })
+        .select("*")
+        .single();
+    }
+    if (result.error) throw result.error;
+    sendJson(response, 200, { attendance: result.data });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo guardar la asistencia." });
   }
 }
 
@@ -639,8 +889,7 @@ async function handleCreateActivityLog(request, response) {
       tarea_id: Number(body.tarea_id),
       fecha_registro: body.fecha_registro ? String(body.fecha_registro) : new Date().toISOString().slice(0, 10),
       cantidad: requestedQuantity,
-      turno: body.turno ? String(body.turno) : null,
-      dato_extra: isTimeTask ? null : nullableNumber(body.dato_extra ?? body.tiempo_minutos),
+      tiempo_minutos: isTimeTask ? null : nullableNumber(body.tiempo_minutos ?? body.dato_extra),
       observacion: body.observacion || body.detalle ? String(body.observacion || body.detalle).trim() : null,
       puntos_obtenidos: nullableNumber(body.puntos_obtenidos) ?? 0
     };
@@ -650,7 +899,14 @@ async function handleCreateActivityLog(request, response) {
       return;
     }
 
-    const result = await supabase.from("registros_tareas").insert(payload).select("*").single();
+    let result = await supabase.from("registros_tareas").insert(payload).select("*").single();
+    if (isPrimaryKeySequenceConflict(result.error)) {
+      result = await supabase
+        .from("registros_tareas")
+        .insert({ ...payload, id: await nextTableId("registros_tareas") })
+        .select("*")
+        .single();
+    }
     if (result.error) {
       sendJson(response, 500, { error: result.error.message });
       return;
@@ -699,8 +955,8 @@ async function loadGroupLeaderData() {
     supabase.from("usuarios").select("id,nombre,email,rol,activo").order("id", { ascending: true }),
     supabase.from(tableName).select("*").order("id", { ascending: true }),
     supabase
-      .from("registros_jefe_grupo")
-      .select("id,encargado_id,trabajador_id,tarea_id,tarea_nombre,fecha_registro,cantidad,tiempo_minutos,codigo_guia,lote,detalle,created_at")
+      .from("registros_tareas_jefe_equipo")
+      .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at")
       .order("created_at", { ascending: false })
   ]);
 
@@ -712,7 +968,15 @@ async function loadGroupLeaderData() {
   const tasks = (tasksResult.data || []).filter((task) => isActive(task.activo) && isGroupLeaderTimeTask(task));
   const workers = users.filter((user) => normalizeRole(user.rol) === "operante" && isActive(user.activo));
   const leaders = users.filter((user) => ["jefe de equipo", "jefe de grupo"].includes(normalizeRole(user.rol)) && isActive(user.activo));
-  const records = enrichGroupRecords(recordsResult.data || [], users, tasksResult.data || []);
+  const records = enrichGroupRecords(
+    (recordsResult.data || []).map((record) => ({
+      ...record,
+      codigo_guia: record.numero_guia,
+      detalle: record.observacion
+    })),
+    users,
+    tasksResult.data || []
+  );
 
   return { workers, tasks, leaders, records };
 }
@@ -783,13 +1047,12 @@ async function handleCreateGroupLeaderRecord(request, response) {
       encargado_id: Number(session.id),
       trabajador_id: workerId,
       tarea_id: taskId,
-      tarea_nombre: taskTitle(taskResult.data),
       fecha_registro: body.fecha_registro ? String(body.fecha_registro) : new Date().toISOString().slice(0, 10),
       cantidad: requestedQuantity,
       tiempo_minutos: requestedMinutes,
-      codigo_guia: body.codigo_guia ? String(body.codigo_guia).trim() : null,
+      numero_guia: body.codigo_guia ? String(body.codigo_guia).trim() : null,
       lote: body.lote ? String(body.lote).trim().toUpperCase() : null,
-      detalle: body.detalle ? String(body.detalle).trim() : null
+      observacion: body.detalle ? String(body.detalle).trim() : null
     };
 
     if (!payload.encargado_id || !payload.trabajador_id || !payload.tarea_id) {
@@ -797,11 +1060,19 @@ async function handleCreateGroupLeaderRecord(request, response) {
       return;
     }
 
-    const result = await supabase
-      .from("registros_jefe_grupo")
+    let result = await supabase
+      .from("registros_tareas_jefe_equipo")
       .insert(payload)
-      .select("id,encargado_id,trabajador_id,tarea_id,tarea_nombre,fecha_registro,cantidad,tiempo_minutos,codigo_guia,lote,detalle,created_at")
+      .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at")
       .single();
+
+    if (isPrimaryKeySequenceConflict(result.error)) {
+      result = await supabase
+        .from("registros_tareas_jefe_equipo")
+        .insert({ ...payload, id: await nextTableId("registros_tareas_jefe_equipo") })
+        .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at")
+        .single();
+    }
 
     if (result.error) {
       sendJson(response, 500, { error: result.error.message });
@@ -867,9 +1138,9 @@ async function handleCreateIncident(request, response) {
     const workerId = Number(body.usuario_id);
     const taskId = Number(body.tarea_id);
     const storeId = Number(body.tienda_id);
-    const turno = String(body.turno || "").trim();
+    const turno = String(body.turno || "").trim().toLowerCase();
     const guideNumber = String(body.numero_guia || "").trim();
-    const errorType = String(body.tipo_error || "").trim();
+    const errorType = String(body.tipo_error || "").trim().toUpperCase();
 
     if (![workerId, taskId, storeId].every((id) => Number.isInteger(id) && id > 0)) {
       sendJson(response, 400, { error: "Operante, tarea y tienda son obligatorios." });
@@ -877,6 +1148,14 @@ async function handleCreateIncident(request, response) {
     }
     if (!turno || !guideNumber || !errorType) {
       sendJson(response, 400, { error: "Turno, número de guía y tipo de error son obligatorios." });
+      return;
+    }
+    if (!["CONTENIDO", "LIBERADO"].includes(errorType)) {
+      sendJson(response, 400, { error: "El tipo de error debe ser CONTENIDO o LIBERADO." });
+      return;
+    }
+    if (!["turno regular", "incidencia", "turno extra"].includes(turno)) {
+      sendJson(response, 400, { error: "Selecciona un turno valido." });
       return;
     }
 
@@ -915,7 +1194,14 @@ async function handleCreateIncident(request, response) {
       created_by: Number(session.id),
       usuario_id: worker.id
     };
-    const result = await supabase.from("incidentes").insert(payload).select("*").single();
+    let result = await supabase.from("incidentes").insert(payload).select("*").single();
+    if (isPrimaryKeySequenceConflict(result.error)) {
+      result = await supabase
+        .from("incidentes")
+        .insert({ ...payload, id: await nextTableId("incidentes") })
+        .select("*")
+        .single();
+    }
     if (result.error) {
       sendJson(response, 500, { error: result.error.message });
       return;
@@ -1000,9 +1286,10 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.url?.startsWith("/api/tasks/") && request.method === "PATCH") {
+  if (request.url?.startsWith("/api/tasks/") && ["PATCH", "DELETE"].includes(request.method)) {
     const taskId = Number(new URL(request.url, `http://${request.headers.host}`).pathname.split("/").pop());
-    await handleUpdateTask(request, response, taskId);
+    if (request.method === "PATCH") await handleUpdateTask(request, response, taskId);
+    else await handleDeleteTask(request, response, taskId);
     return;
   }
 
@@ -1028,6 +1315,33 @@ const server = http.createServer(async (request, response) => {
 
   if (request.url?.startsWith("/api/task-score-ranges") && request.method === "DELETE") {
     await handleDeleteTaskScoreRanges(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/stores/") && ["PATCH", "DELETE"].includes(request.method)) {
+    const storeId = Number(new URL(request.url, `http://${request.headers.host}`).pathname.split("/").pop());
+    if (request.method === "PATCH") await handleUpdateStore(request, response, storeId);
+    else await handleDeleteStore(request, response, storeId);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/stores") && request.method === "GET") {
+    await handleReadStores(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/stores") && request.method === "POST") {
+    await handleCreateStore(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/attendances") && request.method === "GET") {
+    await handleReadAttendances(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/attendances") && request.method === "PUT") {
+    await handleMarkAttendance(request, response);
     return;
   }
 

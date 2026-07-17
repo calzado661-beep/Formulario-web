@@ -133,6 +133,9 @@ function isActiveValue(value) {
 
 export function friendlyError(error) {
   const message = errorMessage(error);
+  if (/numeric field overflow|precision 10, scale 2/i.test(message)) {
+    return "Una cantidad supera el maximo permitido por la base de datos: 99,999,999.99.";
+  }
   if (/incidentes|usuario_id/i.test(message) && /could not find|does not exist|schema cache/i.test(message)) {
     return "Falta ejecutar la migración de incidencias en Supabase: sql/010_incidentes_estructura.sql.";
   }
@@ -143,6 +146,9 @@ export function friendlyError(error) {
     return "Supabase rechazo la operacion por politicas RLS. Revisa permisos de la clave publica.";
   }
   if (/duplicate key/i.test(message)) {
+    if (/Key \(id\)|_pkey/i.test(message)) {
+      return "La numeracion interna de la base de datos esta desactualizada. Reinicia el backend e intenta nuevamente.";
+    }
     return "Ya existe un registro con esos datos.";
   }
   if (/violates foreign key/i.test(message)) {
@@ -259,9 +265,10 @@ export async function deleteUser(userId) {
   const apiResult = await requestLocalApi(`/api/users/${encodeURIComponent(userId)}`, {
     method: "DELETE"
   });
-  if (apiResult?.deleted) return;
+  if (apiResult && (apiResult.deleted || apiResult.archived)) return apiResult;
 
   ensureOk(await db().from("usuarios").delete().eq("id", userId));
+  return { deleted: true, archived: false };
 }
 
 export async function listTasks() {
@@ -407,13 +414,38 @@ export async function updateTask(taskId, changes, existingRow) {
   ensureOk(await db().from(tableName).update(filterPayloadColumns(changes, columns)).eq("id", taskId));
 }
 
+export async function deleteTask(taskId) {
+  const apiResult = await requestLocalApi(`/api/tasks/${encodeURIComponent(taskId)}`, {
+    method: "DELETE"
+  });
+  if (apiResult && (apiResult.deleted || apiResult.archived)) return apiResult;
+
+  const tableName = await getTaskTableName();
+  const result = await db().from(tableName).delete().eq("id", taskId);
+  if (result.error?.code === "23503") {
+    ensureOk(await db().from(tableName).update({ activo: false }).eq("id", taskId));
+    return { deleted: false, archived: true };
+  }
+  if (result.error) throw result.error;
+  return { deleted: true, archived: false };
+}
+
 export async function listTiendas() {
+  const apiResult = await requestLocalApi("/api/stores");
+  if (apiResult?.stores) return apiResult.stores;
+
   const result = await db().from("tiendas").select("*").order("id", { ascending: true });
   if (result.error) return [];
   return result.data || [];
 }
 
 export async function createTienda(payload) {
+  const apiResult = await requestLocalApi("/api/stores", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  if (apiResult?.store) return apiResult.store;
+
   const result = await db().from("tiendas").insert(payload);
   if (result.error) {
     if (isMissingTableError(result.error, "tiendas")) {
@@ -424,16 +456,29 @@ export async function createTienda(payload) {
 }
 
 export async function updateTienda(tiendaId, changes) {
+  const apiResult = await requestLocalApi(`/api/stores/${encodeURIComponent(tiendaId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes)
+  });
+  if (apiResult?.store) return apiResult.store;
+
   const result = await db().from("tiendas").update(changes).eq("id", tiendaId);
   if (result.error) throw result.error;
 }
 
 export async function deleteTienda(tiendaId) {
+  const apiResult = await requestLocalApi(`/api/stores/${encodeURIComponent(tiendaId)}`, { method: "DELETE" });
+  if (apiResult && (apiResult.deleted || apiResult.archived)) return apiResult;
+
   const result = await db().from("tiendas").delete().eq("id", tiendaId);
   if (result.error) throw result.error;
+  return { deleted: true, archived: false };
 }
 
 export async function listAttendances() {
+  const apiResult = await requestLocalApi("/api/attendances");
+  if (apiResult?.attendances) return apiResult.attendances;
+
   const tableName = await getAttendanceTableName();
   const result = await db().from(tableName).select("*").order("fecha", { ascending: false });
   if (result.error) return [];
@@ -441,6 +486,9 @@ export async function listAttendances() {
 }
 
 export async function getAttendanceForDate(fecha) {
+  const apiResult = await requestLocalApi(`/api/attendances?date=${encodeURIComponent(fecha)}`);
+  if (apiResult?.attendances) return apiResult.attendances;
+
   const tableName = await getAttendanceTableName();
   const result = await db().from(tableName).select("*").eq("fecha", fecha);
   if (result.error) return [];
@@ -448,6 +496,12 @@ export async function getAttendanceForDate(fecha) {
 }
 
 export async function markAttendance(usuarioId, fecha, presente = true) {
+  const apiResult = await requestLocalApi("/api/attendances", {
+    method: "PUT",
+    body: JSON.stringify({ usuario_id: usuarioId, fecha, presente })
+  });
+  if (apiResult?.attendance) return apiResult.attendance;
+
   const tableName = await getAttendanceTableName();
   const payload = {
     usuario_id: usuarioId,
@@ -636,6 +690,8 @@ export async function createIncident(payload) {
 function normalizeGroupLeaderLog(row) {
   return {
     ...row,
+    codigo_guia: row.codigo_guia ?? row.numero_guia,
+    detalle: row.detalle ?? row.observacion,
     encargado_nombre: row.encargado_nombre || row.encargado?.nombre,
     encargado_email: row.encargado_email || row.encargado?.email,
     trabajador_nombre: row.trabajador_nombre || row.trabajador?.nombre,
@@ -655,7 +711,17 @@ export async function createGroupLeaderRecord(payload) {
     throw new Error("El backend local debe estar activo para guardar la distribucion por marcas.");
   }
 
-  const result = await db().from("registros_jefe_grupo").insert(payload);
+  const result = await db().from("registros_tareas_jefe_equipo").insert({
+    encargado_id: payload.encargado_id,
+    trabajador_id: payload.trabajador_id,
+    tarea_id: payload.tarea_id,
+    fecha_registro: payload.fecha_registro,
+    cantidad: payload.cantidad,
+    tiempo_minutos: payload.tiempo_minutos,
+    numero_guia: payload.codigo_guia,
+    lote: payload.lote,
+    observacion: payload.detalle
+  });
   if (result.error) throw result.error;
   return null;
 }
@@ -689,26 +755,7 @@ export async function listGroupLeaderRecords(encargadoId = null) {
     return records.filter((record) => String(record.encargado_id) === String(encargadoId));
   }
 
-  let viewQuery = db().from("v_registros_jefe_grupo").select("*").order("created_at", { ascending: false });
-  if (encargadoId) viewQuery = viewQuery.eq("encargado_id", encargadoId);
-  const viewResult = await viewQuery;
-  if (!viewResult.error && (!viewResult.data?.length || "lote" in viewResult.data[0])) {
-    return (viewResult.data || []).map(normalizeGroupLeaderLog);
-  }
-
-  for (const taskRelation of ["tareas(nombre)", "tarea(titulo)"]) {
-    let tableQuery = db()
-      .from("registros_jefe_grupo")
-      .select(
-        `*, encargado:usuarios!registros_jefe_grupo_encargado_id_fkey(nombre,email), trabajador:usuarios!registros_jefe_grupo_trabajador_id_fkey(nombre,email), tarea:${taskRelation}`
-      )
-      .order("created_at", { ascending: false });
-    if (encargadoId) tableQuery = tableQuery.eq("encargado_id", encargadoId);
-    const tableResult = await tableQuery;
-    if (!tableResult.error) return (tableResult.data || []).map(normalizeGroupLeaderLog);
-  }
-
-  let plainQuery = db().from("registros_jefe_grupo").select("*").order("created_at", { ascending: false });
+  let plainQuery = db().from("registros_tareas_jefe_equipo").select("*").order("created_at", { ascending: false });
   if (encargadoId) plainQuery = plainQuery.eq("encargado_id", encargadoId);
   const plainResult = await plainQuery;
   if (plainResult.error) throw plainResult.error;

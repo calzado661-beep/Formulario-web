@@ -228,6 +228,11 @@ h2 {
   background:
     linear-gradient(145deg, rgba(4, 8, 7, 0.64), rgba(12, 27, 25, 0.48)),
     rgba(4, 8, 7, 0.44);
+  transition: grid-template-columns 0.22s ease;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 84px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -244,6 +249,59 @@ h2 {
     rgba(8, 12, 11, 0.94);
   box-shadow: 12px 0 36px rgba(0, 0, 0, 0.22);
   backdrop-filter: blur(16px);
+  transition: padding 0.22s ease;
+}
+
+.sidebar-header-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.sidebar.collapsed {
+  padding-inline: 0.7rem;
+}
+
+.sidebar.collapsed .sidebar-header-row {
+  grid-template-columns: 1fr;
+  justify-items: center;
+}
+
+.sidebar.collapsed .brand-row {
+  display: flex;
+  justify-content: center;
+}
+
+.sidebar.collapsed .sidebar-copy {
+  display: none;
+}
+
+.sidebar.collapsed .profile-box,
+.sidebar.collapsed .sidebar-note {
+  display: flex;
+  justify-content: center;
+  padding-inline: 0.5rem;
+}
+
+.sidebar.collapsed .side-nav button {
+  display: flex;
+  justify-content: center;
+  padding: 0;
+}
+
+.sidebar.collapsed .side-nav button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.sidebar.collapsed .sidebar-logout {
+  width: 100%;
+  padding-inline: 0;
+}
+
+.sidebar.collapsed .sidebar-logout span {
+  display: none;
 }
 
 .sidebar-top,
@@ -1225,10 +1283,36 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 1fr;
+  }
+
   .sidebar {
     position: static;
     height: auto;
     gap: 1rem;
+  }
+
+  .sidebar.collapsed {
+    height: 72px;
+    padding: 0.7rem 1rem;
+    overflow: hidden;
+  }
+
+  .sidebar.collapsed .sidebar-top {
+    display: block;
+  }
+
+  .sidebar.collapsed .sidebar-header-row {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .sidebar.collapsed .profile-box,
+  .sidebar.collapsed .side-nav,
+  .sidebar.collapsed .sidebar-note,
+  .sidebar.collapsed .sidebar-logout {
+    display: none;
   }
 
   .side-nav {
