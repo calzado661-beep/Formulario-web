@@ -263,12 +263,132 @@ function taskPayloadForDb(body, tableName) {
 }
 
 async function selectUsers() {
-  const result = await supabase
-    .from("usuarios")
-    .select("id,nombre,email,rol,activo,created_at,fecha_cumpleanos")
-    .order("id", { ascending: true });
+  const [usersResult, movementsResult] = await Promise.all([
+    supabase
+      .from("usuarios")
+      .select("id,nombre,email,rol,activo,created_at,fecha_cumpleanos")
+      .order("id", { ascending: true }),
+    supabase
+      .from("movimientos_personal")
+      .select("id,usuario_id,tipo_movimiento,fecha_movimiento,created_at")
+      .order("fecha_movimiento", { ascending: true })
+      .order("id", { ascending: true })
+  ]);
+  if (usersResult.error) throw usersResult.error;
+  if (movementsResult.error) throw movementsResult.error;
+
+  const movementByUser = new Map();
+  for (const movement of movementsResult.data || []) {
+    const userId = Number(movement.usuario_id);
+    const summary = movementByUser.get(userId) || { ingreso: null, salida: null };
+    const type = normalizeRole(movement.tipo_movimiento);
+    if (type === "ingreso") summary.ingreso = movement;
+    if (type === "salida") summary.salida = movement;
+    movementByUser.set(userId, summary);
+  }
+
+  return (usersResult.data || []).map((user) => {
+    const summary = movementByUser.get(Number(user.id)) || {};
+    const ingreso = summary.ingreso?.fecha_movimiento || null;
+    const salida = summary.salida?.fecha_movimiento || null;
+    return {
+      ...user,
+      fecha_ingreso: ingreso,
+      fecha_salida: ingreso && salida && salida >= ingreso ? salida : null
+    };
+  });
+}
+
+function validateEmploymentDates(body) {
+  const hasFields = body.fecha_ingreso !== undefined || body.fecha_salida !== undefined;
+  if (!hasFields) return null;
+  const ingreso = String(body.fecha_ingreso || "").trim();
+  const salida = String(body.fecha_salida || "").trim();
+  if (salida && !ingreso) throw new Error("La fecha de ingreso es obligatoria si registras una salida.");
+  if (ingreso && !/^\d{4}-\d{2}-\d{2}$/.test(ingreso)) throw new Error("La fecha de ingreso no es valida.");
+  if (salida && !/^\d{4}-\d{2}-\d{2}$/.test(salida)) throw new Error("La fecha de salida no es valida.");
+  if (ingreso && salida && salida < ingreso) throw new Error("La fecha de salida no puede ser anterior a la fecha de ingreso.");
+  return { ingreso, salida };
+}
+
+async function insertPersonnelMovement(payload) {
+  let result = await supabase.from("movimientos_personal").insert(payload).select("*").single();
+  if (isPrimaryKeySequenceConflict(result.error)) {
+    result = await supabase
+      .from("movimientos_personal")
+      .insert({ ...payload, id: await nextTableId("movimientos_personal") })
+      .select("*")
+      .single();
+  }
   if (result.error) throw result.error;
-  return result.data || [];
+  return result.data;
+}
+
+async function saveEmploymentDates(userId, dates) {
+  if (!dates || !dates.ingreso) return;
+  const currentResult = await supabase
+    .from("movimientos_personal")
+    .select("id,tipo_movimiento,fecha_movimiento")
+    .eq("usuario_id", userId)
+    .order("fecha_movimiento", { ascending: false })
+    .order("id", { ascending: false });
+  if (currentResult.error) throw currentResult.error;
+
+  const movements = currentResult.data || [];
+  const latestIngreso = movements.find((item) => normalizeRole(item.tipo_movimiento) === "ingreso");
+  const latestSalida = movements.find((item) => normalizeRole(item.tipo_movimiento) === "salida");
+  const wasClosed = Boolean(
+    latestIngreso && latestSalida && latestSalida.fecha_movimiento >= latestIngreso.fecha_movimiento
+  );
+
+  let ingresoMovement;
+  if (latestIngreso && wasClosed && dates.ingreso > latestSalida.fecha_movimiento) {
+    ingresoMovement = await insertPersonnelMovement({
+      usuario_id: userId,
+      tipo_movimiento: "Ingreso",
+      fecha_movimiento: dates.ingreso
+    });
+  } else if (latestIngreso) {
+    const updated = await supabase
+      .from("movimientos_personal")
+      .update({ fecha_movimiento: dates.ingreso })
+      .eq("id", latestIngreso.id)
+      .select("*")
+      .single();
+    if (updated.error) throw updated.error;
+    ingresoMovement = updated.data;
+  } else {
+    ingresoMovement = await insertPersonnelMovement({
+      usuario_id: userId,
+      tipo_movimiento: "Ingreso",
+      fecha_movimiento: dates.ingreso
+    });
+  }
+
+  if (dates.salida) {
+    const exitBelongsToCurrentPeriod = latestSalida && latestSalida.fecha_movimiento >= ingresoMovement.fecha_movimiento;
+    if (exitBelongsToCurrentPeriod) {
+      const updated = await supabase
+        .from("movimientos_personal")
+        .update({ fecha_movimiento: dates.salida })
+        .eq("id", latestSalida.id);
+      if (updated.error) throw updated.error;
+    } else {
+      await insertPersonnelMovement({
+        usuario_id: userId,
+        tipo_movimiento: "Salida",
+        fecha_movimiento: dates.salida
+      });
+    }
+  } else if (
+    latestSalida &&
+    latestIngreso &&
+    Number(ingresoMovement.id) === Number(latestIngreso.id) &&
+    latestSalida.fecha_movimiento >= latestIngreso.fecha_movimiento
+  ) {
+    const removed = await supabase.from("movimientos_personal").delete().eq("id", latestSalida.id);
+    if (removed.error) throw removed.error;
+  }
 }
 
 function userPayloadForDb(body, { creating = false } = {}) {
@@ -333,7 +453,9 @@ async function handleUpdateUser(request, response, userId) {
       return;
     }
     const body = JSON.parse((await readBody(request)) || "{}");
+    const employmentDates = validateEmploymentDates(body);
     const payload = userPayloadForDb(body);
+    if (employmentDates?.ingreso) payload.activo = !employmentDates.salida;
     if (!Object.keys(payload).length) {
       sendJson(response, 400, { error: "No hay cambios para guardar." });
       return;
@@ -347,8 +469,10 @@ async function handleUpdateUser(request, response, userId) {
       sendJson(response, 404, { error: "Usuario no encontrado." });
       return;
     }
+    await saveEmploymentDates(userId, employmentDates);
     const { password_hash: _passwordHash, password: _password, ...user } = result.data;
-    sendJson(response, 200, { user });
+    const refreshedUsers = await selectUsers();
+    sendJson(response, 200, { user: refreshedUsers.find((item) => Number(item.id) === userId) || user });
   } catch (error) {
     sendJson(response, 400, { error: error.message || "No se pudo actualizar el usuario." });
   }

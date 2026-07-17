@@ -89,7 +89,9 @@ function UsersPanel() {
     fecha_cumpleanos: "",
     rol: "operante",
     activo: true,
-    password: ""
+    password: "",
+    fecha_ingreso: "",
+    fecha_salida: ""
   });
 
   const selectedUser = users.find((user) => String(user.id) === String(editId));
@@ -102,7 +104,9 @@ function UsersPanel() {
       fecha_cumpleanos: selectedUser.fecha_cumpleanos || "",
       rol: normalizeRole(selectedUser.rol) || "operante",
       activo: boolValue(selectedUser.activo),
-      password: ""
+      password: "",
+      fecha_ingreso: selectedUser.fecha_ingreso || "",
+      fecha_salida: selectedUser.fecha_salida || ""
     });
   }, [selectedUser?.id]);
 
@@ -143,6 +147,14 @@ function UsersPanel() {
       setStatus({ type: "error", message: "Nombre y usuario son obligatorios." });
       return;
     }
+    if (editForm.fecha_salida && !editForm.fecha_ingreso) {
+      setStatus({ type: "error", message: "Ingresa la fecha de ingreso antes de registrar la salida." });
+      return;
+    }
+    if (editForm.fecha_ingreso && editForm.fecha_salida && editForm.fecha_salida < editForm.fecha_ingreso) {
+      setStatus({ type: "error", message: "La fecha de salida no puede ser anterior a la fecha de ingreso." });
+      return;
+    }
     setSaving(true);
     try {
       await updateUser(
@@ -151,8 +163,10 @@ function UsersPanel() {
           nombre: editForm.nombre.trim(),
           email: editForm.email.trim().toLowerCase(),
           rol: editForm.rol,
-          activo: editForm.activo,
-          fecha_cumpleanos: editForm.fecha_cumpleanos || null
+          activo: editForm.fecha_ingreso ? !editForm.fecha_salida : editForm.activo,
+          fecha_cumpleanos: editForm.fecha_cumpleanos || null,
+          fecha_ingreso: editForm.fecha_ingreso || null,
+          fecha_salida: editForm.fecha_salida || null
         },
         editForm.password.trim() || null
       );
@@ -263,7 +277,24 @@ function UsersPanel() {
                   onChange={(password) => setEditForm({ ...editForm, password })}
                   placeholder="Opcional"
                 />
-                <CheckboxInput label="Activo" checked={editForm.activo} onChange={(activo) => setEditForm({ ...editForm, activo })} />
+                <TextInput
+                  label="Fecha de ingreso"
+                  type="date"
+                  value={editForm.fecha_ingreso}
+                  onChange={(fecha_ingreso) => setEditForm({ ...editForm, fecha_ingreso })}
+                />
+                <TextInput
+                  label="Fecha de salida"
+                  type="date"
+                  min={editForm.fecha_ingreso || undefined}
+                  value={editForm.fecha_salida}
+                  onChange={(fecha_salida) => setEditForm({ ...editForm, fecha_salida })}
+                />
+                <div className="form-span">
+                  <Alert>
+                    La fecha de salida es opcional. Si queda vacia, el usuario permanecera activo; al registrar una salida se desactivara.
+                  </Alert>
+                </div>
                 <div className="form-span">
                   <FormActions saving={saving} saveLabel="Guardar cambios" />
                 </div>

@@ -26,6 +26,10 @@ const adminItems = [
 ];
 
 export default function Layout({ user, adminSection, onAdminSectionChange, onLogout, children }) {
+  const [isMobile, setIsMobile] = useState(() => (
+    typeof window !== "undefined" && window.matchMedia("(max-width: 980px)").matches
+  ));
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_STATE_KEY) === "true";
@@ -42,6 +46,31 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
     }
   }, [sidebarCollapsed]);
 
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 980px)");
+    const handleChange = (event) => {
+      setIsMobile(event.matches);
+      if (!event.matches) setMobileSidebarOpen(false);
+    };
+    setIsMobile(media.matches);
+    media.addEventListener?.("change", handleChange);
+    return () => media.removeEventListener?.("change", handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile || !mobileSidebarOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setMobileSidebarOpen(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isMobile, mobileSidebarOpen]);
+
   const role = normalizeRole(user?.rol);
   const title =
     role === "administrador"
@@ -53,8 +82,8 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
           : "Panel de Trabajo";
 
   return (
-    <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
-      <aside className={`sidebar${sidebarCollapsed ? " collapsed" : ""}`}>
+    <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${mobileSidebarOpen ? " mobile-sidebar-open" : ""}`}>
+      <aside className={`sidebar${!isMobile && sidebarCollapsed ? " collapsed" : ""}`} aria-label="Barra lateral">
         <div className="sidebar-top">
           <div className="sidebar-header-row">
             <div className="brand-row">
@@ -65,11 +94,11 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
               </div>
             </div>
             <IconButton
-              label={sidebarCollapsed ? "Expandir barra lateral" : "Contraer barra lateral"}
-              icon={sidebarCollapsed ? PanelLeftOpen : PanelLeftClose}
-              aria-expanded={!sidebarCollapsed}
+              label={isMobile ? "Cerrar menu" : sidebarCollapsed ? "Expandir barra lateral" : "Contraer barra lateral"}
+              icon={isMobile ? PanelLeftClose : sidebarCollapsed ? PanelLeftOpen : PanelLeftClose}
+              aria-expanded={isMobile ? mobileSidebarOpen : !sidebarCollapsed}
               aria-controls="primary-sidebar-navigation"
-              onClick={() => setSidebarCollapsed((current) => !current)}
+              onClick={() => isMobile ? setMobileSidebarOpen(false) : setSidebarCollapsed((current) => !current)}
             />
           </div>
           <div className="profile-box">
@@ -86,7 +115,10 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
                   key={key}
                   type="button"
                   className={adminSection === key ? "active" : ""}
-                  onClick={() => onAdminSectionChange(key)}
+                  onClick={() => {
+                    onAdminSectionChange(key);
+                    if (isMobile) setMobileSidebarOpen(false);
+                  }}
                   title={sidebarCollapsed ? label || key : undefined}
                 >
                   <Icon />
@@ -110,11 +142,30 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
         </Button>
       </aside>
 
+      {isMobile && mobileSidebarOpen ? (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Cerrar menu lateral"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      ) : null}
+
       <main className="workspace">
         <header className="workspace-header">
-          <div>
-            <p className="eyebrow">{title}</p>
-            <h1>Sistema de Formularios</h1>
+          <div className="workspace-title-row">
+            <IconButton
+              className="mobile-sidebar-trigger"
+              label="Abrir menu lateral"
+              icon={Menu}
+              aria-expanded={mobileSidebarOpen}
+              aria-controls="primary-sidebar-navigation"
+              onClick={() => setMobileSidebarOpen(true)}
+            />
+            <div>
+              <p className="eyebrow">{title}</p>
+              <h1>Sistema de Formularios</h1>
+            </div>
           </div>
           <div className="header-chip">{role}</div>
         </header>
