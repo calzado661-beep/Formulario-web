@@ -527,6 +527,8 @@ function activityLogInsertPayload(resourceName, payload) {
     fecha_registro: payload.fecha_registro,
     cantidad: payload.cantidad,
     turno: payload.turno,
+    tienda_id: payload.tienda_id,
+    numero_guia: payload.numero_guia,
     observacion: payload.observacion || payload.detalle,
     puntos_obtenidos: payload.puntos_obtenidos
   };

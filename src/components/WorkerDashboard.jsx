@@ -5,6 +5,7 @@ import {
   friendlyError,
   getTasksForUser,
   listBrands,
+  listTiendas,
   listTaskScoreRanges,
   listTasks,
   listWorkerActivityLogs
@@ -46,6 +47,10 @@ function emptyRecord() {
     minutos: "",
     usaTiempo: false,
     usaMarcas: false,
+    usaTienda: false,
+    tiendaId: "",
+    usaGuia: false,
+    numeroGuia: "",
     marcas: [emptyBrandShare()],
     cumplimiento: true,
     turno: SIMPLE_SHIFT,
@@ -67,14 +72,15 @@ export default function WorkerDashboard({ user, embedded = false }) {
 function RegisterActivity({ user }) {
   const { data, loading, error, reload } = useAsyncData(
     async () => {
-      const [tasks, brands] = await Promise.all([getTasksForUser(user), listBrands()]);
-      return { tasks, brands };
+      const [tasks, brands, stores] = await Promise.all([getTasksForUser(user), listBrands(), listTiendas()]);
+      return { tasks, brands, stores: stores.filter((store) => String(store.activo ?? true) !== "false") };
     },
     [user?.id],
-    { tasks: [], brands: [] }
+    { tasks: [], brands: [], stores: [] }
   );
   const tasks = data.tasks || [];
   const brands = data.brands || [];
+  const stores = data.stores || [];
   const [records, setRecords] = useState([emptyRecord()]);
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -101,7 +107,12 @@ function RegisterActivity({ user }) {
     setRecords((current) =>
       current.map((record, recordIndex) =>
         recordIndex === index
-          ? { ...emptyRecord(), taskKey, usaMarcas: taskUsesBrandsByDefault(task) }
+          ? {
+              ...emptyRecord(),
+              taskKey,
+              usaMarcas: taskUsesBrandsByDefault(task),
+              usaGuia: Boolean(task?.requiere_numero_guia)
+            }
           : record
       )
     );
@@ -131,6 +142,8 @@ function RegisterActivity({ user }) {
     const marcas = record.usaMarcas
       ? record.marcas.map((item) => ({ marca_id: Number(item.marca_id), cantidad: Number(item.cantidad) }))
       : [];
+    const tiendaId = record.usaTienda ? Number(record.tiendaId) : null;
+    const numeroGuia = record.usaGuia ? String(record.numeroGuia || "").trim() : null;
 
     let cantidad = null;
     let cantidadPuntaje = null;
@@ -159,7 +172,20 @@ function RegisterActivity({ user }) {
       cumplimiento = true;
     }
 
-    return { task, title, type, unit, cantidad, cantidadPuntaje, tiempoMinutos, cumplimiento, turno, marcas };
+    return {
+      task,
+      title,
+      type,
+      unit,
+      cantidad,
+      cantidadPuntaje,
+      tiempoMinutos,
+      cumplimiento,
+      turno,
+      marcas,
+      tiendaId,
+      numeroGuia
+    };
   }
 
   function validateRecords() {
@@ -173,6 +199,12 @@ function RegisterActivity({ user }) {
       seen.add(record.taskKey);
 
       const shape = recordPayloadShape(record);
+      if (record.usaTienda && !stores.some((store) => String(store.id) === String(record.tiendaId))) {
+        return `Selecciona una tienda valida para ${shape.title}.`;
+      }
+      if (record.usaGuia && !String(record.numeroGuia || "").trim()) {
+        return `Ingresa el numero de guia para ${shape.title}.`;
+      }
       if (record.usaMarcas) {
         const total = Number(record.cantidad || 0);
         const distributed = brandTotal(record.marcas);
@@ -256,6 +288,8 @@ function RegisterActivity({ user }) {
             cumplimiento: shape.cumplimiento,
             detalle: record.detalle.trim() || null,
             turno: shape.turno,
+            tienda_id: shape.tiendaId,
+            numero_guia: shape.numeroGuia,
             puntos_obtenidos: points,
             marcas: shape.marcas
           };
@@ -333,6 +367,7 @@ function RegisterActivity({ user }) {
                   record={record}
                   task={selectedTask}
                   brands={brands}
+                  stores={stores}
                   onChange={(changes) => updateRecord(index, changes)}
                 />
               )}
@@ -348,7 +383,7 @@ function RegisterActivity({ user }) {
   );
 }
 
-function DynamicRecordFields({ record, task, brands, onChange }) {
+function DynamicRecordFields({ record, task, brands, stores, onChange }) {
   const title = getTaskTitle(task);
   const dbType = normalizeMeasurementType(task?.tipo_medicion);
   const [fallbackType, fallbackUnit] = getActivityCaptureMode(title);
@@ -366,6 +401,7 @@ function DynamicRecordFields({ record, task, brands, onChange }) {
           onChange={(cantidad) => onChange({ cantidad })}
         />
         <BrandFields record={record} brands={brands} onChange={onChange} />
+        <OptionalContextFields record={record} stores={stores} onChange={onChange} />
         <CheckboxInput label="Agregar tiempo" checked={record.usaTiempo} onChange={(usaTiempo) => onChange({ usaTiempo })} />
         <TextInput
           label="Horas"
@@ -400,6 +436,7 @@ function DynamicRecordFields({ record, task, brands, onChange }) {
           onChange={(cantidad) => onChange({ cantidad })}
         />
         <BrandFields record={record} brands={brands} onChange={onChange} />
+        <OptionalContextFields record={record} stores={stores} onChange={onChange} />
         <Alert>El jefe de equipo agregará el tiempo después de que guardes este registro.</Alert>
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
@@ -415,6 +452,7 @@ function DynamicRecordFields({ record, task, brands, onChange }) {
           disabled
           hint="Esta tarea siempre se registra como cumplida."
         />
+        <OptionalContextFields record={record} stores={stores} onChange={onChange} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
         <Alert>Esta tarea usa el puntaje fijo definido por administracion.</Alert>
       </div>
@@ -429,12 +467,51 @@ function DynamicRecordFields({ record, task, brands, onChange }) {
         onChange={(turno) => onChange({ turno })}
         options={[SIMPLE_SHIFT, FULL_SHIFT]}
       />
+      <OptionalContextFields record={record} stores={stores} onChange={onChange} />
       <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       <Alert>
         Puntaje configurado: simple {task.puntaje_turno_simple || task.puntos_turno_simple || 0}, completo{" "}
         {task.puntaje_turno_completo || task.puntos_turno_completo || 0}.
       </Alert>
     </div>
+  );
+}
+
+function OptionalContextFields({ record, stores, onChange }) {
+  return (
+    <>
+      <CheckboxInput
+        label="Agregar tienda"
+        checked={record.usaTienda}
+        onChange={(usaTienda) => onChange({ usaTienda, tiendaId: usaTienda ? record.tiendaId : "" })}
+        hint="Activalo para asociar la actividad con una tienda."
+      />
+      {record.usaTienda ? (
+        <SelectInput
+          label="Tienda"
+          value={record.tiendaId}
+          onChange={(tiendaId) => onChange({ tiendaId })}
+          options={[
+            { value: "", label: "Selecciona una tienda" },
+            ...stores.map((store) => ({ value: String(store.id), label: store.nombre }))
+          ]}
+        />
+      ) : null}
+      <CheckboxInput
+        label="Agregar numero de guia"
+        checked={record.usaGuia}
+        onChange={(usaGuia) => onChange({ usaGuia, numeroGuia: usaGuia ? record.numeroGuia : "" })}
+        hint="Activalo cuando la actividad tenga una guia asociada."
+      />
+      {record.usaGuia ? (
+        <TextInput
+          label="Numero de guia"
+          value={record.numeroGuia}
+          onChange={(numeroGuia) => onChange({ numeroGuia })}
+          placeholder="Ej. GUIA-001"
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -462,14 +539,15 @@ function BrandFields({ record, brands, onChange }) {
 export function WorkerHistory({ user }) {
   const { data, loading, error, reload } = useAsyncData(
     async () => {
-      const [logs, tasks] = await Promise.all([listWorkerActivityLogs(user.id), listTasks()]);
-      return { logs, tasks };
+      const [logs, tasks, stores] = await Promise.all([listWorkerActivityLogs(user.id), listTasks(), listTiendas()]);
+      return { logs, tasks, stores };
     },
     [user?.id],
-    { logs: [], tasks: [] }
+    { logs: [], tasks: [], stores: [] }
   );
 
   const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || `Tarea ${task.id}`]));
+  const storeNameById = Object.fromEntries((data.stores || []).map((store) => [store.id, store.nombre]));
   const rows = (data.logs || []).map((log) => {
     const taskName = taskNameById[log.tarea_id] || log.actividad_nombre || "";
     const [tipoAct] = getActivityCaptureMode(taskName);
@@ -486,6 +564,8 @@ export function WorkerHistory({ user }) {
         : "No aplica",
       Cumplimiento: log.cumplimiento,
       Puntos: log.puntos_obtenidos,
+      Tienda: storeNameById[log.tienda_id] || "",
+      Guia: log.numero_guia || "",
       Marcas: (log.marcas || []).map((item) => `${item.marca_nombre}: ${item.cantidad}`).join(", "),
       Detalle: log.detalle
     };

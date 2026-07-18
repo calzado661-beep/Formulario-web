@@ -1057,6 +1057,8 @@ async function handleCreateActivityLog(request, response) {
       cantidad: requestedQuantity,
       turno: body.turno ? String(body.turno).trim() : null,
       cumplimiento: body.cumplimiento === undefined ? null : Boolean(body.cumplimiento),
+      tienda_id: nullableNumber(body.tienda_id),
+      numero_guia: body.numero_guia ? String(body.numero_guia).trim() : null,
       observacion: body.observacion || body.detalle ? String(body.observacion || body.detalle).trim() : null,
       puntos_obtenidos: nullableNumber(body.puntos_obtenidos) ?? 0
     };
@@ -1066,6 +1068,17 @@ async function handleCreateActivityLog(request, response) {
     if (!payload.usuario_id || !payload.tarea_id) {
       sendJson(response, 400, { error: "Usuario y tarea son obligatorios." });
       return;
+    }
+    if (payload.tienda_id) {
+      const storeResult = await supabase
+        .from("tiendas")
+        .select("id,activo")
+        .eq("id", payload.tienda_id)
+        .maybeSingle();
+      if (storeResult.error || !storeResult.data || !isActive(storeResult.data.activo)) {
+        sendJson(response, 400, { error: "Selecciona una tienda activa y valida." });
+        return;
+      }
     }
 
     const insertedRows = [];
