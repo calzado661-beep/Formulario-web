@@ -5,7 +5,9 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const moduleUrl = import.meta.url;
+const modulePath = moduleUrl ? fileURLToPath(moduleUrl) : "";
+const __dirname = modulePath ? path.dirname(modulePath) : process.cwd();
 
 function readEnv() {
   const envPath = path.join(__dirname, ".env");
@@ -1510,7 +1512,7 @@ export async function handleRequest(request, response, { serveFiles = true } = {
   else sendJson(response, 404, { error: "Ruta de API no encontrada." });
 }
 
-const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMainModule = modulePath && process.argv[1] && path.resolve(process.argv[1]) === modulePath;
 if (isMainModule) {
   const server = http.createServer((request, response) => handleRequest(request, response));
   server.listen(port, "127.0.0.1", () => {
