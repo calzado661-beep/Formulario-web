@@ -190,6 +190,10 @@ function isPrimaryKeySequenceConflict(error) {
   return error?.code === "23505" && /Key \(id\)|_pkey/i.test(`${error?.details || ""} ${error?.message || ""}`);
 }
 
+function missingSchemaColumn(error) {
+  return /Could not find the '([^']+)' column/i.exec(String(error?.message || ""))?.[1] || null;
+}
+
 async function nextTableId(tableName) {
   const result = await supabase.from(tableName).select("id").order("id", { ascending: false }).limit(1);
   if (result.error) throw result.error;
@@ -1025,19 +1029,30 @@ async function handleCreateActivityLog(request, response) {
       observacion: body.observacion || body.detalle ? String(body.observacion || body.detalle).trim() : null,
       puntos_obtenidos: nullableNumber(body.puntos_obtenidos) ?? 0
     };
+    const requestedTime = nullableNumber(body.tiempo_minutos ?? body.dato_extra);
+    if (!isTimeTask && requestedTime !== null) payload.tiempo_minutos = requestedTime;
 
     if (!payload.usuario_id || !payload.tarea_id) {
       sendJson(response, 400, { error: "Usuario y tarea son obligatorios." });
       return;
     }
 
-    let result = await supabase.from("registros_tareas").insert(payload).select("*").single();
-    if (isPrimaryKeySequenceConflict(result.error)) {
-      result = await supabase
-        .from("registros_tareas")
-        .insert({ ...payload, id: await nextTableId("registros_tareas") })
-        .select("*")
-        .single();
+    let candidate = { ...payload };
+    let needsExplicitId = false;
+    let result;
+    for (let attempt = 0; attempt <= Object.keys(payload).length + 1; attempt += 1) {
+      const row = needsExplicitId
+        ? { ...candidate, id: await nextTableId("registros_tareas") }
+        : candidate;
+      result = await supabase.from("registros_tareas").insert(row).select("*").single();
+      if (!result.error) break;
+      if (!needsExplicitId && isPrimaryKeySequenceConflict(result.error)) {
+        needsExplicitId = true;
+        continue;
+      }
+      const missingColumn = missingSchemaColumn(result.error);
+      if (!missingColumn || !(missingColumn in candidate)) break;
+      delete candidate[missingColumn];
     }
     if (result.error) {
       sendJson(response, 500, { error: result.error.message });
