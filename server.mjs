@@ -606,6 +606,7 @@ async function selectActivityLogs(workerId = null) {
 
 async function handleReadUsers(_request, response) {
   try {
+    if (!requireAdministrator(_request, response)) return;
     sendJson(response, 200, { users: await selectUsers() });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron cargar los usuarios." });
@@ -973,8 +974,14 @@ async function handleMarkAttendance(request, response) {
 
 async function handleReadActivityLogs(request, response) {
   try {
+    const session = requireSessionRole(request, response, ["administrador", "operante", "jefe de equipo", "jefe de grupo"]);
+    if (!session) return;
     const url = new URL(request.url, `http://${request.headers.host}`);
     const workerId = url.searchParams.get("workerId");
+    if (normalizeRole(session.rol) !== "administrador" && workerId && Number(workerId) !== Number(session.id)) {
+      sendJson(response, 403, { error: "No puedes consultar los registros de otro usuario." });
+      return;
+    }
     sendJson(response, 200, { logs: await selectActivityLogs(workerId) });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron cargar los registros." });
@@ -1377,7 +1384,7 @@ function serveStatic(request, response) {
   fs.createReadStream(filePath).pipe(response);
 }
 
-const server = http.createServer(async (request, response) => {
+export async function handleRequest(request, response, { serveFiles = true } = {}) {
   if (request.method === "OPTIONS") {
     sendJson(response, 204, {});
     return;
@@ -1499,9 +1506,14 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  serveStatic(request, response);
-});
+  if (serveFiles) serveStatic(request, response);
+  else sendJson(response, 404, { error: "Ruta de API no encontrada." });
+}
 
-server.listen(port, "127.0.0.1", () => {
-  console.log(`Servidor local listo en http://127.0.0.1:${port}`);
-});
+const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMainModule) {
+  const server = http.createServer((request, response) => handleRequest(request, response));
+  server.listen(port, "127.0.0.1", () => {
+    console.log(`Servidor local listo en http://127.0.0.1:${port}`);
+  });
+}
