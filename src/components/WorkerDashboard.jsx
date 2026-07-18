@@ -240,20 +240,23 @@ function RegisterActivity({ user }) {
             taskForPoints.rangos_puntaje = await listTaskScoreRanges(shape.task.id);
           }
           const points = calculatePoints(taskForPoints, shape.cantidad, shape.tiempoMinutos, shape.cumplimiento);
-          await createWorkerActivityLog({
+          const activityPayload = {
             trabajador_id: user.id,
             usuario_id: user.id,
             tarea_id: shape.task.id,
             actividad_nombre: shape.title,
             fecha_registro: today,
             cantidad: shape.cantidad,
-            tiempo_minutos: shape.tiempoMinutos,
             cumplimiento: shape.cumplimiento,
             detalle: record.detalle.trim() || null,
             turno: shape.turno,
             puntos_obtenidos: points,
             marcas: shape.marcas
-          });
+          };
+          if (shape.tiempoMinutos !== null && shape.tiempoMinutos !== undefined) {
+            activityPayload.tiempo_minutos = shape.tiempoMinutos;
+          }
+          await createWorkerActivityLog(activityPayload);
           saved += 1;
           totalPoints += Number(points || 0);
         } catch (err) {
