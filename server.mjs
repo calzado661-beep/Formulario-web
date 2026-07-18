@@ -194,6 +194,14 @@ function missingSchemaColumn(error) {
   return /Could not find the '([^']+)' column/i.exec(String(error?.message || ""))?.[1] || null;
 }
 
+function isMissingSchemaTable(error, tableName) {
+  const message = String(error?.message || "").toLowerCase();
+  return error?.code === "PGRST205" || (
+    message.includes(String(tableName).toLowerCase()) &&
+    (message.includes("schema cache") || message.includes("does not exist"))
+  );
+}
+
 async function nextTableId(tableName) {
   const result = await supabase.from(tableName).select("id").order("id", { ascending: false }).limit(1);
   if (result.error) throw result.error;
@@ -1059,17 +1067,48 @@ async function handleCreateActivityLog(request, response) {
       return;
     }
 
+    let fallbackBrands = null;
     if (brandItems.length) {
       const details = brandItems.map((item) => ({ ...item, registro_tarea_id: result.data.id }));
       const detailResult = await supabase.from("registro_tarea_marcas").insert(details);
       if (detailResult.error) {
-        await supabase.from("registros_tareas").delete().eq("id", result.data.id);
-        sendJson(response, 500, { error: detailResult.error.message });
-        return;
+        if (isMissingSchemaTable(detailResult.error, "registro_tarea_marcas")) {
+          const brands = await selectBrands();
+          const brandName = new Map(brands.map((brand) => [Number(brand.id), brand.nombre]));
+          fallbackBrands = brandItems.map((item) => ({
+            ...item,
+            marca_nombre: brandName.get(Number(item.marca_id)) || `Marca ${item.marca_id}`
+          }));
+          const brandSummary = fallbackBrands
+            .map((item) => `${item.marca_nombre}: ${item.cantidad}`)
+            .join(", ");
+          const fallbackObservation = [result.data.observacion, `Marcas: ${brandSummary}`]
+            .filter(Boolean)
+            .join(" | ");
+          const updated = await supabase
+            .from("registros_tareas")
+            .update({ observacion: fallbackObservation })
+            .eq("id", result.data.id)
+            .select("*")
+            .single();
+          if (updated.error) {
+            await supabase.from("registros_tareas").delete().eq("id", result.data.id);
+            sendJson(response, 500, { error: updated.error.message });
+            return;
+          }
+          result.data = updated.data;
+        } else {
+          await supabase.from("registros_tareas").delete().eq("id", result.data.id);
+          sendJson(response, 500, { error: detailResult.error.message });
+          return;
+        }
       }
     }
 
-    const [log] = await attachBrandBreakdown([normalizeActivityLog(result.data)], "registro_tarea_marcas", "registro_tarea_id");
+    const normalizedLog = normalizeActivityLog(result.data);
+    const [log] = fallbackBrands
+      ? [{ ...normalizedLog, marcas: fallbackBrands }]
+      : await attachBrandBreakdown([normalizedLog], "registro_tarea_marcas", "registro_tarea_id");
     sendJson(response, 201, { log });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo guardar el registro." });
