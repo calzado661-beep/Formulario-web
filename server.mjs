@@ -1022,7 +1022,6 @@ async function handleCreateActivityLog(request, response) {
       tarea_id: Number(body.tarea_id),
       fecha_registro: body.fecha_registro ? String(body.fecha_registro) : new Date().toISOString().slice(0, 10),
       cantidad: requestedQuantity,
-      tiempo_minutos: isTimeTask ? null : nullableNumber(body.tiempo_minutos ?? body.dato_extra),
       observacion: body.observacion || body.detalle ? String(body.observacion || body.detalle).trim() : null,
       puntos_obtenidos: nullableNumber(body.puntos_obtenidos) ?? 0
     };

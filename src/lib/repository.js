@@ -534,10 +534,6 @@ function activityLogInsertPayload(resourceName, payload) {
     puntos_obtenidos: payload.puntos_obtenidos
   };
 
-  if (payload.tiempo_minutos !== null && payload.tiempo_minutos !== undefined) {
-    mapped.dato_extra = payload.tiempo_minutos;
-  }
-
   return Object.fromEntries(Object.entries(mapped).filter(([, value]) => value !== undefined && value !== null));
 }
 
