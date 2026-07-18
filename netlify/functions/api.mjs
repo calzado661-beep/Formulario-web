@@ -42,19 +42,3 @@ export async function handler(event) {
     });
   });
 }
-
-export default async function netlifyApi(request) {
-  const result = await handler({
-    httpMethod: request.method,
-    rawUrl: request.url,
-    headers: Object.fromEntries(request.headers.entries()),
-    body: ["GET", "HEAD"].includes(request.method) ? null : await request.text(),
-    isBase64Encoded: false
-  });
-  return new Response(result.body, {
-    status: result.statusCode,
-    headers: result.headers
-  });
-}
-
-export const config = { path: "/api/*" };
