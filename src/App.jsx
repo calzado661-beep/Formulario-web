@@ -8,7 +8,7 @@ import { Alert } from "./components/ui";
 import { clearApiSession } from "./lib/repository";
 import { normalizeRole } from "./lib/scoring";
 
-const SESSION_KEY = "formulario_usuario";
+const SESSION_KEY = "formulario_usuario_v2";
 
 function readStoredUser() {
   try {

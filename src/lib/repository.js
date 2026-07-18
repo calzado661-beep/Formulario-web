@@ -12,7 +12,7 @@ function db() {
   return requireSupabase();
 }
 
-const API_SESSION_KEY = "formulario_api_session";
+const API_SESSION_KEY = "formulario_api_session_v2";
 
 function apiSessionToken() {
   try {
