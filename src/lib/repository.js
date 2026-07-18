@@ -139,9 +139,6 @@ export function friendlyError(error) {
   if (/incidentes|usuario_id/i.test(message) && /could not find|does not exist|schema cache/i.test(message)) {
     return "Falta ejecutar la migración de incidencias en Supabase: sql/010_incidentes_estructura.sql.";
   }
-  if (/registro_tarea_marcas|registro_jefe_grupo_marcas/i.test(message) && /could not find|does not exist|schema cache/i.test(message)) {
-    return "Falta ejecutar la migracion de marcas en Supabase: sql/012_registro_tarea_marcas_compatibilidad.sql.";
-  }
   if (/row-level security/i.test(message)) {
     return "Supabase rechazo la operacion por politicas RLS. Revisa permisos de la clave publica.";
   }

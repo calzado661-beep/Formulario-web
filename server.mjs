@@ -194,18 +194,31 @@ function missingSchemaColumn(error) {
   return /Could not find the '([^']+)' column/i.exec(String(error?.message || ""))?.[1] || null;
 }
 
-function isMissingSchemaTable(error, tableName) {
-  const message = String(error?.message || "").toLowerCase();
-  return error?.code === "PGRST205" || (
-    message.includes(String(tableName).toLowerCase()) &&
-    (message.includes("schema cache") || message.includes("does not exist"))
-  );
-}
-
 async function nextTableId(tableName) {
   const result = await supabase.from(tableName).select("id").order("id", { ascending: false }).limit(1);
   if (result.error) throw result.error;
   return Number(result.data?.[0]?.id || 0) + 1;
+}
+
+async function insertCompatibleActivityRow(payload) {
+  const candidate = { ...payload };
+  let needsExplicitId = false;
+  let result;
+  for (let attempt = 0; attempt <= Object.keys(payload).length + 1; attempt += 1) {
+    const row = needsExplicitId
+      ? { ...candidate, id: await nextTableId("registros_tareas") }
+      : candidate;
+    result = await supabase.from("registros_tareas").insert(row).select("*").single();
+    if (!result.error) return result;
+    if (!needsExplicitId && isPrimaryKeySequenceConflict(result.error)) {
+      needsExplicitId = true;
+      continue;
+    }
+    const missingColumn = missingSchemaColumn(result.error);
+    if (!missingColumn || !(missingColumn in candidate)) return result;
+    delete candidate[missingColumn];
+  }
+  return result;
 }
 
 let taskTableName;
@@ -567,24 +580,20 @@ function normalizedBrandItems(value) {
   });
 }
 
-async function attachBrandBreakdown(rows, tableName, recordColumn) {
+async function attachBrandBreakdown(rows) {
   if (!rows.length) return rows;
-  const ids = rows.map((row) => Number(row.id)).filter(Boolean);
-  const [detailsResult, brands] = await Promise.all([
-    supabase.from(tableName).select(`${recordColumn},marca_id,cantidad`).in(recordColumn, ids),
-    selectBrands()
-  ]);
-  if (detailsResult.error) return rows.map((row) => ({ ...row, marcas: [] }));
-
+  const brands = await selectBrands();
   const brandName = new Map(brands.map((brand) => [Number(brand.id), brand.nombre]));
-  const byRecord = new Map();
-  for (const detail of detailsResult.data || []) {
-    const recordId = Number(detail[recordColumn]);
-    const current = byRecord.get(recordId) || [];
-    current.push({ ...detail, marca_nombre: brandName.get(Number(detail.marca_id)) || `Marca ${detail.marca_id}` });
-    byRecord.set(recordId, current);
-  }
-  return rows.map((row) => ({ ...row, marcas: byRecord.get(Number(row.id)) || [] }));
+  return rows.map((row) => ({
+    ...row,
+    marcas: row.marca_id
+      ? [{
+          marca_id: Number(row.marca_id),
+          cantidad: nullableNumber(row.cantidad),
+          marca_nombre: brandName.get(Number(row.marca_id)) || `Marca ${row.marca_id}`
+        }]
+      : []
+  }));
 }
 
 async function selectTaskScoreRanges(taskId = null) {
@@ -610,7 +619,7 @@ async function selectActivityLogs(workerId = null) {
     const result = await query;
     if (!result.error) {
       const rows = (result.data || []).map(normalizeActivityLog);
-      return attachBrandBreakdown(rows, "registro_tarea_marcas", "registro_tarea_id");
+      return attachBrandBreakdown(rows);
     }
     lastError = result.error;
   }
@@ -1045,70 +1054,39 @@ async function handleCreateActivityLog(request, response) {
       return;
     }
 
-    let candidate = { ...payload };
-    let needsExplicitId = false;
-    let result;
-    for (let attempt = 0; attempt <= Object.keys(payload).length + 1; attempt += 1) {
-      const row = needsExplicitId
-        ? { ...candidate, id: await nextTableId("registros_tareas") }
-        : candidate;
-      result = await supabase.from("registros_tareas").insert(row).select("*").single();
-      if (!result.error) break;
-      if (!needsExplicitId && isPrimaryKeySequenceConflict(result.error)) {
-        needsExplicitId = true;
-        continue;
-      }
-      const missingColumn = missingSchemaColumn(result.error);
-      if (!missingColumn || !(missingColumn in candidate)) break;
-      delete candidate[missingColumn];
-    }
-    if (result.error) {
-      sendJson(response, 500, { error: result.error.message });
-      return;
-    }
+    const insertedRows = [];
+    const rowsToInsert = brandItems.length
+      ? brandItems.map((item, index) => ({
+          ...payload,
+          cantidad: item.cantidad,
+          marca_id: item.marca_id,
+          puntos_obtenidos: index === 0 ? payload.puntos_obtenidos : 0
+        }))
+      : [payload];
 
-    let fallbackBrands = null;
-    if (brandItems.length) {
-      const details = brandItems.map((item) => ({ ...item, registro_tarea_id: result.data.id }));
-      const detailResult = await supabase.from("registro_tarea_marcas").insert(details);
-      if (detailResult.error) {
-        if (isMissingSchemaTable(detailResult.error, "registro_tarea_marcas")) {
-          const brands = await selectBrands();
-          const brandName = new Map(brands.map((brand) => [Number(brand.id), brand.nombre]));
-          fallbackBrands = brandItems.map((item) => ({
-            ...item,
-            marca_nombre: brandName.get(Number(item.marca_id)) || `Marca ${item.marca_id}`
-          }));
-          const brandSummary = fallbackBrands
-            .map((item) => `${item.marca_nombre}: ${item.cantidad}`)
-            .join(", ");
-          const fallbackObservation = [result.data.observacion, `Marcas: ${brandSummary}`]
-            .filter(Boolean)
-            .join(" | ");
-          const updated = await supabase
-            .from("registros_tareas")
-            .update({ observacion: fallbackObservation })
-            .eq("id", result.data.id)
-            .select("*")
-            .single();
-          if (updated.error) {
-            await supabase.from("registros_tareas").delete().eq("id", result.data.id);
-            sendJson(response, 500, { error: updated.error.message });
-            return;
-          }
-          result.data = updated.data;
-        } else {
-          await supabase.from("registros_tareas").delete().eq("id", result.data.id);
-          sendJson(response, 500, { error: detailResult.error.message });
-          return;
+    for (const row of rowsToInsert) {
+      const result = await insertCompatibleActivityRow(row);
+      if (result.error) {
+        if (insertedRows.length) {
+          await supabase.from("registros_tareas").delete().in("id", insertedRows.map((item) => item.id));
         }
+        sendJson(response, 500, { error: result.error.message });
+        return;
       }
+      insertedRows.push(result.data);
     }
 
-    const normalizedLog = normalizeActivityLog(result.data);
-    const [log] = fallbackBrands
-      ? [{ ...normalizedLog, marcas: fallbackBrands }]
-      : await attachBrandBreakdown([normalizedLog], "registro_tarea_marcas", "registro_tarea_id");
+    const brands = brandItems.length ? await selectBrands() : [];
+    const brandName = new Map(brands.map((brand) => [Number(brand.id), brand.nombre]));
+    const log = {
+      ...normalizeActivityLog(insertedRows[0]),
+      cantidad: requestedQuantity,
+      puntos_obtenidos: payload.puntos_obtenidos,
+      marcas: brandItems.map((item) => ({
+        ...item,
+        marca_nombre: brandName.get(Number(item.marca_id)) || `Marca ${item.marca_id}`
+      }))
+    };
     sendJson(response, 201, { log });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo guardar el registro." });
