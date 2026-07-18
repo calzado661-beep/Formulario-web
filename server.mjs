@@ -1022,6 +1022,18 @@ async function handleCreateActivityLog(request, response) {
       sendJson(response, 400, { error: "La tarea seleccionada no existe." });
       return;
     }
+    const scoringRulesResult = await supabase
+      .from("reglas_puntaje")
+      .select("tipo_regla")
+      .eq("tarea_id", Number(body.tarea_id));
+    if (scoringRulesResult.error) {
+      sendJson(response, 500, { error: scoringRulesResult.error.message });
+      return;
+    }
+    const scoringTypes = new Set((scoringRulesResult.data || []).map((rule) => normalizeRole(rule.tipo_regla)));
+    const requestedType = normalizeRole(body.tipo_medicion);
+    const storesQuantity = !scoringTypes.has("fijo") && !scoringTypes.has("turno") &&
+      !["fijo", "turno", "cumplimiento"].includes(requestedType);
     const isTimeTask = isGroupLeaderTimeTask(taskResult.data);
     if (isTimeTask && body.tiempo_minutos !== null && body.tiempo_minutos !== undefined && body.tiempo_minutos !== "") {
       sendJson(response, 403, { error: "El operante no puede registrar el tiempo. Debe hacerlo el jefe de equipo." });
@@ -1029,7 +1041,7 @@ async function handleCreateActivityLog(request, response) {
     }
     const brandItems = normalizedBrandItems(body.marcas);
     const brandTotal = brandItems.reduce((total, item) => total + item.cantidad, 0);
-    const requestedQuantity = nullableNumber(body.cantidad);
+    const requestedQuantity = storesQuantity ? nullableNumber(body.cantidad) : null;
     if (isTimeTask && (!requestedQuantity || requestedQuantity <= 0)) {
       sendJson(response, 400, { error: "Las tareas de tiempo también requieren una cantidad mayor a cero." });
       return;
@@ -1043,6 +1055,8 @@ async function handleCreateActivityLog(request, response) {
       tarea_id: Number(body.tarea_id),
       fecha_registro: body.fecha_registro ? String(body.fecha_registro) : new Date().toISOString().slice(0, 10),
       cantidad: requestedQuantity,
+      turno: body.turno ? String(body.turno).trim() : null,
+      cumplimiento: body.cumplimiento === undefined ? null : Boolean(body.cumplimiento),
       observacion: body.observacion || body.detalle ? String(body.observacion || body.detalle).trim() : null,
       puntos_obtenidos: nullableNumber(body.puntos_obtenidos) ?? 0
     };

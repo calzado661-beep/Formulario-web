@@ -133,6 +133,7 @@ function RegisterActivity({ user }) {
       : [];
 
     let cantidad = null;
+    let cantidadPuntaje = null;
     let tiempoMinutos = null;
     let cumplimiento = record.cumplimiento;
     let turno = null;
@@ -150,16 +151,15 @@ function RegisterActivity({ user }) {
       cumplimiento = true;
     }
     if (type === "fijo") {
-      cantidad = 1;
       cumplimiento = true;
     }
     if (type === "turno") {
       turno = record.turno;
-      cantidad = record.turno === FULL_SHIFT ? 2 : 1;
+      cantidadPuntaje = record.turno === FULL_SHIFT ? 2 : 1;
       cumplimiento = true;
     }
 
-    return { task, title, type, unit, cantidad, tiempoMinutos, cumplimiento, turno, marcas };
+    return { task, title, type, unit, cantidad, cantidadPuntaje, tiempoMinutos, cumplimiento, turno, marcas };
   }
 
   function validateRecords() {
@@ -239,7 +239,12 @@ function RegisterActivity({ user }) {
           if (shape.type === "cantidad") {
             taskForPoints.rangos_puntaje = await listTaskScoreRanges(shape.task.id);
           }
-          const points = calculatePoints(taskForPoints, shape.cantidad, shape.tiempoMinutos, shape.cumplimiento);
+          const points = calculatePoints(
+            taskForPoints,
+            shape.cantidadPuntaje ?? shape.cantidad,
+            shape.tiempoMinutos,
+            shape.cumplimiento
+          );
           const activityPayload = {
             trabajador_id: user.id,
             usuario_id: user.id,
@@ -247,6 +252,7 @@ function RegisterActivity({ user }) {
             actividad_nombre: shape.title,
             fecha_registro: today,
             cantidad: shape.cantidad,
+            tipo_medicion: shape.type,
             cumplimiento: shape.cumplimiento,
             detalle: record.detalle.trim() || null,
             turno: shape.turno,
