@@ -866,7 +866,7 @@ async function handleDeleteTaskScoreRanges(request, response) {
 
 async function handleReadStores(request, response) {
   try {
-    if (!requireAdministrator(request, response)) return;
+    if (!requireSessionRole(request, response, ["administrador", "operante", "jefe de equipo", "jefe de grupo"])) return;
     const result = await supabase.from("tiendas").select("*").order("id", { ascending: true });
     if (result.error) throw result.error;
     sendJson(response, 200, { stores: result.data || [] });
