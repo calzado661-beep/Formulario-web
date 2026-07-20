@@ -79,6 +79,8 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
         ? "Panel de Jefe de Equipo"
         : role === "jefe de grupo"
           ? "Panel de Jefe de Grupo"
+          : role === "otros"
+            ? "Perfil de Usuario"
           : "Panel de Trabajo";
 
   return (
@@ -132,6 +134,8 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
               <span className="sidebar-copy">
                 {role === "jefe de grupo"
                   ? "Registra trabajos por trabajador y deja identificado al encargado en cada registro."
+                  : role === "otros"
+                    ? "Usuario registrado como personal de otras funciones."
                   : "Registra lo realizado y revisa tu historial sin perder el contexto del dia."}
               </span>
             </div>

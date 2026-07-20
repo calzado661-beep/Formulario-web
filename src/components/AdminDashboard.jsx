@@ -49,7 +49,7 @@ import {
   TextInput
 } from "./ui";
 
-const roleOptions = ["administrador", "operante", "jefe de equipo", "jefe de grupo"];
+const roleOptions = ["administrador", "operante", "jefe de equipo", "jefe de grupo", "otros"];
 const taskTypes = ["cantidad", "fijo", "turno", "tiempo"];
 
 export default function AdminDashboard({ section }) {

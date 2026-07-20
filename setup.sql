@@ -6,7 +6,7 @@ create table if not exists public.usuarios (
   nombre text not null,
   email text not null unique,
   password_hash text not null, -- almacena la contraseña literal
-  rol text not null check (rol in ('administrador', 'operante', 'jefe de equipo', 'jefe de grupo')),
+  rol text not null check (rol in ('administrador', 'operante', 'jefe de equipo', 'jefe de grupo', 'otros')),
   activo boolean not null default true,
   created_at timestamptz not null default now(),
   fecha_cumpleanos date

@@ -18,7 +18,7 @@ end $$;
 
 alter table public.usuarios
   add constraint usuarios_rol_check
-  check (rol in ('administrador', 'operante', 'jefe de equipo', 'jefe de grupo'));
+  check (rol in ('administrador', 'operante', 'jefe de equipo', 'jefe de grupo', 'otros'));
 
 create table if not exists public.registros_jefe_grupo (
   id bigserial primary key,
