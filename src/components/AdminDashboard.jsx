@@ -921,6 +921,66 @@ function StoresPanel() {
   );
 }
 
+function activityDateISO(log) {
+  const registrationDate = String(log.fecha_registro || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(registrationDate)) return registrationDate;
+  if (!log.created_at) return "";
+  const date = new Date(log.created_at);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Lima",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(date);
+}
+
+function weekBounds(dateISO) {
+  const selected = /^\d{4}-\d{2}-\d{2}$/.test(dateISO) ? dateISO : todayLimaISO();
+  const date = new Date(`${selected}T12:00:00Z`);
+  const mondayOffset = (date.getUTCDay() + 6) % 7;
+  const start = new Date(date);
+  start.setUTCDate(start.getUTCDate() - mondayOffset);
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 6);
+  return [start.toISOString().slice(0, 10), end.toISOString().slice(0, 10)];
+}
+
+function PointsUserGroup({ title, eyebrow, workers, rows, emptyMessage }) {
+  const summaries = workers.map((worker) => {
+    const workerRows = rows.filter((row) => Number(row.workerId) === Number(worker.id));
+    return {
+      Trabajador: worker.nombre || worker.email,
+      Email: worker.email,
+      Registros: workerRows.length,
+      Puntos: Number(workerRows.reduce((sum, row) => sum + Number(row.Puntos || 0), 0).toFixed(1))
+    };
+  }).sort((a, b) => b.Puntos - a.Puntos || a.Trabajador.localeCompare(b.Trabajador));
+
+  return (
+    <Panel title={title} eyebrow={eyebrow}>
+      {!workers.length ? <Alert>{emptyMessage}</Alert> : null}
+      <DataTable rows={summaries} />
+      <div className="details-list">
+        {workers.map((worker) => {
+          const workerRows = rows.filter((row) => Number(row.workerId) === Number(worker.id));
+          const points = workerRows.reduce((sum, row) => sum + Number(row.Puntos || 0), 0);
+          return (
+            <details key={worker.id} className="detail-card">
+              <summary>
+                <span>{worker.nombre || worker.email}</span>
+                <strong>{points.toFixed(1)} pts</strong>
+              </summary>
+              {!workerRows.length ? <Alert>Sin registros en el periodo seleccionado.</Alert> : null}
+              <DataTable rows={workerRows.map(({ workerId: _workerId, Trabajador: _worker, Email: _email, ...rest }) => rest)} compact />
+            </details>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
 function WorkerPointsPanel() {
   const { data, loading, error, reload } = useAsyncData(
     async () => {
@@ -931,19 +991,46 @@ function WorkerPointsPanel() {
     { logs: [], users: [], tasks: [] }
   );
 
+  const today = todayLimaISO();
+  const [periodType, setPeriodType] = useState("mes");
+  const [selectedDay, setSelectedDay] = useState(today);
+  const [selectedWeekDay, setSelectedWeekDay] = useState(today);
+  const [selectedMonth, setSelectedMonth] = useState(today.slice(0, 7));
+  const [rangeStart, setRangeStart] = useState(today);
+  const [rangeEnd, setRangeEnd] = useState(today);
+
   const workers = (data.users || []).filter((user) => ["operante", "jefe de equipo"].includes(normalizeRole(user.rol)));
-  const workerIds = new Set(workers.map((worker) => worker.id));
+  const workerIds = new Set(workers.map((worker) => Number(worker.id)));
   const userNameById = Object.fromEntries(workers.map((worker) => [worker.id, worker.nombre || worker.email]));
   const userEmailById = Object.fromEntries(workers.map((worker) => [worker.id, worker.email]));
   const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || `Tarea ${task.id}`]));
 
+  const [weekStart, weekEnd] = weekBounds(selectedWeekDay);
+  const rangeInvalid = periodType === "rango" && (!rangeStart || !rangeEnd || rangeStart > rangeEnd);
+  const periodLabel = periodType === "dia"
+    ? `Día ${selectedDay}`
+    : periodType === "semana"
+      ? `Semana del ${weekStart} al ${weekEnd}`
+      : periodType === "mes"
+        ? `Mes ${selectedMonth}`
+        : `Del ${rangeStart || "-"} al ${rangeEnd || "-"}`;
+
   const rows = (data.logs || [])
-    .filter((log) => workerIds.has(log.trabajador_id))
+    .filter((log) => workerIds.has(Number(log.trabajador_id)))
+    .filter((log) => {
+      if (rangeInvalid) return false;
+      const date = activityDateISO(log);
+      if (periodType === "dia") return date === selectedDay;
+      if (periodType === "semana") return date >= weekStart && date <= weekEnd;
+      if (periodType === "mes") return date.startsWith(selectedMonth);
+      return date >= rangeStart && date <= rangeEnd;
+    })
     .map((log) => {
       const tareaNombre = taskNameById[log.tarea_id] || log.actividad_nombre || "";
       const [tipoAct] = getActivityCaptureMode(tareaNombre);
       const turnoDisplay = log.turno || (tipoAct === "turno" ? displayShiftFromQuantity(log.cantidad) : "");
       return {
+        workerId: Number(log.trabajador_id),
         Fecha: formatDateTimeLima(log.created_at) || log.fecha_registro,
         Trabajador: userNameById[log.trabajador_id],
         Email: userEmailById[log.trabajador_id],
@@ -956,47 +1043,64 @@ function WorkerPointsPanel() {
       };
     });
 
-  const summary = Array.from(
-    rows.reduce((map, row) => {
-      const key = `${row.Trabajador}|${row.Email}`;
-      const current = map.get(key) || { Trabajador: row.Trabajador, Email: row.Email, Puntos: 0 };
-      current.Puntos += Number(row.Puntos || 0);
-      map.set(key, current);
-      return map;
-    }, new Map()).values()
-  ).sort((a, b) => b.Puntos - a.Puntos);
-
-  const total = summary.reduce((sum, row) => sum + Number(row.Puntos || 0), 0);
+  const activeWorkers = workers.filter((worker) => boolValue(worker.activo));
+  const inactiveWorkers = workers.filter((worker) => !boolValue(worker.activo));
+  const total = rows.reduce((sum, row) => sum + Number(row.Puntos || 0), 0);
+  const workersWithRecords = new Set(rows.map((row) => row.workerId)).size;
 
   return (
     <div className="stack">
       <Panel title="Tareas realizadas y puntos" eyebrow="Rendimiento" actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
         {loading ? <LoadingBlock /> : null}
         {error ? <Alert type="error">{error}</Alert> : null}
-        {!loading && !rows.length ? <Alert>No hay registros todavia.</Alert> : null}
+        <div className="form-grid">
+          <SelectInput
+            label="Filtrar periodo"
+            value={periodType}
+            onChange={setPeriodType}
+            options={[
+              { value: "dia", label: "Día específico" },
+              { value: "semana", label: "Semana" },
+              { value: "mes", label: "Mes" },
+              { value: "rango", label: "Rango personalizado" }
+            ]}
+          />
+          {periodType === "dia" ? <TextInput label="Fecha" type="date" value={selectedDay} onChange={setSelectedDay} /> : null}
+          {periodType === "semana" ? (
+            <TextInput label="Selecciona un día de la semana" type="date" value={selectedWeekDay} onChange={setSelectedWeekDay} />
+          ) : null}
+          {periodType === "mes" ? <TextInput label="Mes" type="month" value={selectedMonth} onChange={setSelectedMonth} /> : null}
+          {periodType === "rango" ? (
+            <>
+              <TextInput label="Desde" type="date" value={rangeStart} onChange={setRangeStart} />
+              <TextInput label="Hasta" type="date" value={rangeEnd} onChange={setRangeEnd} />
+            </>
+          ) : null}
+        </div>
+        {rangeInvalid ? <Alert type="error">El rango personalizado necesita fechas válidas y “Desde” no puede ser posterior a “Hasta”.</Alert> : null}
+        {!loading && !rows.length && !rangeInvalid ? <Alert>No hay registros en el periodo seleccionado.</Alert> : null}
+        <Alert>Periodo aplicado: {periodLabel}</Alert>
         <div className="metrics-row">
           <Metric label="Puntos totales" value={total.toFixed(0)} tone="accent" />
-          <Metric label="Trabajadores con registros" value={summary.length} />
-        </div>
-        <DataTable rows={summary} />
-      </Panel>
-      <Panel title="Detalle individual">
-        <div className="details-list">
-          {workers.map((worker) => {
-            const workerRows = rows.filter((row) => row.Email === worker.email);
-            const points = workerRows.reduce((sum, row) => sum + Number(row.Puntos || 0), 0);
-            return (
-              <details key={worker.id} className="detail-card">
-                <summary>
-                  <span>{worker.nombre || worker.email}</span>
-                  <strong>{points.toFixed(1)} pts</strong>
-                </summary>
-                <DataTable rows={workerRows.map(({ Trabajador, Email, ...rest }) => rest)} compact />
-              </details>
-            );
-          })}
+          <Metric label="Usuarios con registros" value={workersWithRecords} />
+          <Metric label="Usuarios activos" value={activeWorkers.length} />
+          <Metric label="Usuarios inactivos" value={inactiveWorkers.length} />
         </div>
       </Panel>
+      <PointsUserGroup
+        title={`Usuarios activos (${activeWorkers.length})`}
+        eyebrow="Personal habilitado"
+        workers={activeWorkers}
+        rows={rows}
+        emptyMessage="No hay usuarios activos para mostrar."
+      />
+      <PointsUserGroup
+        title={`Usuarios inactivos (${inactiveWorkers.length})`}
+        eyebrow="Personal bloqueado"
+        workers={inactiveWorkers}
+        rows={rows}
+        emptyMessage="No hay usuarios inactivos para mostrar."
+      />
     </div>
   );
 }
