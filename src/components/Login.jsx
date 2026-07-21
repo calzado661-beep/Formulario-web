@@ -32,7 +32,7 @@ export default function Login({ onLogin }) {
         return;
       }
       if (isInactive(user)) {
-        setMessage("Usuario inactivo. Contacta al administrador.");
+        setMessage("Cuenta bloqueada. Tu usuario está inactivo y no puede ingresar. Contacta al administrador.");
         return;
       }
       onLogin(user);

@@ -157,6 +157,13 @@ async function handleLogin(request, response) {
     }
 
     const user = result.data[0];
+    if (!isActive(user.activo)) {
+      sendJson(response, 423, {
+        code: "ACCOUNT_BLOCKED",
+        error: "Cuenta bloqueada. Tu usuario está inactivo y no puede ingresar. Contacta al administrador."
+      });
+      return;
+    }
     sendJson(response, 200, { user, sessionToken: issueSessionToken(user) });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo iniciar sesion." });
