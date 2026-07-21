@@ -1016,6 +1016,16 @@ async function handleCreateActivityLog(request, response) {
     const session = requireSessionRole(request, response, ["operante", "jefe de equipo", "jefe de grupo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
+    const submittedTime = body.tiempo_minutos ?? body.dato_extra;
+    if (
+      normalizeRole(session.rol) === "operante" &&
+      submittedTime !== null &&
+      submittedTime !== undefined &&
+      submittedTime !== ""
+    ) {
+      sendJson(response, 403, { error: "El operante no puede registrar tiempo, horas ni minutos." });
+      return;
+    }
     const tableName = await getTaskTableName();
     const taskResult = await supabase.from(tableName).select("*").eq("id", Number(body.tarea_id)).maybeSingle();
     if (taskResult.error || !taskResult.data) {

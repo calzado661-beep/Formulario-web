@@ -43,9 +43,6 @@ function emptyRecord() {
   return {
     taskKey: "",
     cantidad: "",
-    horas: "",
-    minutos: "",
-    usaTiempo: false,
     usaMarcas: false,
     usaTienda: false,
     tiendaId: "",
@@ -154,9 +151,6 @@ function RegisterActivity({ user }) {
     if (type === "cantidad") {
       cantidad = record.cantidad === "" ? null : Number(record.cantidad);
       cumplimiento = true;
-      if (record.usaTiempo) {
-        tiempoMinutos = Number(record.horas || 0) * 60 + Number(record.minutos || 0);
-      }
     }
     if (type === "tiempo") {
       cantidad = record.cantidad === "" ? null : Number(record.cantidad);
@@ -402,23 +396,6 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
         />
         <BrandFields record={record} brands={brands} onChange={onChange} />
         <OptionalContextFields record={record} stores={stores} onChange={onChange} />
-        <CheckboxInput label="Agregar tiempo" checked={record.usaTiempo} onChange={(usaTiempo) => onChange({ usaTiempo })} />
-        <TextInput
-          label="Horas"
-          type="number"
-          min="0"
-          value={record.horas}
-          disabled={!record.usaTiempo}
-          onChange={(horas) => onChange({ horas })}
-        />
-        <TextInput
-          label="Minutos"
-          type="number"
-          min="0"
-          value={record.minutos}
-          disabled={!record.usaTiempo}
-          onChange={(minutos) => onChange({ minutos })}
-        />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
     );
@@ -437,7 +414,6 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
         />
         <BrandFields record={record} brands={brands} onChange={onChange} />
         <OptionalContextFields record={record} stores={stores} onChange={onChange} />
-        <Alert>El jefe de equipo agregará el tiempo después de que guardes este registro.</Alert>
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
     );
@@ -556,12 +532,6 @@ export function WorkerHistory({ user }) {
       Tarea: taskName,
       Cantidad: log.cantidad ?? "",
       Turno: log.turno || (tipoAct === "turno" ? displayShiftFromQuantity(log.cantidad) : ""),
-      "Tiempo (min)": log.tiempo_minutos,
-      "Estado tiempo": isGroupLeaderTimeTask(data.tasks?.find((task) => String(task.id) === String(log.tarea_id)))
-        ? Number(log.tiempo_minutos || 0) > 0
-          ? "Registrado por jefe"
-          : "Pendiente del jefe"
-        : "No aplica",
       Cumplimiento: log.cumplimiento,
       Puntos: log.puntos_obtenidos,
       Tienda: storeNameById[log.tienda_id] || "",
