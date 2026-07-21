@@ -125,6 +125,10 @@ export function taskUsesBrandsByDefault(task) {
   return defaultBrandTaskNames.has(normalizeText(getTaskTitle(task)));
 }
 
+export function taskUsesGuideBreakdown(task) {
+  return normalizeText(getTaskTitle(task)).startsWith("revision de guia");
+}
+
 export function getActivityCaptureMode(taskName) {
   const name = normalizeText(taskName);
 

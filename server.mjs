@@ -565,6 +565,10 @@ function isGroupLeaderTimeTask(task) {
   return timeTasks.has(normalizeRole(taskTitle(task)));
 }
 
+function isGuideBreakdownTask(task) {
+  return normalizeRole(taskTitle(task)).startsWith("revision de guia");
+}
+
 function normalizedBrandItems(value) {
   if (!Array.isArray(value)) return [];
   const seen = new Set();
@@ -577,6 +581,22 @@ function normalizedBrandItems(value) {
     if (seen.has(marca_id)) throw new Error("No puedes repetir una marca en el mismo registro.");
     seen.add(marca_id);
     return { marca_id, cantidad };
+  });
+}
+
+function normalizedGuideItems(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value.map((item) => {
+    const numero_guia = String(item.numero_guia || "").trim();
+    const cantidad = Number(item.cantidad);
+    if (!numero_guia || !Number.isFinite(cantidad) || cantidad <= 0) {
+      throw new Error("Cada guía debe tener un número y una cantidad mayor a cero.");
+    }
+    const normalizedNumber = normalizeRole(numero_guia);
+    if (seen.has(normalizedNumber)) throw new Error("No puedes repetir un número de guía en el mismo registro.");
+    seen.add(normalizedNumber);
+    return { numero_guia, cantidad };
   });
 }
 
@@ -1050,7 +1070,17 @@ async function handleCreateActivityLog(request, response) {
       return;
     }
     const brandItems = normalizedBrandItems(body.marcas);
+    const guideItems = normalizedGuideItems(body.guias);
+    if (guideItems.length && !isGuideBreakdownTask(taskResult.data)) {
+      sendJson(response, 400, { error: "La distribución por guías solo está disponible para Revisión de Guía." });
+      return;
+    }
+    if (brandItems.length && guideItems.length) {
+      sendJson(response, 400, { error: "No puedes distribuir el mismo registro por marcas y por guías a la vez." });
+      return;
+    }
     const brandTotal = brandItems.reduce((total, item) => total + item.cantidad, 0);
+    const guideTotal = guideItems.reduce((total, item) => total + item.cantidad, 0);
     const requestedQuantity = storesQuantity ? nullableNumber(body.cantidad) : null;
     if (isTimeTask && (!requestedQuantity || requestedQuantity <= 0)) {
       sendJson(response, 400, { error: "Las tareas de tiempo también requieren una cantidad mayor a cero." });
@@ -1058,6 +1088,10 @@ async function handleCreateActivityLog(request, response) {
     }
     if (brandItems.length && (!requestedQuantity || requestedQuantity <= 0 || requestedQuantity !== brandTotal)) {
       sendJson(response, 400, { error: `Las cantidades por marca deben sumar exactamente la cantidad total (${requestedQuantity || 0}).` });
+      return;
+    }
+    if (guideItems.length && (!requestedQuantity || requestedQuantity <= 0 || requestedQuantity !== guideTotal)) {
+      sendJson(response, 400, { error: `Las cantidades por guía deben sumar exactamente la cantidad total (${requestedQuantity || 0}).` });
       return;
     }
     const payload = {
@@ -1077,6 +1111,10 @@ async function handleCreateActivityLog(request, response) {
 
     if (!payload.usuario_id || !payload.tarea_id) {
       sendJson(response, 400, { error: "Usuario y tarea son obligatorios." });
+      return;
+    }
+    if (normalizeRole(session.rol) === "operante" && !payload.tienda_id) {
+      sendJson(response, 400, { error: "La tienda es obligatoria para registrar cualquier tarea del operante." });
       return;
     }
     if (payload.tienda_id) {
@@ -1099,6 +1137,13 @@ async function handleCreateActivityLog(request, response) {
           marca_id: item.marca_id,
           puntos_obtenidos: index === 0 ? payload.puntos_obtenidos : 0
         }))
+      : guideItems.length
+        ? guideItems.map((item, index) => ({
+            ...payload,
+            cantidad: item.cantidad,
+            numero_guia: item.numero_guia,
+            puntos_obtenidos: index === 0 ? payload.puntos_obtenidos : 0
+          }))
       : [payload];
 
     for (const row of rowsToInsert) {
@@ -1119,6 +1164,7 @@ async function handleCreateActivityLog(request, response) {
       ...normalizeActivityLog(insertedRows[0]),
       cantidad: requestedQuantity,
       puntos_obtenidos: payload.puntos_obtenidos,
+      guias: guideItems,
       marcas: brandItems.map((item) => ({
         ...item,
         marca_nombre: brandName.get(Number(item.marca_id)) || `Marca ${item.marca_id}`

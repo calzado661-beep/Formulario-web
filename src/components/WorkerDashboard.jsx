@@ -22,7 +22,8 @@ import {
   NO_TASK_OPTION,
   normalizeMeasurementType,
   SIMPLE_SHIFT,
-  taskUsesBrandsByDefault
+  taskUsesBrandsByDefault,
+  taskUsesGuideBreakdown
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
 import {
@@ -38,16 +39,18 @@ import {
   TextInput
 } from "./ui";
 import { BrandDistribution, brandTotal, emptyBrandShare } from "./BrandDistribution";
+import { emptyGuideShare, GuideDistribution, guideTotal } from "./GuideDistribution";
 
 function emptyRecord() {
   return {
     taskKey: "",
     cantidad: "",
     usaMarcas: false,
-    usaTienda: false,
     tiendaId: "",
     usaGuia: false,
     numeroGuia: "",
+    usaGuias: false,
+    guias: [emptyGuideShare()],
     marcas: [emptyBrandShare()],
     cumplimiento: true,
     turno: SIMPLE_SHIFT,
@@ -108,7 +111,8 @@ function RegisterActivity({ user }) {
               ...emptyRecord(),
               taskKey,
               usaMarcas: taskUsesBrandsByDefault(task),
-              usaGuia: Boolean(task?.requiere_numero_guia)
+              usaGuia: Boolean(task?.requiere_numero_guia) && !taskUsesGuideBreakdown(task),
+              usaGuias: taskUsesGuideBreakdown(task)
             }
           : record
       )
@@ -139,8 +143,11 @@ function RegisterActivity({ user }) {
     const marcas = record.usaMarcas
       ? record.marcas.map((item) => ({ marca_id: Number(item.marca_id), cantidad: Number(item.cantidad) }))
       : [];
-    const tiendaId = record.usaTienda ? Number(record.tiendaId) : null;
-    const numeroGuia = record.usaGuia ? String(record.numeroGuia || "").trim() : null;
+    const guias = taskUsesGuideBreakdown(task) && record.usaGuias
+      ? record.guias.map((item) => ({ numero_guia: String(item.numero_guia || "").trim(), cantidad: Number(item.cantidad) }))
+      : [];
+    const tiendaId = record.tiendaId ? Number(record.tiendaId) : null;
+    const numeroGuia = !guias.length && record.usaGuia ? String(record.numeroGuia || "").trim() : null;
 
     let cantidad = null;
     let cantidadPuntaje = null;
@@ -149,7 +156,7 @@ function RegisterActivity({ user }) {
     let turno = null;
 
     if (type === "cantidad") {
-      cantidad = record.cantidad === "" ? null : Number(record.cantidad);
+      cantidad = guias.length ? guideTotal(guias) : record.cantidad === "" ? null : Number(record.cantidad);
       cumplimiento = true;
     }
     if (type === "tiempo") {
@@ -177,6 +184,7 @@ function RegisterActivity({ user }) {
       cumplimiento,
       turno,
       marcas,
+      guias,
       tiendaId,
       numeroGuia
     };
@@ -193,11 +201,20 @@ function RegisterActivity({ user }) {
       seen.add(record.taskKey);
 
       const shape = recordPayloadShape(record);
-      if (record.usaTienda && !stores.some((store) => String(store.id) === String(record.tiendaId))) {
+      if (!stores.some((store) => String(store.id) === String(record.tiendaId))) {
         return `Selecciona una tienda valida para ${shape.title}.`;
       }
       if (record.usaGuia && !String(record.numeroGuia || "").trim()) {
         return `Ingresa el numero de guia para ${shape.title}.`;
+      }
+      if (shape.guias.length) {
+        if (shape.guias.some((item) => !item.numero_guia || !Number.isFinite(item.cantidad) || item.cantidad <= 0)) {
+          return `Completa cada número de guía y su cantidad para ${shape.title}.`;
+        }
+        const normalizedGuides = shape.guias.map((item) => item.numero_guia.toLowerCase());
+        if (new Set(normalizedGuides).size !== normalizedGuides.length) {
+          return `No puedes repetir un número de guía en ${shape.title}.`;
+        }
       }
       if (record.usaMarcas) {
         const total = Number(record.cantidad || 0);
@@ -213,7 +230,7 @@ function RegisterActivity({ user }) {
           return `La distribución por marcas de ${shape.title} debe sumar exactamente ${total}. Actualmente suma ${distributed}.`;
         }
       }
-      if (shape.type === "cantidad" && !record.usaMarcas && (record.cantidad === "" || Number(record.cantidad) < 0)) {
+      if (shape.type === "cantidad" && !record.usaMarcas && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) < 0)) {
         return `Ingresa una cantidad valida para ${shape.title}.`;
       }
       if (shape.type === "tiempo" && (record.cantidad === "" || Number(record.cantidad) <= 0)) {
@@ -285,7 +302,8 @@ function RegisterActivity({ user }) {
             tienda_id: shape.tiendaId,
             numero_guia: shape.numeroGuia,
             puntos_obtenidos: points,
-            marcas: shape.marcas
+            marcas: shape.marcas,
+            guias: shape.guias
           };
           if (shape.tiempoMinutos !== null && shape.tiempoMinutos !== undefined) {
             activityPayload.tiempo_minutos = shape.tiempoMinutos;
@@ -383,19 +401,28 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
   const [fallbackType, fallbackUnit] = getActivityCaptureMode(title);
   const type = isGroupLeaderTimeTask(task) ? "tiempo" : task?.tipo_medicion ? dbType : normalizeMeasurementType(fallbackType);
   const unit = task?.unidad_base || fallbackUnit || "unidades";
+  const usesGuideBreakdown = taskUsesGuideBreakdown(task);
 
   if (type === "cantidad") {
     return (
       <div className="form-grid">
-        <TextInput
-          label={`Cantidad (${unit})`}
-          type="number"
-          min="0"
-          value={record.cantidad}
-          onChange={(cantidad) => onChange({ cantidad })}
+        {!usesGuideBreakdown || !record.usaGuias ? (
+          <TextInput
+            label={`Cantidad (${unit})`}
+            type="number"
+            min="0"
+            value={record.cantidad}
+            onChange={(cantidad) => onChange({ cantidad })}
+          />
+        ) : null}
+        {!usesGuideBreakdown ? <BrandFields record={record} brands={brands} onChange={onChange} /> : null}
+        {usesGuideBreakdown ? <GuideFields record={record} onChange={onChange} /> : null}
+        <OptionalContextFields
+          record={record}
+          stores={stores}
+          onChange={onChange}
+          showGuide={!usesGuideBreakdown || !record.usaGuias}
         />
-        <BrandFields record={record} brands={brands} onChange={onChange} />
-        <OptionalContextFields record={record} stores={stores} onChange={onChange} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
     );
@@ -453,39 +480,56 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
   );
 }
 
-function OptionalContextFields({ record, stores, onChange }) {
+function OptionalContextFields({ record, stores, onChange, showGuide = true }) {
+  return (
+    <>
+      <SelectInput
+        label="Tienda"
+        value={record.tiendaId}
+        onChange={(tiendaId) => onChange({ tiendaId })}
+        options={[
+          { value: "", label: "Selecciona una tienda" },
+          ...stores.map((store) => ({ value: String(store.id), label: store.nombre }))
+        ]}
+      />
+      {showGuide ? (
+        <>
+          <CheckboxInput
+            label="Agregar numero de guia"
+            checked={record.usaGuia}
+            onChange={(usaGuia) => onChange({ usaGuia, numeroGuia: usaGuia ? record.numeroGuia : "" })}
+            hint="Activalo cuando la actividad tenga una guia asociada."
+          />
+          {record.usaGuia ? (
+            <TextInput
+              label="Numero de guia"
+              value={record.numeroGuia}
+              onChange={(numeroGuia) => onChange({ numeroGuia })}
+              placeholder="Ej. GUIA-001"
+            />
+          ) : null}
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function GuideFields({ record, onChange }) {
   return (
     <>
       <CheckboxInput
-        label="Agregar tienda"
-        checked={record.usaTienda}
-        onChange={(usaTienda) => onChange({ usaTienda, tiendaId: usaTienda ? record.tiendaId : "" })}
-        hint="Activalo para asociar la actividad con una tienda."
+        label="Registrar varias guías"
+        checked={record.usaGuias}
+        onChange={(usaGuias) => onChange({
+          usaGuias,
+          usaGuia: false,
+          numeroGuia: "",
+          guias: record.guias?.length ? record.guias : [emptyGuideShare()]
+        })}
+        hint="Disponible solo para Revisión de Guía. El puntaje se calculará una sola vez con la suma total."
       />
-      {record.usaTienda ? (
-        <SelectInput
-          label="Tienda"
-          value={record.tiendaId}
-          onChange={(tiendaId) => onChange({ tiendaId })}
-          options={[
-            { value: "", label: "Selecciona una tienda" },
-            ...stores.map((store) => ({ value: String(store.id), label: store.nombre }))
-          ]}
-        />
-      ) : null}
-      <CheckboxInput
-        label="Agregar numero de guia"
-        checked={record.usaGuia}
-        onChange={(usaGuia) => onChange({ usaGuia, numeroGuia: usaGuia ? record.numeroGuia : "" })}
-        hint="Activalo cuando la actividad tenga una guia asociada."
-      />
-      {record.usaGuia ? (
-        <TextInput
-          label="Numero de guia"
-          value={record.numeroGuia}
-          onChange={(numeroGuia) => onChange({ numeroGuia })}
-          placeholder="Ej. GUIA-001"
-        />
+      {record.usaGuias ? (
+        <GuideDistribution items={record.guias} onChange={(guias) => onChange({ guias })} />
       ) : null}
     </>
   );

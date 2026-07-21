@@ -543,8 +543,8 @@ export async function createWorkerActivityLog(payload) {
   });
   if (apiResult?.log) return apiResult.log;
 
-  if (payload.marcas?.length) {
-    throw new Error("El backend local debe estar activo para guardar la distribucion por marcas.");
+  if (payload.marcas?.length || payload.guias?.length) {
+    throw new Error("El backend local debe estar activo para guardar distribuciones por marcas o guías.");
   }
 
   const cleanPayload = { ...payload };
