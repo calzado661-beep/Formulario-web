@@ -127,7 +127,8 @@ function UsersPanel() {
     password: "",
     sueldo: "0.00",
     fecha_ingreso: "",
-    fecha_salida: ""
+    fecha_salida: "",
+    motivo_salida: ""
   });
 
   const selectedUser = users.find((user) => String(user.id) === String(editId));
@@ -144,7 +145,8 @@ function UsersPanel() {
       password: "",
       sueldo: Number(selectedUser.sueldo || 0).toFixed(2),
       fecha_ingreso: selectedUser.fecha_ingreso || "",
-      fecha_salida: selectedUser.fecha_salida || ""
+      fecha_salida: selectedUser.fecha_salida || "",
+      motivo_salida: selectedUser.motivo_salida || ""
     });
   }, [selectedUser?.id]);
 
@@ -202,6 +204,10 @@ function UsersPanel() {
       setStatus({ type: "error", message: "La fecha de salida no puede ser anterior a la fecha de ingreso." });
       return;
     }
+    if (editForm.fecha_salida && !editForm.motivo_salida.trim()) {
+      setStatus({ type: "error", message: "Ingresa el motivo de la salida." });
+      return;
+    }
     setSaving(true);
     try {
       await updateUser(
@@ -214,7 +220,8 @@ function UsersPanel() {
           fecha_cumpleanos: editForm.fecha_cumpleanos || null,
           sueldo: Number(editForm.sueldo),
           fecha_ingreso: editForm.fecha_ingreso || null,
-          fecha_salida: editForm.fecha_salida || null
+          fecha_salida: editForm.fecha_salida || null,
+          motivo_salida: editForm.fecha_salida ? editForm.motivo_salida.trim() : null
         },
         editForm.password.trim() || null
       );
@@ -381,9 +388,21 @@ function UsersPanel() {
                   value={editForm.fecha_salida}
                   onChange={(fecha_salida) => setEditForm({ ...editForm, fecha_salida })}
                 />
+                {editForm.fecha_salida ? (
+                  <div className="form-span">
+                    <TextArea
+                      label="Motivo de salida"
+                      value={editForm.motivo_salida}
+                      onChange={(motivo_salida) => setEditForm({ ...editForm, motivo_salida })}
+                      rows={3}
+                      maxLength={500}
+                      placeholder="Ej. Renuncia voluntaria, mejor oferta, termino de contrato..."
+                    />
+                  </div>
+                ) : null}
                 <div className="form-span">
                   <Alert>
-                    La fecha de salida es opcional. Si queda vacia, el usuario permanecera activo; al registrar una salida se desactivara.
+                    La fecha de salida es opcional. Si queda vacia, el usuario permanecera activo; al registrar una salida se desactivara. Si la registras, debes indicar el motivo.
                   </Alert>
                 </div>
                 <div className="form-span">

@@ -365,7 +365,7 @@ async function selectUsers() {
       .order("id", { ascending: true }),
     supabase
       .from("movimientos_personal")
-      .select("id,usuario_id,tipo_movimiento,fecha_movimiento,created_at")
+      .select("id,usuario_id,tipo_movimiento,fecha_movimiento,motivo,created_at")
       .order("fecha_movimiento", { ascending: true })
       .order("id", { ascending: true })
   ]);
@@ -386,10 +386,12 @@ async function selectUsers() {
     const summary = movementByUser.get(Number(user.id)) || {};
     const ingreso = summary.ingreso?.fecha_movimiento || null;
     const salida = summary.salida?.fecha_movimiento || null;
+    const salidaValida = Boolean(ingreso && salida && salida >= ingreso);
     return {
       ...user,
       fecha_ingreso: ingreso,
-      fecha_salida: ingreso && salida && salida >= ingreso ? salida : null
+      fecha_salida: salidaValida ? salida : null,
+      motivo_salida: salidaValida ? (summary.salida?.motivo || null) : null
     };
   });
 }
@@ -399,11 +401,14 @@ function validateEmploymentDates(body) {
   if (!hasFields) return null;
   const ingreso = String(body.fecha_ingreso || "").trim();
   const salida = String(body.fecha_salida || "").trim();
+  const motivo = String(body.motivo_salida || "").trim();
   if (salida && !ingreso) throw new Error("La fecha de ingreso es obligatoria si registras una salida.");
   if (ingreso && !/^\d{4}-\d{2}-\d{2}$/.test(ingreso)) throw new Error("La fecha de ingreso no es valida.");
   if (salida && !/^\d{4}-\d{2}-\d{2}$/.test(salida)) throw new Error("La fecha de salida no es valida.");
   if (ingreso && salida && salida < ingreso) throw new Error("La fecha de salida no puede ser anterior a la fecha de ingreso.");
-  return { ingreso, salida };
+  if (salida && !motivo) throw new Error("El motivo de salida es obligatorio si registras una fecha de salida.");
+  if (motivo.length > 500) throw new Error("El motivo de salida no puede superar 500 caracteres.");
+  return { ingreso, salida, motivo: salida ? motivo : "" };
 }
 
 async function insertPersonnelMovement(payload) {
@@ -465,14 +470,15 @@ async function saveEmploymentDates(userId, dates) {
     if (exitBelongsToCurrentPeriod) {
       const updated = await supabase
         .from("movimientos_personal")
-        .update({ fecha_movimiento: dates.salida })
+        .update({ fecha_movimiento: dates.salida, motivo: dates.motivo || null })
         .eq("id", latestSalida.id);
       if (updated.error) throw updated.error;
     } else {
       await insertPersonnelMovement({
         usuario_id: userId,
         tipo_movimiento: "Salida",
-        fecha_movimiento: dates.salida
+        fecha_movimiento: dates.salida,
+        motivo: dates.motivo || null
       });
     }
   } else if (
