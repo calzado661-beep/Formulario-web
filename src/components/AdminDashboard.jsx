@@ -967,6 +967,22 @@ function AttendancePanel() {
   const [attendanceValues, setAttendanceValues] = useState({});
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
+  const todayRef = useRef(todayLimaISO());
+
+  // Si la pestana se queda abierta y pasa la medianoche (Lima), la marcacion
+  // debe verse "en 0" para el nuevo dia sin tocar el historial ya guardado.
+  // Solo avanza la fecha si el admin seguia viendo "hoy"; si eligio a proposito
+  // una fecha pasada para revisarla, no se la movemos.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const today = todayLimaISO();
+      if (today !== todayRef.current) {
+        setSelectedDate((selected) => (selected === todayRef.current ? today : selected));
+        todayRef.current = today;
+      }
+    }, 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   const { data, loading, error, reload } = useAsyncData(
     async () => {
