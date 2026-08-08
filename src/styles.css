@@ -926,6 +926,7 @@ tbody tr:hover {
   justify-content: space-between;
   gap: 1rem;
   padding: 0.78rem;
+  transition: border-color 0.18s ease, background 0.18s ease;
 }
 
 .attendance-row strong,
@@ -935,6 +936,43 @@ tbody tr:hover {
 
 .attendance-row small {
   color: var(--muted);
+}
+
+.attendance-row.marked {
+  border-color: rgba(45, 212, 191, 0.4);
+  background: rgba(45, 212, 191, 0.1);
+}
+
+.attendance-row-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 0 0 auto;
+}
+
+.attendance-marked-badge svg {
+  width: 14px;
+  height: 14px;
+}
+
+.attendance-search-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.attendance-search-field {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.attendance-marked-count {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+  padding-bottom: 0.6rem;
 }
 
 .attendance-report-panel {

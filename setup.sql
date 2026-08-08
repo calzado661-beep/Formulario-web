@@ -80,7 +80,7 @@ create table if not exists public.asistencias (
   usuario_id bigint not null references public.usuarios(id) on delete cascade,
   fecha date not null,
   estado varchar(20) not null default 'AUSENTE' check (estado in ('AUSENTE', 'PUNTUAL', 'TARDANZA')),
-  created_at timestamp default current_timestamp,
+  created_at timestamptz default now(),
   constraint uq_asistencia unique (usuario_id, fecha)
 );
 

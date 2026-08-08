@@ -46,6 +46,7 @@ import {
   MAX_SCORE_QUANTITY,
   normalizeMeasurementType,
   normalizeRole,
+  normalizeText,
   quantityRangesFromRules,
   taskUsesBrandsByDefault,
   taskUsesGuideBreakdown,
@@ -943,6 +944,7 @@ function AttendancePanel() {
   const [selectedDate, setSelectedDate] = useState(todayLimaISO());
   const [cutoffTime, setCutoffTime] = useState("08:00");
   const [workerStatusFilter, setWorkerStatusFilter] = useState("activos");
+  const [workerSearch, setWorkerSearch] = useState("");
   const [attendanceValues, setAttendanceValues] = useState({});
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -977,15 +979,33 @@ function AttendancePanel() {
   const workers = data.workers || [];
   const activeWorkersCount = workers.filter((worker) => boolValue(worker.activo)).length;
   const inactiveWorkersCount = workers.length - activeWorkersCount;
-  const visibleWorkers = workers.filter((worker) => {
+  const statusFilteredWorkers = workers.filter((worker) => {
     if (workerStatusFilter === "todos") return true;
     return workerStatusFilter === "activos" ? boolValue(worker.activo) : !boolValue(worker.activo);
+  });
+  const normalizedWorkerSearch = normalizeText(workerSearch);
+  const visibleWorkers = statusFilteredWorkers.filter((worker) => {
+    if (!normalizedWorkerSearch) return true;
+    return normalizeText(`${worker.nombre || ""} ${worker.email || ""}`).includes(normalizedWorkerSearch);
   });
   const workerFilterOptions = [
     { value: "activos", label: `Activos (${activeWorkersCount})` },
     { value: "inactivos", label: `Inactivos (${inactiveWorkersCount})` },
     { value: "todos", label: `Todos (${workers.length})` }
   ];
+  const markedCount = statusFilteredWorkers.filter((worker) => Boolean(attendanceValues[worker.id])).length;
+
+  function markWorker(worker, present = true) {
+    setAttendanceValues((current) => ({ ...current, [worker.id]: present }));
+  }
+
+  function handleSearchKeyDown(event) {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    if (visibleWorkers.length !== 1) return;
+    markWorker(visibleWorkers[0], true);
+    setWorkerSearch("");
+  }
 
   async function handleSave() {
     setStatus(null);
@@ -1062,24 +1082,51 @@ function AttendancePanel() {
         {loading ? <LoadingBlock /> : null}
         {error ? <Alert type="error">{error}</Alert> : null}
         {!loading && !workers.length ? <Alert>No hay trabajadores registrados.</Alert> : null}
-        {!loading && workers.length && !visibleWorkers.length ? (
-          <Alert>No hay trabajadores {workerStatusFilter === "activos" ? "activos" : "inactivos"} para mostrar.</Alert>
-        ) : null}
         <Alert>Marca a los trabajadores presentes. Al guardar, quienes esten marcados hasta las {cutoffTime || "--:--"} quedaran como Puntual y despues como Tardanza; los no marcados quedaran como Ausente.</Alert>
-        <div className="attendance-list">
-          {visibleWorkers.map((worker) => (
-            <label key={worker.id} className="attendance-row">
-              <span>
-                <strong>{worker.nombre || "Sin nombre"}</strong>
-                <small>{worker.email} · {boolValue(worker.activo) ? "Activo" : "Inactivo"}</small>
-              </span>
+        <div className="attendance-search-row">
+          <label className="field attendance-search-field">
+            <span className="field-label">Buscar trabajador</span>
+            <span className="search-input">
+              <Search aria-hidden="true" />
               <input
-                type="checkbox"
-                checked={Boolean(attendanceValues[worker.id])}
-                onChange={(event) => setAttendanceValues({ ...attendanceValues, [worker.id]: event.target.checked })}
+                className="input"
+                type="search"
+                value={workerSearch}
+                onChange={(event) => setWorkerSearch(event.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                placeholder="Nombre o correo, luego Enter para marcar"
               />
-            </label>
-          ))}
+            </span>
+          </label>
+          <span className="attendance-marked-count">{markedCount} de {statusFilteredWorkers.length} marcados</span>
+        </div>
+        {!loading && workers.length && !visibleWorkers.length ? (
+          <Alert>No se encontraron trabajadores {workerStatusFilter === "activos" ? "activos" : workerStatusFilter === "inactivos" ? "inactivos" : ""} para "{workerSearch}".</Alert>
+        ) : null}
+        <div className="attendance-list">
+          {visibleWorkers.map((worker) => {
+            const marked = Boolean(attendanceValues[worker.id]);
+            return (
+              <label key={worker.id} className={`attendance-row${marked ? " marked" : ""}`}>
+                <span>
+                  <strong>{worker.nombre || "Sin nombre"}</strong>
+                  <small>{worker.email} · {boolValue(worker.activo) ? "Activo" : "Inactivo"}</small>
+                </span>
+                <span className="attendance-row-controls">
+                  {marked ? (
+                    <span className="notification-status-badge active attendance-marked-badge">
+                      <CheckCircle2 aria-hidden="true" /> Marcado
+                    </span>
+                  ) : null}
+                  <input
+                    type="checkbox"
+                    checked={marked}
+                    onChange={(event) => markWorker(worker, event.target.checked)}
+                  />
+                </span>
+              </label>
+            );
+          })}
         </div>
         <div className="form-actions">
           <Button icon={Save} loading={saving} onClick={handleSave}>Guardar asistencia</Button>
