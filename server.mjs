@@ -4,6 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+import { applyScoringRules, calculatePoints } from "./src/lib/scoring.js";
 import {
   gmailConfiguration,
   localDateTimeParts,
@@ -893,6 +894,68 @@ async function selectTaskScoreRanges(taskId = null) {
   return result.data || [];
 }
 
+// Las actividades por tiempo que registra un jefe de equipo a nombre de un
+// operante viven en una tabla aparte. Se muestran en el historial del
+// operante puntuadas con las mismas reglas de "Configuracion de puntajes"
+// que usa cualquier otra tarea (segun cantidad); el tiempo registrado por el
+// jefe de equipo es solo informativo y no participa en el calculo.
+async function selectGroupLeaderActivityLogsForWorker(workerId) {
+  const result = await supabase
+    .from("registros_tareas_jefe_equipo")
+    .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at")
+    .eq("trabajador_id", workerId)
+    .order("created_at", { ascending: false });
+  if (result.error || !result.data?.length) return [];
+  const rows = result.data;
+
+  const tableName = await getTaskTableName();
+  const taskIds = Array.from(new Set(rows.map((row) => Number(row.tarea_id)).filter(Boolean)));
+  const encargadoIds = Array.from(new Set(rows.map((row) => Number(row.encargado_id)).filter(Boolean)));
+  const [tasksResult, rulesResult, leadersResult] = await Promise.all([
+    taskIds.length ? supabase.from(tableName).select("*").in("id", taskIds) : Promise.resolve({ data: [] }),
+    taskIds.length ? supabase.from("reglas_puntaje").select("*").in("tarea_id", taskIds) : Promise.resolve({ data: [] }),
+    encargadoIds.length ? supabase.from("usuarios").select("id,nombre,email").in("id", encargadoIds) : Promise.resolve({ data: [] })
+  ]);
+  const rulesByTaskId = new Map();
+  (rulesResult.data || []).forEach((rule) => {
+    const key = Number(rule.tarea_id);
+    if (!rulesByTaskId.has(key)) rulesByTaskId.set(key, []);
+    rulesByTaskId.get(key).push(rule);
+  });
+  const scoredTaskById = new Map(
+    (tasksResult.data || []).map((task) => [Number(task.id), applyScoringRules(task, rulesByTaskId.get(Number(task.id)) || [])])
+  );
+  const leaderById = new Map((leadersResult.data || []).map((leader) => [Number(leader.id), leader]));
+
+  return rows.map((row) => {
+    const leader = leaderById.get(Number(row.encargado_id));
+    const task = scoredTaskById.get(Number(row.tarea_id));
+    // Se puntua con las reglas configuradas en el admin (por cantidad, fijo o
+    // turno). El tiempo registrado es solo para seguimiento, no para puntaje.
+    const puntosObtenidos = task ? calculatePoints(task, row.cantidad, null, true) : null;
+    return {
+      id: `jefe-equipo-${row.id}`,
+      trabajador_id: row.trabajador_id,
+      usuario_id: row.trabajador_id,
+      tarea_id: row.tarea_id,
+      actividad_nombre: task ? taskTitle(task) : "",
+      fecha_registro: row.fecha_registro,
+      cantidad: row.cantidad,
+      tiempo_minutos: row.tiempo_minutos,
+      numero_guia: row.numero_guia,
+      lote: row.lote,
+      detalle: row.observacion,
+      cumplimiento: true,
+      puntos_obtenidos: puntosObtenidos,
+      marcas: [],
+      created_at: row.created_at,
+      origen: "jefe_equipo",
+      encargado_id: row.encargado_id,
+      encargado_nombre: leader?.nombre || leader?.email || `Usuario ${row.encargado_id}`
+    };
+  });
+}
+
 async function selectActivityLogs(workerId = null) {
   const resources = [
     { table: "v_registro_actividades", userColumn: "usuario_id", orderColumn: "fecha_registro" },
@@ -907,8 +970,15 @@ async function selectActivityLogs(workerId = null) {
 
     const result = await query;
     if (!result.error) {
-      const rows = (result.data || []).map(normalizeActivityLog);
-      return attachBrandBreakdown(rows);
+      const rows = await attachBrandBreakdown((result.data || []).map(normalizeActivityLog));
+      if (!workerId) return rows;
+      const groupLeaderRows = await selectGroupLeaderActivityLogsForWorker(workerId);
+      if (!groupLeaderRows.length) return rows;
+      return [...rows, ...groupLeaderRows].sort((left, right) => {
+        const dateCompare = String(right.fecha_registro || "").localeCompare(String(left.fecha_registro || ""));
+        if (dateCompare !== 0) return dateCompare;
+        return String(right.created_at || "").localeCompare(String(left.created_at || ""));
+      });
     }
     lastError = result.error;
   }
@@ -1322,6 +1392,23 @@ async function handleReadAttendances(request, response) {
 }
 
 const ATTENDANCE_STATES = new Set(["AUSENTE", "PUNTUAL", "TARDANZA"]);
+const ATTENDANCE_TIME_ZONE = "America/Lima";
+
+function currentAttendanceMinutes() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: ATTENDANCE_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return Number(values.hour) * 60 + Number(values.minute);
+}
+
+function attendanceCutoffMinutes(value) {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value || "").trim());
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}
 
 async function handleMarkAttendance(request, response) {
   try {
@@ -1334,7 +1421,18 @@ async function handleMarkAttendance(request, response) {
       return;
     }
     let estado = String(body.estado || "").trim().toUpperCase();
-    if (!estado && body.presente !== undefined) estado = body.presente !== false ? "PUNTUAL" : "AUSENTE";
+    if (!estado && body.presente !== undefined) {
+      if (body.presente === false) {
+        estado = "AUSENTE";
+      } else {
+        const cutoffMinutes = attendanceCutoffMinutes(body.hora_limite);
+        if (cutoffMinutes === null) {
+          sendJson(response, 400, { error: "Selecciona una hora limite valida para marcar la asistencia." });
+          return;
+        }
+        estado = currentAttendanceMinutes() <= cutoffMinutes ? "PUNTUAL" : "TARDANZA";
+      }
+    }
     if (!ATTENDANCE_STATES.has(estado)) {
       sendJson(response, 400, { error: "El estado de asistencia debe ser Ausente, Puntual o Tardanza." });
       return;

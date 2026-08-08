@@ -49,8 +49,14 @@ const initialFilters = {
   scope: "all",
   workerId: "",
   taskId: "",
-  search: ""
+  search: "",
+  order: "desc"
 };
+
+function recordSortTime(record) {
+  const value = new Date(record.created_at || record.fecha_registro || 0).getTime();
+  return Number.isNaN(value) ? 0 : value;
+}
 
 const historyColumns = [
   "ID",
@@ -303,7 +309,7 @@ function GroupTimeDashboard({ user }) {
   const filteredRecords = useMemo(() => {
     const term = normalizeText(filters.search);
 
-    return records.filter((record) => {
+    const filtered = records.filter((record) => {
       if (filters.scope === "mine" && String(record.encargado_id) !== String(user.id)) return false;
       if (filters.workerId && String(record.trabajador_id) !== String(filters.workerId)) return false;
       if (filters.taskId && String(record.tarea_id) !== String(filters.taskId)) return false;
@@ -322,6 +328,11 @@ function GroupTimeDashboard({ user }) {
           record.detalle
         ].join(" ")
       ).includes(term);
+    });
+
+    return filtered.sort((a, b) => {
+      const diff = recordSortTime(a) - recordSortTime(b);
+      return filters.order === "asc" ? diff : -diff;
     });
   }, [filters, records, user.id]);
 
@@ -562,6 +573,15 @@ function GroupTimeDashboard({ user }) {
                 value: String(task.id),
                 label: getTaskTitle(task) || `ID ${task.id}`
               }))
+            ]}
+          />
+          <SelectInput
+            label="Ordenar por fecha"
+            value={filters.order}
+            onChange={(order) => updateFilters({ order })}
+            options={[
+              { value: "desc", label: "Más reciente primero" },
+              { value: "asc", label: "Más antigua primero" }
             ]}
           />
           <label className="field search-field">

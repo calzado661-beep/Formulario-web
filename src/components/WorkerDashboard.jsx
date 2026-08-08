@@ -604,7 +604,13 @@ function BrandFields({ record, brands, onChange }) {
   );
 }
 
+function logSortTime(log) {
+  const value = new Date(log.created_at || log.fecha_registro || 0).getTime();
+  return Number.isNaN(value) ? 0 : value;
+}
+
 export function WorkerHistory({ user }) {
+  const [sortOrder, setSortOrder] = useState("desc");
   const { data, loading, error, reload } = useAsyncData(
     async () => {
       const [logs, tasks, stores] = await Promise.all([listWorkerActivityLogs(user.id), listTasks(), listTiendas()]);
@@ -616,13 +622,20 @@ export function WorkerHistory({ user }) {
 
   const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || `Tarea ${task.id}`]));
   const storeNameById = Object.fromEntries((data.stores || []).map((store) => [store.id, store.nombre]));
-  const rows = (data.logs || []).map((log) => {
+  const sortedLogs = [...(data.logs || [])].sort((a, b) => {
+    const diff = logSortTime(a) - logSortTime(b);
+    return sortOrder === "asc" ? diff : -diff;
+  });
+  const hasLeaderRecords = sortedLogs.some((log) => log.origen === "jefe_equipo");
+  const rows = sortedLogs.map((log) => {
     const taskName = taskNameById[log.tarea_id] || log.actividad_nombre || "";
     const [tipoAct] = getActivityCaptureMode(taskName);
+    const registeredByLeader = log.origen === "jefe_equipo";
     return {
       Fecha: formatDateTimeLima(log.created_at) || log.fecha_registro,
       Tarea: taskName,
       Cantidad: log.cantidad ?? "",
+      "Tiempo (min)": log.tiempo_minutos ?? "",
       Turno: log.turno || (tipoAct === "turno" ? displayShiftFromQuantity(log.cantidad) : ""),
       Cumplimiento: log.cumplimiento,
       Puntos: log.puntos_obtenidos,
@@ -630,15 +643,34 @@ export function WorkerHistory({ user }) {
       Guia: log.numero_guia || "",
       Lote: log.lote || "",
       Marcas: (log.marcas || []).map((item) => `${item.marca_nombre}: ${item.cantidad}`).join(", "),
+      "Registrado por": registeredByLeader ? (log.encargado_nombre || "Jefe de equipo") : "Tú",
       Detalle: log.detalle
     };
   });
 
   return (
-    <Panel title="Historial" eyebrow="Registros" actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
+    <Panel
+      title="Historial"
+      eyebrow="Registros"
+      actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}
+    >
+      <div className="toolbar">
+        <SelectInput
+          label="Ordenar por fecha"
+          value={sortOrder}
+          onChange={setSortOrder}
+          options={[
+            { value: "desc", label: "Más reciente primero" },
+            { value: "asc", label: "Más antigua primero" }
+          ]}
+        />
+      </div>
       {loading ? <LoadingBlock /> : null}
       {error ? <Alert type="error">{error}</Alert> : null}
       {!loading && !rows.length ? <Alert>Aun no tienes registros.</Alert> : null}
+      {hasLeaderRecords ? (
+        <Alert>Los registros marcados como "Registrado por" un jefe de equipo fueron cargados por tu encargado a nombre tuyo.</Alert>
+      ) : null}
       <DataTable rows={rows} />
     </Panel>
   );

@@ -941,6 +941,7 @@ function attendanceStateLabel(value) {
 
 function AttendancePanel() {
   const [selectedDate, setSelectedDate] = useState(todayLimaISO());
+  const [cutoffTime, setCutoffTime] = useState("08:00");
   const [workerStatusFilter, setWorkerStatusFilter] = useState("activos");
   const [attendanceValues, setAttendanceValues] = useState({});
   const [status, setStatus] = useState(null);
@@ -960,16 +961,16 @@ function AttendancePanel() {
   );
 
   useEffect(() => {
-    const currentMap = Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.estado || "AUSENTE").toUpperCase()]));
+    const currentMap = Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.estado || "AUSENTE").toUpperCase() !== "AUSENTE"]));
     const nextValues = {};
     (data.workers || []).forEach((worker) => {
-      nextValues[worker.id] = currentMap[worker.id] || "AUSENTE";
+      nextValues[worker.id] = Boolean(currentMap[worker.id]);
     });
     setAttendanceValues(nextValues);
   }, [data.current, data.workers]);
 
   const currentMarks = useMemo(
-    () => Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.estado || "AUSENTE").toUpperCase()])),
+    () => Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.estado || "AUSENTE").toUpperCase() !== "AUSENTE"])),
     [data.current]
   );
 
@@ -988,12 +989,16 @@ function AttendancePanel() {
 
   async function handleSave() {
     setStatus(null);
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(cutoffTime)) {
+      setStatus({ type: "error", message: "Selecciona una hora limite valida para diferenciar puntualidad de tardanza." });
+      return;
+    }
     setSaving(true);
     try {
       for (const worker of data.workers || []) {
-        const nextValue = attendanceValues[worker.id] || "AUSENTE";
-        if ((currentMarks[worker.id] || "AUSENTE") !== nextValue) {
-          await markAttendance(worker.id, selectedDate, nextValue);
+        const checked = Boolean(attendanceValues[worker.id]);
+        if (Boolean(currentMarks[worker.id]) !== checked) {
+          await markAttendance(worker.id, selectedDate, checked, cutoffTime);
         }
       }
       setStatus({ type: "success", message: "Asistencia guardada correctamente." });
@@ -1038,6 +1043,13 @@ function AttendancePanel() {
       <Panel title="Gestion de asistencia" eyebrow="Control diario">
         <div className="toolbar">
           <TextInput label="Fecha" type="date" value={selectedDate} onChange={setSelectedDate} />
+          <TextInput
+            label="Hora limite"
+            type="time"
+            value={cutoffTime}
+            onChange={setCutoffTime}
+            hint="Marcados hasta esta hora quedan Puntual; despues, Tardanza."
+          />
           <SelectInput
             label="Mostrar trabajadores"
             value={workerStatusFilter}
@@ -1053,20 +1065,20 @@ function AttendancePanel() {
         {!loading && workers.length && !visibleWorkers.length ? (
           <Alert>No hay trabajadores {workerStatusFilter === "activos" ? "activos" : "inactivos"} para mostrar.</Alert>
         ) : null}
+        <Alert>Marca a los trabajadores presentes. Al guardar, quienes esten marcados hasta las {cutoffTime || "--:--"} quedaran como Puntual y despues como Tardanza; los no marcados quedaran como Ausente.</Alert>
         <div className="attendance-list">
           {visibleWorkers.map((worker) => (
-            <div key={worker.id} className="attendance-row">
+            <label key={worker.id} className="attendance-row">
               <span>
                 <strong>{worker.nombre || "Sin nombre"}</strong>
                 <small>{worker.email} · {boolValue(worker.activo) ? "Activo" : "Inactivo"}</small>
               </span>
-              <SelectInput
-                label="Estado"
-                value={attendanceValues[worker.id] || "AUSENTE"}
-                onChange={(value) => setAttendanceValues({ ...attendanceValues, [worker.id]: value })}
-                options={attendanceStateOptions}
+              <input
+                type="checkbox"
+                checked={Boolean(attendanceValues[worker.id])}
+                onChange={(event) => setAttendanceValues({ ...attendanceValues, [worker.id]: event.target.checked })}
               />
-            </div>
+            </label>
           ))}
         </div>
         <div className="form-actions">

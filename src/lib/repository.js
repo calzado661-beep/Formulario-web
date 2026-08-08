@@ -1,6 +1,6 @@
 import { requireSupabase } from "./supabaseClient";
 import { applyScoringRules, isGroupLeaderTimeTask, isWorkerRole, normalizeRole, normalizeScoringRule } from "./scoring";
-import { nowLimaISODateTime } from "./dates";
+import { nowLimaISODateTime, nowLimaTimeHHMM } from "./dates";
 
 let taskTableName;
 let attendanceTableName;
@@ -584,21 +584,25 @@ export async function getAttendanceForDate(fecha) {
 
 export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA"];
 
-export async function markAttendance(usuarioId, fecha, estado = "PUNTUAL") {
-  const normalizedEstado = String(estado || "").trim().toUpperCase();
+export async function markAttendance(usuarioId, fecha, presente, horaLimite) {
+  const isPresent = Boolean(presente);
   const apiResult = await requestLocalApi("/api/attendances", {
     method: "PUT",
-    body: JSON.stringify({ usuario_id: usuarioId, fecha, estado: normalizedEstado })
+    body: JSON.stringify({ usuario_id: usuarioId, fecha, presente: isPresent, hora_limite: horaLimite })
   });
   if (apiResult?.attendance) return apiResult.attendance;
 
-  const present = normalizedEstado !== "AUSENTE";
   const tableName = await getAttendanceTableName();
+  const estado = !isPresent
+    ? "AUSENTE"
+    : nowLimaTimeHHMM() <= String(horaLimite || "").slice(0, 5)
+      ? "PUNTUAL"
+      : "TARDANZA";
   const payload = {
     usuario_id: usuarioId,
     fecha,
-    estado: normalizedEstado,
-    created_at: present ? nowLimaISODateTime() : null
+    estado,
+    created_at: isPresent ? nowLimaISODateTime() : null
   };
   const result = await db().from(tableName).upsert(payload, { onConflict: "usuario_id,fecha" });
   if (result.error) {

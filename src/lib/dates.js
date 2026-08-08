@@ -38,3 +38,12 @@ export function birthdayMaxISO() {
 export function nowLimaISODateTime() {
   return new Date().toISOString();
 }
+
+export function nowLimaTimeHHMM() {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: LIMA_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).format(new Date());
+}
