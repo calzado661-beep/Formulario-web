@@ -9,7 +9,7 @@
   dato_extra text,
   cumplimiento boolean,
   detalle text,
-  puntos_obtenidos numeric not null default 0,
+  puntaje numeric not null default 0,
   created_at timestamptz not null default now()
 );
 

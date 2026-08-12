@@ -20,7 +20,7 @@ function readStoredUser() {
 
 export default function App() {
   const [user, setUser] = useState(readStoredUser);
-  const [adminSection, setAdminSection] = useState("Usuarios");
+  const [adminSection, setAdminSection] = useState("Dashboard");
 
   useEffect(() => {
     if (user) localStorage.setItem(SESSION_KEY, JSON.stringify(user));

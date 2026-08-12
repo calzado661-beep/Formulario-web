@@ -171,7 +171,7 @@ function RegisterActivity({ user }) {
       cumplimiento = true;
     }
     if (type === "tiempo") {
-      cantidad = record.cantidad === "" ? null : Number(record.cantidad);
+      cantidad = guias.length ? guideTotal(guias) : record.cantidad === "" ? null : Number(record.cantidad);
       tiempoMinutos = null;
       cumplimiento = true;
     }
@@ -242,7 +242,7 @@ function RegisterActivity({ user }) {
       if (shape.type === "cantidad" && !record.usaMarcas && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) < 0)) {
         return `Ingresa una cantidad valida para ${shape.title}.`;
       }
-      if (shape.type === "tiempo" && (record.cantidad === "" || Number(record.cantidad) <= 0)) {
+      if (shape.type === "tiempo" && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) <= 0)) {
         return `Ingresa la cantidad realizada para ${shape.title}.`;
       }
     }
@@ -311,7 +311,7 @@ function RegisterActivity({ user }) {
             turno: shape.turno,
             tienda_id: shape.tiendaId,
             lote: shape.lote,
-            puntos_obtenidos: points,
+            puntaje: points,
             marcas: shape.marcas,
             guias: shape.guias
           };
@@ -479,15 +479,18 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
   if (type === "tiempo") {
     return (
       <div className="form-grid">
-        <TextInput
-          label="Cantidad realizada"
-          type="number"
-          min="1"
-          step="1"
-          value={record.cantidad}
-          onChange={(cantidad) => onChange({ cantidad })}
-        />
+        {!usesGuideBreakdown || !record.usaGuias ? (
+          <TextInput
+            label="Cantidad realizada"
+            type="number"
+            min="1"
+            step="1"
+            value={record.cantidad}
+            onChange={(cantidad) => onChange({ cantidad })}
+          />
+        ) : null}
         {taskUsesBrandsByDefault(task) ? <BrandFields record={record} brands={brands} onChange={onChange} /> : null}
+        {usesGuideBreakdown ? <GuideFields record={record} onChange={onChange} /> : null}
         {taskUsesLote(task) ? <LoteField record={record} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
@@ -557,7 +560,7 @@ function GuideFields({ record, onChange }) {
           usaGuias,
           guias: record.guias?.length ? record.guias : [emptyGuideShare()]
         })}
-        hint="Disponible solo para Revisión de Guía. El puntaje se calculará una sola vez con la suma total."
+        hint="El puntaje se calculará una sola vez con la suma total."
       />
       {record.usaGuias ? (
         <GuideDistribution items={record.guias} onChange={(guias) => onChange({ guias })} />
@@ -638,7 +641,7 @@ export function WorkerHistory({ user }) {
       "Tiempo (min)": log.tiempo_minutos ?? "",
       Turno: log.turno || (tipoAct === "turno" ? displayShiftFromQuantity(log.cantidad) : ""),
       Cumplimiento: log.cumplimiento,
-      Puntos: log.puntos_obtenidos,
+      Puntos: log.puntaje,
       Tienda: storeNameById[log.tienda_id] || "",
       Guia: log.numero_guia || "",
       Lote: log.lote || "",

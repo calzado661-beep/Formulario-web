@@ -108,7 +108,8 @@ const groupLeaderTimeTaskNames = new Set([
 
 const guideNumberTaskNames = new Set([
   "revision de guia devolucion",
-  "revision de guia despacho"
+  "revision de guia despacho",
+  "embalado y rotulado de guia"
 ]);
 
 function normalizedTaskName(task) {

@@ -612,8 +612,41 @@ table.role-table td.num { font-variant-numeric: tabular-nums; }
   color: var(--ink-faint);
 }
 
+.manual-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: fit-content;
+  margin-top: 1.25rem;
+  padding: 0.82rem 1.1rem;
+  border: 1px solid rgba(15, 118, 110, 0.28);
+  border-radius: 0.75rem;
+  background: var(--teal);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: 0 12px 28px rgba(15, 118, 110, 0.2);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.manual-download:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 34px rgba(15, 118, 110, 0.28);
+}
+.manual-download:focus-visible {
+  outline: 3px solid rgba(20, 184, 166, 0.32);
+  outline-offset: 3px;
+}
+.manual-download svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: 0 0 auto;
+}
+
 @media print {
   .rail { display: none; }
+  .manual-download { display: none; }
   .shell { display: block; }
   .chapter { break-inside: avoid-page; }
 }
@@ -697,6 +730,15 @@ table.role-table td.num { font-variant-numeric: tabular-nums; }
         <span>17 pantallas capturadas</span>
         <span>Zona horaria America/Lima</span>
       </p>
+
+      <a class="manual-download" href="manual-sistema-formularios.pdf" download="manual-sistema-formularios.pdf">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v12" />
+          <path d="m7 10 5 5 5-5" />
+          <path d="M5 21h14" />
+        </svg>
+        Descargar manual PDF
+      </a>
 
       <div class="callout teal" style="max-width:62ch;">
         <strong>Como entrar</strong>

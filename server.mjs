@@ -212,7 +212,8 @@ function isEtiquetadoTask(task) {
 function isGuideBreakdownTask(task) {
   return new Set([
     "revision de guia devolucion",
-    "revision de guia despacho"
+    "revision de guia despacho",
+    "embalado y rotulado de guia"
   ]).has(normalizeTaskName(taskTitle(task)));
 }
 
@@ -317,10 +318,7 @@ function taskPayloadForDb(body, tableName) {
   const automaticFields = {
     requiere_marca: normalizeTaskName(taskName) === "etiquetado",
     requiere_lote: normalizeTaskName(taskName) === "etiquetado",
-    requiere_numero_guia: new Set([
-      "revision de guia devolucion",
-      "revision de guia despacho"
-    ]).has(normalizeTaskName(taskName))
+    requiere_numero_guia: isGuideBreakdownTask({ nombre: taskName })
   };
   const payload = tableName === "tarea"
     ? {
@@ -906,21 +904,21 @@ async function selectTaskScoreRanges(taskId = null) {
 // que usa cualquier otra tarea (segun cantidad); el tiempo registrado por el
 // jefe de equipo es solo informativo y no participa en el calculo.
 async function selectGroupLeaderActivityLogsForWorker(workerId) {
-  const result = await supabase
-    .from("registros_tareas_jefe_equipo")
-    .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at")
-    .eq("trabajador_id", workerId)
-    .order("created_at", { ascending: false });
+  const result = await selectGroupLeaderRecordRows((query) =>
+    query.eq("trabajador_id", workerId).order("created_at", { ascending: false })
+  );
   if (result.error || !result.data?.length) return [];
   const rows = result.data;
 
   const tableName = await getTaskTableName();
   const taskIds = Array.from(new Set(rows.map((row) => Number(row.tarea_id)).filter(Boolean)));
   const encargadoIds = Array.from(new Set(rows.map((row) => Number(row.encargado_id)).filter(Boolean)));
-  const [tasksResult, rulesResult, leadersResult] = await Promise.all([
+  const brandIds = Array.from(new Set(rows.map((row) => Number(row.marca_id)).filter(Boolean)));
+  const [tasksResult, rulesResult, leadersResult, brandsResult] = await Promise.all([
     taskIds.length ? supabase.from(tableName).select("*").in("id", taskIds) : Promise.resolve({ data: [] }),
     taskIds.length ? supabase.from("reglas_puntaje").select("*").in("tarea_id", taskIds) : Promise.resolve({ data: [] }),
-    encargadoIds.length ? supabase.from("usuarios").select("id,nombre,email").in("id", encargadoIds) : Promise.resolve({ data: [] })
+    encargadoIds.length ? supabase.from("usuarios").select("id,nombre,email").in("id", encargadoIds) : Promise.resolve({ data: [] }),
+    brandIds.length ? supabase.from("marcas").select("id,nombre").in("id", brandIds) : Promise.resolve({ data: [] })
   ]);
   const rulesByTaskId = new Map();
   (rulesResult.data || []).forEach((rule) => {
@@ -932,10 +930,12 @@ async function selectGroupLeaderActivityLogsForWorker(workerId) {
     (tasksResult.data || []).map((task) => [Number(task.id), applyScoringRules(task, rulesByTaskId.get(Number(task.id)) || [])])
   );
   const leaderById = new Map((leadersResult.data || []).map((leader) => [Number(leader.id), leader]));
+  const brandById = new Map((brandsResult.data || []).map((brand) => [Number(brand.id), brand]));
 
   return rows.map((row) => {
     const leader = leaderById.get(Number(row.encargado_id));
     const task = scoredTaskById.get(Number(row.tarea_id));
+    const brand = row.marca_id ? brandById.get(Number(row.marca_id)) : null;
     // Se puntua con las reglas configuradas en el admin (por cantidad, fijo o
     // turno). El tiempo registrado es solo para seguimiento, no para puntaje.
     const puntosObtenidos = task ? calculatePoints(task, row.cantidad, null, true) : null;
@@ -950,10 +950,11 @@ async function selectGroupLeaderActivityLogsForWorker(workerId) {
       tiempo_minutos: row.tiempo_minutos,
       numero_guia: row.numero_guia,
       lote: row.lote,
+      tienda_id: row.tienda_id,
       detalle: row.observacion,
       cumplimiento: true,
-      puntos_obtenidos: puntosObtenidos,
-      marcas: [],
+      puntaje: puntosObtenidos,
+      marcas: brand ? [{ marca_id: brand.id, marca_nombre: brand.nombre, cantidad: nullableNumber(row.cantidad) }] : [],
       created_at: row.created_at,
       origen: "jefe_equipo",
       encargado_id: row.encargado_id,
@@ -2011,7 +2012,7 @@ async function handleCreateActivityLog(request, response) {
       return;
     }
     if ((guideItems.length || singleGuideNumber) && !allowsGuideNumber) {
-      sendJson(response, 400, { error: "La distribución por guías solo está disponible para Revisión de Guía." });
+      sendJson(response, 400, { error: "El número de guía no está disponible para esta tarea." });
       return;
     }
     if (brandItems.length && guideItems.length) {
@@ -2044,7 +2045,7 @@ async function handleCreateActivityLog(request, response) {
       numero_guia: singleGuideNumber || null,
       dato_extra: lote || null,
       observacion: body.observacion || body.detalle ? String(body.observacion || body.detalle).trim() : null,
-      puntos_obtenidos: nullableNumber(body.puntos_obtenidos) ?? 0
+      puntaje: nullableNumber(body.puntaje) ?? 0
     };
     const requestedTime = nullableNumber(body.tiempo_minutos ?? body.dato_extra);
     if (!isTimeTask && requestedTime !== null) payload.tiempo_minutos = requestedTime;
@@ -2075,14 +2076,14 @@ async function handleCreateActivityLog(request, response) {
           ...payload,
           cantidad: item.cantidad,
           marca_id: item.marca_id,
-          puntos_obtenidos: index === 0 ? payload.puntos_obtenidos : 0
+          puntaje: index === 0 ? payload.puntaje : 0
         }))
       : guideItems.length
         ? guideItems.map((item, index) => ({
             ...payload,
             cantidad: item.cantidad,
             numero_guia: item.numero_guia,
-            puntos_obtenidos: index === 0 ? payload.puntos_obtenidos : 0
+            puntaje: index === 0 ? payload.puntaje : 0
           }))
       : [payload];
 
@@ -2103,7 +2104,7 @@ async function handleCreateActivityLog(request, response) {
     const log = {
       ...normalizeActivityLog(insertedRows[0]),
       cantidad: requestedQuantity,
-      puntos_obtenidos: payload.puntos_obtenidos,
+      puntaje: payload.puntaje,
       guias: guideItems,
       marcas: brandItems.map((item) => ({
         ...item,
@@ -2116,14 +2117,41 @@ async function handleCreateActivityLog(request, response) {
   }
 }
 
-function enrichGroupRecords(records, users, tasks) {
+const GROUP_RECORD_COLUMNS_WITH_EXTRAS =
+  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,marca_id,tienda_id,observacion,created_at";
+const GROUP_RECORD_COLUMNS_BASE =
+  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at";
+
+// marca_id/tienda_id solo existen despues de aplicar sql/024. Hasta entonces,
+// esta consulta cae de vuelta a las columnas base para no romper el resto del
+// panel de jefe de equipo (lista de tareas, historial, etc.).
+async function selectGroupLeaderRecordRows(applyFilters) {
+  let query = supabase.from("registros_tareas_jefe_equipo").select(GROUP_RECORD_COLUMNS_WITH_EXTRAS);
+  query = applyFilters(query);
+  let result = await query;
+  if (result.error?.code === "42703") {
+    let fallbackQuery = supabase.from("registros_tareas_jefe_equipo").select(GROUP_RECORD_COLUMNS_BASE);
+    fallbackQuery = applyFilters(fallbackQuery);
+    result = await fallbackQuery;
+    if (!result.error) {
+      result.data = (result.data || []).map((row) => ({ ...row, marca_id: null, tienda_id: null }));
+    }
+  }
+  return result;
+}
+
+function enrichGroupRecords(records, users, tasks, brands = [], stores = []) {
   const userById = new Map(users.map((user) => [Number(user.id), user]));
   const taskById = new Map(tasks.map((task) => [Number(task.id), task]));
+  const brandById = new Map(brands.map((brand) => [Number(brand.id), brand]));
+  const storeById = new Map(stores.map((store) => [Number(store.id), store]));
 
   return records.map((record) => {
     const encargado = userById.get(Number(record.encargado_id));
     const trabajador = userById.get(Number(record.trabajador_id));
     const task = taskById.get(Number(record.tarea_id));
+    const brand = record.marca_id ? brandById.get(Number(record.marca_id)) : null;
+    const store = record.tienda_id ? storeById.get(Number(record.tienda_id)) : null;
 
     return {
       ...record,
@@ -2131,20 +2159,21 @@ function enrichGroupRecords(records, users, tasks) {
       encargado_email: encargado?.email || "",
       trabajador_nombre: trabajador?.nombre || trabajador?.email || "",
       trabajador_email: trabajador?.email || "",
-      tarea_nombre: record.tarea_nombre || taskTitle(task) || `Tarea ${record.tarea_id}`
+      tarea_nombre: record.tarea_nombre || taskTitle(task) || `Tarea ${record.tarea_id}`,
+      marca_nombre: brand?.nombre || "",
+      tienda_nombre: store?.nombre || ""
     };
   });
 }
 
 async function loadGroupLeaderData() {
   const tableName = await getTaskTableName();
-  const [usersResult, tasksResult, recordsResult] = await Promise.all([
+  const [usersResult, tasksResult, recordsResult, brandsResult, storesResult] = await Promise.all([
     supabase.from("usuarios").select("id,nombre,email,rol,activo").order("id", { ascending: true }),
     supabase.from(tableName).select("*").order("id", { ascending: true }),
-    supabase
-      .from("registros_tareas_jefe_equipo")
-      .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at")
-      .order("created_at", { ascending: false })
+    selectGroupLeaderRecordRows((query) => query.order("created_at", { ascending: false })),
+    supabase.from("marcas").select("id,nombre"),
+    supabase.from("tiendas").select("id,nombre")
   ]);
 
   if (usersResult.error) throw usersResult.error;
@@ -2162,10 +2191,13 @@ async function loadGroupLeaderData() {
       detalle: record.observacion
     })),
     users,
-    tasksResult.data || []
+    tasksResult.data || [],
+    brandsResult.data || [],
+    storesResult.data || []
   );
+  const stores = (storesResult.data || []).filter((store) => isActive(store.activo));
 
-  return { workers, tasks, leaders, records };
+  return { workers, tasks, leaders, records, brands: brandsResult.data || [], stores };
 }
 
 async function handleGroupLeaderContext(request, response) {
@@ -2233,13 +2265,53 @@ async function handleCreateGroupLeaderRecord(request, response) {
     const guideNumber = String(body.codigo_guia || "").trim();
     const lote = String(body.lote || "").trim().toUpperCase();
     if (guideNumber && !isGuideBreakdownTask(taskResult.data)) {
-      sendJson(response, 400, { error: "El numero de guia solo esta disponible para Revision de Guia (Devolucion) y Revision de Guia (Despacho)." });
+      sendJson(response, 400, { error: "El numero de guia no esta disponible para esta tarea." });
       return;
     }
     if (lote && !isEtiquetadoTask(taskResult.data)) {
       sendJson(response, 400, { error: "El lote solo esta disponible para la tarea Etiquetado." });
       return;
     }
+
+    // Las mismas tareas por tiempo piden aqui los mismos datos adicionales
+    // que ya le pide el operante para esa tarea (marca en Etiquetado, tienda
+    // en Picking/Visita de tienda).
+    const requiresBrand = isEtiquetadoTask(taskResult.data);
+    const requiresStore = taskUsesStore(taskResult.data);
+    const requestedBrandId = nullableNumber(body.marca_id);
+    const requestedStoreId = nullableNumber(body.tienda_id);
+
+    if (requiresBrand && !requestedBrandId) {
+      sendJson(response, 400, { error: `Selecciona una marca para ${taskTitle(taskResult.data)}.` });
+      return;
+    }
+    if (!requiresBrand && requestedBrandId) {
+      sendJson(response, 400, { error: "La marca solo esta disponible para la tarea Etiquetado." });
+      return;
+    }
+    if (requiresStore && !requestedStoreId) {
+      sendJson(response, 400, { error: `Selecciona una tienda para ${taskTitle(taskResult.data)}.` });
+      return;
+    }
+    if (!requiresStore && requestedStoreId) {
+      sendJson(response, 400, { error: "La tienda no esta disponible para esta tarea." });
+      return;
+    }
+    if (requestedBrandId) {
+      const brandResult = await supabase.from("marcas").select("id").eq("id", requestedBrandId).maybeSingle();
+      if (brandResult.error || !brandResult.data) {
+        sendJson(response, 400, { error: "Selecciona una marca valida." });
+        return;
+      }
+    }
+    if (requestedStoreId) {
+      const storeResult = await supabase.from("tiendas").select("id,activo").eq("id", requestedStoreId).maybeSingle();
+      if (storeResult.error || !storeResult.data || !isActive(storeResult.data.activo)) {
+        sendJson(response, 400, { error: "Selecciona una tienda activa y valida." });
+        return;
+      }
+    }
+
     const payload = {
       encargado_id: Number(session.id),
       trabajador_id: workerId,
@@ -2249,6 +2321,8 @@ async function handleCreateGroupLeaderRecord(request, response) {
       tiempo_minutos: requestedMinutes,
       numero_guia: guideNumber || null,
       lote: lote || null,
+      marca_id: requestedBrandId,
+      tienda_id: requestedStoreId,
       observacion: body.detalle ? String(body.detalle).trim() : null
     };
 
@@ -2260,15 +2334,35 @@ async function handleCreateGroupLeaderRecord(request, response) {
     let result = await supabase
       .from("registros_tareas_jefe_equipo")
       .insert(payload)
-      .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at")
+      .select(GROUP_RECORD_COLUMNS_WITH_EXTRAS)
       .single();
 
     if (isPrimaryKeySequenceConflict(result.error)) {
       result = await supabase
         .from("registros_tareas_jefe_equipo")
         .insert({ ...payload, id: await nextTableId("registros_tareas_jefe_equipo") })
-        .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at")
+        .select(GROUP_RECORD_COLUMNS_WITH_EXTRAS)
         .single();
+    }
+
+    // marca_id/tienda_id solo existen despues de aplicar sql/024. Si la tarea no
+    // los necesita (ambos quedaron null), reintenta sin esas columnas para no
+    // bloquear el registro completo por una migracion pendiente.
+    if (["42703", "PGRST204"].includes(result.error?.code) && !payload.marca_id && !payload.tienda_id) {
+      const { marca_id, tienda_id, ...basePayload } = payload;
+      result = await supabase
+        .from("registros_tareas_jefe_equipo")
+        .insert(basePayload)
+        .select(GROUP_RECORD_COLUMNS_BASE)
+        .single();
+      if (isPrimaryKeySequenceConflict(result.error)) {
+        result = await supabase
+          .from("registros_tareas_jefe_equipo")
+          .insert({ ...basePayload, id: await nextTableId("registros_tareas_jefe_equipo") })
+          .select(GROUP_RECORD_COLUMNS_BASE)
+          .single();
+      }
+      if (!result.error) result.data = { ...result.data, marca_id: null, tienda_id: null };
     }
 
     if (result.error) {

@@ -171,6 +171,9 @@ export function friendlyError(error) {
   if (/incidentes|usuario_id/i.test(message) && /could not find|does not exist|schema cache/i.test(message)) {
     return "Falta ejecutar la migración de incidencias en Supabase: sql/010_incidentes_estructura.sql.";
   }
+  if (/registros_tareas_jefe_equipo|marca_id|tienda_id/i.test(message) && /could not find|does not exist|schema cache/i.test(message)) {
+    return "Falta ejecutar la migración de marca/tienda en Supabase: sql/024_registros_jefe_equipo_marca_tienda.sql.";
+  }
   if (/row-level security/i.test(message)) {
     return "Supabase rechazo la operacion por politicas RLS. Revisa permisos de la clave publica.";
   }
@@ -721,7 +724,7 @@ function activityLogInsertPayload(resourceName, payload) {
     numero_guia: payload.numero_guia,
     dato_extra: payload.lote,
     observacion: payload.observacion || payload.detalle,
-    puntos_obtenidos: payload.puntos_obtenidos
+    puntaje: payload.puntaje
   };
 
   return Object.fromEntries(Object.entries(mapped).filter(([, value]) => value !== undefined && value !== null));
@@ -894,10 +897,6 @@ export async function createGroupLeaderRecord(payload) {
   });
   if (apiResult?.record) return apiResult.record;
 
-  if (payload.marcas?.length) {
-    throw new Error("El backend local debe estar activo para guardar la distribucion por marcas.");
-  }
-
   const result = await db().from("registros_tareas_jefe_equipo").insert({
     encargado_id: payload.encargado_id,
     trabajador_id: payload.trabajador_id,
@@ -907,6 +906,8 @@ export async function createGroupLeaderRecord(payload) {
     tiempo_minutos: payload.tiempo_minutos,
     numero_guia: payload.codigo_guia,
     lote: payload.lote,
+    marca_id: payload.marca_id ?? null,
+    tienda_id: payload.tienda_id ?? null,
     observacion: payload.detalle
   });
   if (result.error) throw result.error;
@@ -920,18 +921,20 @@ export async function loadGroupLeaderContext() {
       workers: apiContext.workers || [],
       tasks: apiContext.tasks || [],
       brands: apiContext.brands || [],
+      stores: apiContext.stores || [],
       leaders: apiContext.leaders || [],
       records: (apiContext.records || []).map(normalizeGroupLeaderLog)
     };
   }
 
-  const [workers, tasks, brands, records] = await Promise.all([
+  const [workers, tasks, brands, stores, records] = await Promise.all([
     listAssignableWorkers(),
     listTasks().then((tasks) => tasks.filter(isGroupLeaderTimeTask)),
     listBrands(),
+    listTiendas().then((stores) => stores.filter((store) => String(store.activo ?? true) !== "false")),
     listGroupLeaderRecords()
   ]);
-  return { workers, tasks, brands, leaders: [], records };
+  return { workers, tasks, brands, stores, leaders: [], records };
 }
 
 export async function listGroupLeaderRecords(encargadoId = null) {

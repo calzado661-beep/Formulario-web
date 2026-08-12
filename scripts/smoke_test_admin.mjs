@@ -145,7 +145,7 @@ try {
       fecha_registro: "2099-12-28",
       tipo_medicion: "fijo",
       cumplimiento: true,
-      puntos_obtenidos: 1
+      puntaje: 1
     })
   });
   assert(

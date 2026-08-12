@@ -5,6 +5,7 @@ import {
   BellRing,
   CalendarCheck2,
   ClipboardList,
+  LayoutDashboard,
   LogOut,
   Menu,
   PanelLeftClose,
@@ -20,6 +21,7 @@ import { Button, IconButton } from "./ui";
 const SIDEBAR_STATE_KEY = "formulario_sidebar_collapsed";
 
 const adminItems = [
+  { key: "Dashboard", label: "Dashboard calzado", icon: LayoutDashboard },
   { key: "Usuarios", icon: UsersRound },
   { key: "Tareas", label: "Tareas y puntajes", icon: ClipboardList },
   { key: "Asistencia", icon: CalendarCheck2 },
@@ -76,6 +78,7 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
   }, [isMobile, mobileSidebarOpen]);
 
   const role = normalizeRole(user?.rol);
+  const isDashboardView = role === "administrador" && adminSection === "Dashboard";
   const title =
     role === "administrador"
       ? "Panel Administrativo"
@@ -88,7 +91,7 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
           : "Panel de Trabajo";
 
   return (
-    <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${mobileSidebarOpen ? " mobile-sidebar-open" : ""}`}>
+    <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${mobileSidebarOpen ? " mobile-sidebar-open" : ""}${isDashboardView ? " dashboard-view" : ""}`}>
       <aside className={`sidebar${!isMobile && sidebarCollapsed ? " collapsed" : ""}`} aria-label="Barra lateral">
         <div className="sidebar-top">
           <div className="sidebar-header-row">
@@ -159,8 +162,18 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
         />
       ) : null}
 
-      <main className="workspace">
-        <header className="workspace-header">
+      <main className={`workspace${isDashboardView ? " dashboard-workspace" : ""}`}>
+        {isDashboardView && isMobile ? (
+          <IconButton
+            className="dashboard-mobile-menu"
+            label="Abrir menu lateral"
+            icon={Menu}
+            aria-expanded={mobileSidebarOpen}
+            aria-controls="primary-sidebar-navigation"
+            onClick={() => setMobileSidebarOpen(true)}
+          />
+        ) : null}
+        {!isDashboardView ? <header className="workspace-header">
           <div className="workspace-title-row">
             <IconButton
               className="mobile-sidebar-trigger"
@@ -176,7 +189,7 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
             </div>
           </div>
           <div className="header-chip">{role}</div>
-        </header>
+        </header> : null}
         {children}
       </main>
     </div>

@@ -279,7 +279,7 @@ def _activity_log_insert_payload(resource_name: str, payload: dict[str, Any]) ->
         "cantidad": payload.get("cantidad"),
         "turno": payload.get("turno"),
         "observacion": payload.get("observacion") or payload.get("detalle"),
-        "puntos_obtenidos": payload.get("puntos_obtenidos"),
+        "puntaje": payload.get("puntaje"),
     }
     if payload.get("tiempo_minutos") is not None:
         mapped["dato_extra"] = payload.get("tiempo_minutos")

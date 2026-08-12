@@ -54,6 +54,7 @@ import {
   validateQuantityRanges
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
+import FootwearDashboard from "./FootwearDashboard";
 import {
   Alert,
   Button,
@@ -83,6 +84,7 @@ function trainingStatusLabel(status) {
 }
 
 export default function AdminDashboard({ section }) {
+  if (section === "Dashboard") return <FootwearDashboard />;
   if (section === "Usuarios") return <UsersPanel />;
   if (section === "Tareas") return <TasksPanel />;
   if (section === "Asistencia") return <AttendancePanel />;
@@ -862,7 +864,7 @@ function TaskForm({ form, setForm, onSubmit, saving, submitLabel }) {
           checked={allowsGuideNumber}
           disabled
           onChange={() => {}}
-          hint="Solo para Revision de Guia (Devolucion) y Revision de Guia (Despacho)."
+          hint="Se activa automaticamente segun el nombre de la tarea."
         />
       </div>
       <ScoreFields form={form} setForm={setForm} />
@@ -2802,7 +2804,7 @@ function WorkerPointsPanel() {
         Turno: turnoDisplay,
         "Tiempo (min)": log.tiempo_minutos,
         Cumplimiento: log.cumplimiento,
-        Puntos: Number(log.puntos_obtenidos || 0)
+        Puntos: Number(log.puntaje || 0)
       };
     });
 

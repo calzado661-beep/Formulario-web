@@ -25,8 +25,10 @@ import {
   isGroupLeaderTimeTask,
   normalizeMeasurementType,
   normalizeText,
+  taskUsesBrandsByDefault,
   taskUsesGuideBreakdown,
-  taskUsesLote
+  taskUsesLote,
+  taskUsesStore
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
 import { Alert, Button, CheckboxInput, DataTable, LoadingBlock, Panel, SelectInput, Tabs, TextArea, TextInput } from "./ui";
@@ -42,6 +44,8 @@ const initialForm = {
   codigo_guia: "",
   usaLote: false,
   lote: "",
+  marca_id: "",
+  tienda_id: "",
   detalle: ""
 };
 
@@ -68,6 +72,8 @@ const historyColumns = [
   "Tiempo",
   "Número de guía",
   "Código de lote",
+  "Marca",
+  "Tienda",
   "Detalle"
 ];
 
@@ -279,11 +285,13 @@ function GroupTimeDashboard({ user }) {
   const { data, loading, error, reload } = useAsyncData(
     loadGroupLeaderContext,
     [user?.id],
-    { workers: [], tasks: [], leaders: [], records: [] }
+    { workers: [], tasks: [], brands: [], stores: [], leaders: [], records: [] }
   );
 
   const workers = data.workers || [];
   const tasks = data.tasks || [];
+  const brands = data.brands || [];
+  const stores = data.stores || [];
   const records = data.records || [];
 
   const selectedTask = useMemo(
@@ -347,6 +355,8 @@ function GroupTimeDashboard({ user }) {
     Tiempo: formatDuration(record.tiempo_minutos),
     "Número de guía": record.codigo_guia,
     "Código de lote": record.lote,
+    Marca: record.marca_nombre,
+    Tienda: record.tienda_nombre,
     Detalle: record.detalle
   }));
 
@@ -379,6 +389,12 @@ function GroupTimeDashboard({ user }) {
     }
     if (form.usaLote && !form.lote.trim()) {
       return "Ingresa el código de lote.";
+    }
+    if (taskMode.requiresBrand && !form.marca_id) {
+      return "Selecciona una marca.";
+    }
+    if (taskMode.requiresStore && !form.tienda_id) {
+      return "Selecciona una tienda.";
     }
     if (taskMode.requiresTime) {
       const hours = Number(form.horas || 0);
@@ -415,6 +431,8 @@ function GroupTimeDashboard({ user }) {
         tiempo_minutos: totalMinutes,
         codigo_guia: taskUsesGuideBreakdown(selectedTask) && form.usaCodigoGuia ? form.codigo_guia.trim() : null,
         lote: taskUsesLote(selectedTask) && form.usaLote ? form.lote.trim().toUpperCase() : null,
+        marca_id: taskMode.requiresBrand ? Number(form.marca_id) : null,
+        tienda_id: taskMode.requiresStore ? Number(form.tienda_id) : null,
         detalle: form.detalle.trim() || null
       };
 
@@ -488,12 +506,21 @@ function GroupTimeDashboard({ user }) {
                 { value: "", label: "Selecciona tarea" },
                 ...tasks.map((task) => ({
                   value: String(task.id),
-                  label: `${getTaskTitle(task) || "Sin nombre"} - ID ${task.id}`
+                  label: getTaskTitle(task) || "Sin nombre"
                 }))
               ]}
             />
 
-            {selectedTask ? <DynamicGroupFields mode={taskMode} task={selectedTask} form={form} updateForm={updateForm} /> : null}
+            {selectedTask ? (
+              <DynamicGroupFields
+                mode={taskMode}
+                task={selectedTask}
+                form={form}
+                updateForm={updateForm}
+                brands={brands}
+                stores={stores}
+              />
+            ) : null}
 
             <TextArea
               label="Detalle"
@@ -604,7 +631,7 @@ function GroupTimeDashboard({ user }) {
   );
 }
 
-function DynamicGroupFields({ mode, task, form, updateForm }) {
+function DynamicGroupFields({ mode, task, form, updateForm, brands, stores }) {
   if (mode.completedOnly) {
     return (
       <div className="form-span">
@@ -646,13 +673,37 @@ function DynamicGroupFields({ mode, task, form, updateForm }) {
           />
         </>
       ) : null}
+      {mode.requiresBrand ? (
+        <SelectInput
+          label="Marca"
+          value={form.marca_id}
+          onChange={(marca_id) => updateForm({ marca_id })}
+          options={[
+            { value: "", label: "Selecciona marca" },
+            ...(brands || []).map((brand) => ({ value: String(brand.id), label: brand.nombre }))
+          ]}
+          hint="Igual que en el registro del operante para esta tarea."
+        />
+      ) : null}
+      {mode.requiresStore ? (
+        <SelectInput
+          label="Tienda"
+          value={form.tienda_id}
+          onChange={(tienda_id) => updateForm({ tienda_id })}
+          options={[
+            { value: "", label: "Selecciona tienda" },
+            ...(stores || []).map((store) => ({ value: String(store.id), label: store.nombre }))
+          ]}
+          hint="Igual que en el registro del operante para esta tarea."
+        />
+      ) : null}
       {taskUsesGuideBreakdown(task) ? (
         <>
           <CheckboxInput
             label="Añadir número de guía"
             checked={form.usaCodigoGuia}
             onChange={(usaCodigoGuia) => updateForm({ usaCodigoGuia, codigo_guia: usaCodigoGuia ? form.codigo_guia : "" })}
-            hint="Disponible solo para las dos tareas de Revisión de Guía."
+            hint="Igual que en el registro del operante para esta tarea."
           />
           {form.usaCodigoGuia ? (
             <TextInput
@@ -693,6 +744,8 @@ function resolveGroupTaskMode(task) {
       requiresGuideCode: false,
       requiresTime: false,
       requiresLote: false,
+      requiresBrand: false,
+      requiresStore: false,
       completedOnly: false
     };
   }
@@ -710,6 +763,11 @@ function resolveGroupTaskMode(task) {
       requiresGuideCode: taskUsesGuideBreakdown(task),
       requiresTime: true,
       requiresLote: taskUsesLote(task),
+      // Las mismas tareas por tiempo piden aqui los mismos datos que ya le
+      // pide el operante para esa tarea: marca en Etiquetado, tienda en
+      // Picking/Visita de tienda.
+      requiresBrand: taskUsesBrandsByDefault(task),
+      requiresStore: taskUsesStore(task),
       completedOnly: false
     };
   }
@@ -750,6 +808,8 @@ function modePills(mode) {
   if (mode.requiresTime) pills.push("Tiempo");
   if (mode.requiresGuideCode) pills.push("Codigo guia");
   if (mode.requiresLote) pills.push("Lote");
+  if (mode.requiresBrand) pills.push("Marca");
+  if (mode.requiresStore) pills.push("Tienda");
   return pills.length ? pills : ["Registro"];
 }
 

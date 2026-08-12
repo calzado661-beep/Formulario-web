@@ -11,7 +11,7 @@ create table if not exists public.registros_tareas (
   turno varchar,
   dato_extra text,
   observacion text,
-  puntos_obtenidos numeric not null default 0,
+  puntaje numeric not null default 0,
   created_at timestamptz not null default now()
 );
 
@@ -23,7 +23,7 @@ alter table public.registros_tareas
   add column if not exists turno varchar,
   add column if not exists dato_extra text,
   add column if not exists observacion text,
-  add column if not exists puntos_obtenidos numeric not null default 0,
+  add column if not exists puntaje numeric not null default 0,
   add column if not exists created_at timestamptz not null default now();
 
 alter table public.registro_actividades
@@ -48,7 +48,7 @@ select
   rt.turno,
   rt.dato_extra,
   rt.observacion,
-  rt.puntos_obtenidos
+  rt.puntaje
 from public.registros_tareas rt
 left join public.usuarios u on u.id = rt.usuario_id
 left join public.tareas t on t.id = rt.tarea_id;
