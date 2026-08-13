@@ -96,6 +96,10 @@ async function requestLocalApi(path, options = {}, config = {}) {
   return null;
 }
 
+export async function loadFootwearDashboard({ signal } = {}) {
+  return requestLocalApi("/api/dashboard", { signal }, { requiredBackend: true });
+}
+
 function errorMessage(error) {
   return error?.message || String(error || "Error desconocido");
 }

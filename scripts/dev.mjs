@@ -32,7 +32,8 @@ async function backendIsCompatible() {
     const payload = await response.json();
     return Number(payload.apiVersion) >= 7 &&
       payload.features?.includes("attendance-early-exit") &&
-      payload.features?.includes("live-group-activities");
+      payload.features?.includes("live-group-activities") &&
+      payload.features?.includes("live-footwear-dashboard");
   } catch {
     return false;
   }

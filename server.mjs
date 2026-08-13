@@ -832,6 +832,171 @@ async function selectBrands() {
   return result.data || [];
 }
 
+function isMissingDashboardResource(error) {
+  return ["42P01", "42703", "PGRST204", "PGRST205"].includes(String(error?.code || ""))
+    || /could not find (?:the table|the .* column)|does not exist/i.test(String(error?.message || ""));
+}
+
+async function selectAllDashboardRows(tableName, { optional = false } = {}) {
+  const pageSize = 1000;
+  const rows = [];
+  for (let from = 0; ; from += pageSize) {
+    const result = await supabase
+      .from(tableName)
+      .select("*")
+      .range(from, from + pageSize - 1);
+    if (result.error) {
+      if (optional && isMissingDashboardResource(result.error)) return [];
+      throw result.error;
+    }
+    const page = result.data || [];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows;
+}
+
+function dashboardDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ""));
+  return match ? match[0] : null;
+}
+
+function dashboardPayrollByRole(users, years) {
+  const result = {};
+  for (const year of years) {
+    result[year] = Array.from({ length: 12 }, () => ({}));
+    for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
+      const monthStart = `${year}-${String(monthIndex + 1).padStart(2, "0")}-01`;
+      const monthEnd = `${year}-${String(monthIndex + 1).padStart(2, "0")}-31`;
+      for (const user of users) {
+        const salary = Number(user.sueldo || 0);
+        const joined = dashboardDate(user.fecha_ingreso) || dashboardDate(user.created_at);
+        const left = dashboardDate(user.fecha_salida);
+        if (!salary || (joined && joined > monthEnd) || (left && left < monthStart)) continue;
+        const role = normalizeRole(user.rol) || "otros";
+        result[year][monthIndex][role] = (result[year][monthIndex][role] || 0) + salary;
+      }
+    }
+  }
+  return result;
+}
+
+async function handleReadFootwearDashboard(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const taskTable = await getTaskTableName();
+    const [
+      users,
+      tasks,
+      brands,
+      workerRecords,
+      leaderRecords,
+      attendances,
+      incidents,
+      warnings,
+      movements,
+      trainings,
+      trainingAssignments
+    ] = await Promise.all([
+      selectAllDashboardRows("usuarios"),
+      selectAllDashboardRows(taskTable),
+      selectAllDashboardRows("marcas"),
+      selectAllDashboardRows("registros_tareas", { optional: true }),
+      selectAllDashboardRows("registros_tareas_jefe_equipo", { optional: true }),
+      selectAllDashboardRows("asistencias", { optional: true }),
+      selectAllDashboardRows("incidentes", { optional: true }),
+      selectAllDashboardRows("amonestaciones", { optional: true }),
+      selectAllDashboardRows("movimientos_personal", { optional: true }),
+      selectAllDashboardRows("capacitaciones", { optional: true }),
+      selectAllDashboardRows("usuario_capacitaciones", { optional: true })
+    ]);
+
+    const years = new Set([new Date().getFullYear()]);
+    const collectYear = (value) => {
+      const date = dashboardDate(value);
+      if (date) years.add(Number(date.slice(0, 4)));
+    };
+    workerRecords.forEach((row) => collectYear(row.fecha_registro || row.created_at));
+    leaderRecords.forEach((row) => collectYear(row.fecha_registro || row.created_at));
+    attendances.forEach((row) => collectYear(row.fecha || row.created_at));
+    incidents.forEach((row) => collectYear(row.created_at));
+    warnings.forEach((row) => collectYear(row.created_at));
+    movements.forEach((row) => collectYear(row.fecha_movimiento || row.created_at));
+    const dashboardYears = [...years].filter(Number.isFinite).sort((a, b) => a - b);
+
+    const safeWorkers = users.map((user) => ({
+      id: Number(user.id),
+      name: String(user.nombre || `Usuario ${user.id}`),
+      alias: String(user.alias || user.nombre || `Usuario ${user.id}`),
+      role: normalizeRole(user.rol) || "otros",
+      active: isActive(user.activo),
+      joinedAt: dashboardDate(user.fecha_ingreso || user.created_at),
+      leftAt: dashboardDate(user.fecha_salida),
+      birthday: dashboardDate(user.fecha_cumpleanos)
+    }));
+
+    const normalizeActivity = (row, source) => ({
+      id: `${source}-${row.id}`,
+      source,
+      workerId: Number(row.usuario_id || row.trabajador_id),
+      taskId: Number(row.tarea_id),
+      date: dashboardDate(row.fecha_registro || row.created_at),
+      quantity: Number(row.cantidad || 0),
+      minutes: Number(row.tiempo_minutos || 0),
+      brandId: Number(row.marca_id) || null,
+      points: Number(row.puntaje || 0)
+    });
+
+    response.setHeader("cache-control", "no-store, no-cache, must-revalidate");
+    sendJson(response, 200, {
+      generatedAt: new Date().toISOString(),
+      years: dashboardYears,
+      workers: safeWorkers,
+      tasks: tasks.map((task) => ({
+        id: Number(task.id),
+        name: taskTitle(task) || `Tarea ${task.id}`,
+        type: String(task.tipo_tarea || "General"),
+        active: isActive(task.activo),
+        requiresBrand: [true, 1, "1", "true", "si", "sí"].includes(task.requiere_marca),
+        requiresTime: [true, 1, "1", "true", "si", "sí"].includes(task.requiere_tiempo) || isGroupLeaderTimeTask(task)
+      })),
+      brands: brands.map((brand) => ({ id: Number(brand.id), name: String(brand.nombre || `Marca ${brand.id}`) })),
+      activities: [
+        ...workerRecords.map((row) => normalizeActivity(row, "operante")),
+        ...leaderRecords.map((row) => normalizeActivity(row, "jefe-equipo"))
+      ].filter((row) => row.workerId && row.taskId && row.date),
+      attendances: attendances.map((row) => ({
+        id: Number(row.id), workerId: Number(row.usuario_id), date: dashboardDate(row.fecha || row.created_at),
+        state: String(row.estado || "AUSENTE").toUpperCase(), earlyExit: Boolean(row.retiro_anticipado)
+      })).filter((row) => row.workerId && row.date),
+      incidents: incidents.map((row) => ({
+        id: Number(row.id), workerId: Number(row.usuario_id), taskId: Number(row.tarea_id),
+        taskName: String(row.tarea_nombre || ""), errorType: String(row.tipo_error || "Sin tipo"),
+        shift: /extra/i.test(String(row.turno || "")) ? "extra" : "regular", date: dashboardDate(row.created_at)
+      })).filter((row) => row.date),
+      warnings: warnings.map((row) => ({ id: Number(row.id), workerId: Number(row.usuario_id), date: dashboardDate(row.created_at) })),
+      movements: movements.map((row) => ({
+        id: Number(row.id), workerId: Number(row.usuario_id), type: String(row.tipo_movimiento || ""),
+        reason: String(row.motivo || "Sin especificar"), date: dashboardDate(row.fecha_movimiento || row.created_at)
+      })).filter((row) => row.date),
+      trainings: trainings.map((row) => ({
+        id: Number(row.id), code: String(row.id_curso || row.id),
+        course: String(row.nombre_curso || row.curso || `Capacitacion ${row.id}`),
+        competence: String(row.competencias || row.competencia || "General"),
+        hours: Number(row.nro_horas ?? row.numero_horas ?? 0)
+      })),
+      trainingAssignments: trainingAssignments.map((row) => ({
+        id: Number(row.id), workerId: Number(row.usuario_id),
+        trainingId: Number(row.capacitacion_id || row.curso_id),
+        state: String(row.estado || (row.completado ? "finalizado" : "pendiente")).toLowerCase()
+      })),
+      payrollByRole: dashboardPayrollByRole(users, dashboardYears)
+    });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo cargar la informacion del dashboard." });
+  }
+}
+
 function isGroupLeaderTimeTask(task) {
   const timeTasks = new Set([
     "etiquetado",
@@ -3055,7 +3220,8 @@ export async function handleRequest(request, response, { serveFiles = true } = {
         "activity-report-shifts",
         "activity-report-schedules",
         "attendance-early-exit",
-        "live-group-activities"
+        "live-group-activities",
+        "live-footwear-dashboard"
       ]
     });
     return;
@@ -3078,6 +3244,11 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (request.url?.startsWith("/api/login") && request.method === "POST") {
     await handleLogin(request, response);
+    return;
+  }
+
+  if (/^\/api\/dashboard\/?$/.test(apiPath) && request.method === "GET") {
+    await handleReadFootwearDashboard(request, response);
     return;
   }
 

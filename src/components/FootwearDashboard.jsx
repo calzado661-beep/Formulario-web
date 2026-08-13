@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { loadFootwearDashboard } from "../lib/repository";
 import "../footwear-dashboard.css";
 
 const ACTIVITY_KPIS = [
@@ -371,6 +372,14 @@ function SearchIcon() {
   );
 }
 
+function RefreshIcon() {
+  return (
+    <svg className="pbi-button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" />
+    </svg>
+  );
+}
+
 function normalizeSearch(value) {
   return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es");
 }
@@ -388,9 +397,10 @@ function toggleVisibleSeries(current, key) {
 
 const SLICER_OPEN_EVENT = "pbi:slicer-open";
 
-function availableDaysForMonth(years, monthNumber) {
-  const effectiveYears = years.length ? years : [2025, 2026];
-  return [...new Set(effectiveYears.flatMap((year) => DATE_DAYS_BY_YEAR[year]?.[monthNumber] || []))].sort((a, b) => a - b);
+function availableDaysForMonth(years, monthNumber, dateDaysByYear = DATE_DAYS_BY_YEAR) {
+  const availableYears = Object.keys(dateDaysByYear).map(Number);
+  const effectiveYears = years.length ? years : availableYears;
+  return [...new Set(effectiveYears.flatMap((year) => dateDaysByYear[year]?.[monthNumber] || []))].sort((a, b) => a - b);
 }
 
 function announceOpenSlicer(element) {
@@ -489,7 +499,7 @@ function MultiSlicer({ id, label, options, selected, onChange, allLabel = "Todas
   );
 }
 
-function DateHierarchySlicer({ selected, onChange, years }) {
+function DateHierarchySlicer({ selected, onChange, years, dateDaysByYear }) {
   const detailsRef = useRef(null);
   const effectiveYears = years.length ? years : [2025, 2026];
   const yearKey = effectiveYears.join("|");
@@ -501,7 +511,7 @@ function DateHierarchySlicer({ selected, onChange, years }) {
       : `${selectedMonths.length} meses seleccionados`;
 
   function daysForMonth(monthNumber) {
-    return availableDaysForMonth(effectiveYears, monthNumber);
+    return availableDaysForMonth(effectiveYears, monthNumber, dateDaysByYear);
   }
 
   function toggleMonth(monthNumber) {
@@ -547,7 +557,7 @@ function DateHierarchySlicer({ selected, onChange, years }) {
       const next = {};
       Object.entries(current).forEach(([monthKey, selectedDays]) => {
         const monthNumber = Number(monthKey);
-        const availableDays = availableDaysForMonth(effectiveYears, monthNumber);
+        const availableDays = availableDaysForMonth(effectiveYears, monthNumber, dateDaysByYear);
         if (!availableDays.length) {
           changed = true;
           return;
@@ -563,7 +573,7 @@ function DateHierarchySlicer({ selected, onChange, years }) {
       });
       return changed ? next : current;
     });
-  }, [yearKey, onChange]);
+  }, [yearKey, onChange, dateDaysByYear]);
 
   return (
     <details
@@ -1150,7 +1160,7 @@ function TrainingProgressBars({ data, onSelect, selectedNames = [] }) {
       <div className="pbi-training-list">
         {data.map((item, index) => {
           const total = item.completed + item.pending;
-          const workerName = WORKERS.find((worker) => worker.id === item.workerId)?.name || item.name;
+          const workerName = item.workerName || item.name;
           const selected = selectedNames.includes(workerName);
           const dimmed = selectedNames.length > 0 && !selected;
           return (
@@ -1460,7 +1470,11 @@ function selectedLabel(options, values, fallback) {
 
 export default function FootwearDashboard() {
   const dashboardRef = useRef(null);
+  const dashboardRequestRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [dashboardData, setDashboardData] = useState(null);
+  const [dashboardError, setDashboardError] = useState("");
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedWorkerIds, setSelectedWorkerIds] = useState([]);
   const [selectedRoles, setSelectedRoles] = useState([]);
   const [selectedBrands, setSelectedBrands] = useState([]);
@@ -1470,6 +1484,45 @@ export default function FootwearDashboard() {
   const [selectedTaskTypes, setSelectedTaskTypes] = useState([]);
   const [movementYear, setMovementYear] = useState("");
   const [selectedMovementMonths, setSelectedMovementMonths] = useState([]);
+
+  const refreshDashboard = useCallback(async ({ silent = false } = {}) => {
+    dashboardRequestRef.current?.abort();
+    const controller = new AbortController();
+    dashboardRequestRef.current = controller;
+    if (!silent) setIsRefreshing(true);
+    try {
+      const payload = await loadFootwearDashboard({ signal: controller.signal });
+      setDashboardData(payload);
+      setDashboardError("");
+    } catch (error) {
+      if (error?.name !== "AbortError") setDashboardError(error.message || "No se pudo actualizar el dashboard.");
+    } finally {
+      if (dashboardRequestRef.current === controller) {
+        dashboardRequestRef.current = null;
+        setIsRefreshing(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshDashboard();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") refreshDashboard({ silent: true });
+    }, 30_000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refreshDashboard({ silent: true });
+    };
+    window.addEventListener("focus", refreshWhenVisible);
+    window.addEventListener("online", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      window.removeEventListener("online", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      dashboardRequestRef.current?.abort();
+    };
+  }, [refreshDashboard]);
 
   useEffect(() => {
     function handleFullscreenChange() {
@@ -1485,151 +1538,126 @@ export default function FootwearDashboard() {
     };
   }, []);
 
-  const effectiveYears = selectedYears.length ? selectedYears : [2025, 2026];
-  const workerOptions = useMemo(() => WORKERS.filter((worker) => !selectedRoles.length || selectedRoles.includes(worker.role)).map((worker) => ({
+  const WORKERS = useMemo(() => dashboardData?.workers || [], [dashboardData]);
+  const TASK_CATALOG = useMemo(() => (dashboardData?.tasks || []).map((task) => ({ ...task, shortName: task.name })), [dashboardData]);
+  const BRAND_NAMES = useMemo(() => (dashboardData?.brands || []).map((brand) => brand.name), [dashboardData]);
+  const dashboardYears = useMemo(() => dashboardData?.years || [], [dashboardData]);
+  const effectiveYears = selectedYears.length ? selectedYears : dashboardYears;
+  const workerById = useMemo(() => new Map(WORKERS.map((worker) => [worker.id, worker])), [WORKERS]);
+  const taskById = useMemo(() => new Map(TASK_CATALOG.map((task) => [task.id, task])), [TASK_CATALOG]);
+  const brandById = useMemo(() => new Map((dashboardData?.brands || []).map((brand) => [brand.id, brand.name])), [dashboardData]);
+
+  const dateDaysByYear = useMemo(() => {
+    const result = {};
+    const addDate = (date) => {
+      const [year, month, day] = String(date || "").split("-").map(Number);
+      if (!year || !month || !day) return;
+      result[year] ||= {};
+      result[year][month] ||= [];
+      if (!result[year][month].includes(day)) result[year][month].push(day);
+    };
+    [
+      ...(dashboardData?.activities || []), ...(dashboardData?.attendances || []),
+      ...(dashboardData?.incidents || []), ...(dashboardData?.warnings || []),
+      ...(dashboardData?.movements || [])
+    ].forEach((row) => addDate(row.date));
+    Object.values(result).forEach((months) => Object.values(months).forEach((days) => days.sort((a, b) => a - b)));
+    return result;
+  }, [dashboardData]);
+
+  function matchesDashboardDate(date) {
+    const [year, month, day] = String(date || "").split("-").map(Number);
+    if (!year || !effectiveYears.includes(year)) return false;
+    if (!Object.keys(dateParts).length) return true;
+    if (!Object.prototype.hasOwnProperty.call(dateParts, month)) return false;
+    return dateParts[month] === null || dateParts[month].includes(day);
+  }
+
+  function matchesWorker(workerId) {
+    const worker = workerById.get(Number(workerId));
+    return (!selectedWorkerIds.length || selectedWorkerIds.includes(Number(workerId)))
+      && (!selectedRoles.length || (worker && selectedRoles.includes(worker.role)));
+  }
+
+  const tasksAllowedByFilters = TASK_CATALOG.filter((task) => (
+    (!selectedTaskIds.length || selectedTaskIds.includes(task.id))
+    && (!selectedTaskTypes.length || selectedTaskTypes.includes(task.type))
+  ));
+  const allowedTaskIds = new Set(tasksAllowedByFilters.map((task) => task.id));
+  const visibleActivities = (dashboardData?.activities || []).filter((row) => (
+    matchesDashboardDate(row.date)
+    && matchesWorker(row.workerId)
+    && allowedTaskIds.has(row.taskId)
+    && (!selectedBrands.length || selectedBrands.includes(brandById.get(row.brandId)))
+  ));
+
+  const workerOptions = WORKERS.filter((worker) => !selectedRoles.length || selectedRoles.includes(worker.role)).map((worker) => ({
     value: worker.id,
     label: worker.name,
-    count: Math.round(workerPointsForPeriod(worker, selectedYears, dateParts))
-  })), [selectedRoles, selectedYears, dateParts]);
-  const roleOptions = useMemo(() => ROLE_OPTIONS.map((role) => ({ value: role.value, label: role.label, count: role.active })), []);
-  const brandOptions = useMemo(() => BRAND_NAMES.map((name) => ({
-    value: name,
-    label: name,
-    count: effectiveYears.reduce((total, year) => total + (BRAND_BY_YEAR[year]?.[name] || 0), 0)
-  })), [effectiveYears]);
-
-  const workersAllowedByFilters = useMemo(() => WORKERS.filter((worker) => (
-    (!selectedRoles.length || selectedRoles.includes(worker.role))
-    && (!selectedWorkerIds.length || selectedWorkerIds.includes(worker.id))
-  )), [selectedRoles, selectedWorkerIds]);
-
-  function workerMonthFactor(year, monthIndex) {
-    if (!selectedRoles.length && !selectedWorkerIds.length) return 1;
-    const denominator = WORKERS.reduce((total, worker) => total + worker.points[year][monthIndex], 0);
-    if (!denominator) return workersAllowedByFilters.length ? 1 : 0;
-    const numerator = workersAllowedByFilters.reduce((total, worker) => total + worker.points[year][monthIndex], 0);
-    return numerator / denominator;
-  }
-
-  const tasksAllowedByFilters = useMemo(() => TASK_CATALOG.filter((taskItem) => (
-    (!selectedTaskIds.length || selectedTaskIds.includes(taskItem.id))
-    && (!selectedTaskTypes.length || selectedTaskTypes.includes(taskItem.type))
-  )), [selectedTaskIds, selectedTaskTypes]);
-
-  const productionTaskRatio = useMemo(() => {
-    if (!selectedTaskIds.length && !selectedTaskTypes.length) return 1;
-    const total = TASK_CATALOG.reduce((sum, taskItem) => sum + effectiveYears.reduce((yearSum, year) => yearSum + (taskItem.yearly[year] || 0), 0), 0);
-    const visible = tasksAllowedByFilters.reduce((sum, taskItem) => sum + effectiveYears.reduce((yearSum, year) => yearSum + (taskItem.yearly[year] || 0), 0), 0);
-    return total ? visible / total : 0;
-  }, [selectedTaskIds, selectedTaskTypes, tasksAllowedByFilters, effectiveYears]);
-
-  const workerProduction = useMemo(() => workersAllowedByFilters.map((worker) => ({
+    count: (dashboardData?.activities || []).filter((row) => row.workerId === worker.id && matchesDashboardDate(row.date)).reduce((sum, row) => sum + row.points, 0)
+  }));
+  const ROLE_OPTIONS = [...WORKERS.reduce((roles, worker) => {
+    if (worker.active) roles.set(worker.role, (roles.get(worker.role) || 0) + 1);
+    return roles;
+  }, new Map()).entries()].map(([value, active]) => ({
+    value, active, label: value.replace(/\b\w/g, (letter) => letter.toUpperCase())
+  }));
+  const roleOptions = ROLE_OPTIONS.map((role) => ({ value: role.value, label: role.label, count: role.active }));
+  const brandOptions = BRAND_NAMES.map((name) => ({
+    value: name, label: name,
+    count: (dashboardData?.activities || []).filter((row) => brandById.get(row.brandId) === name && matchesDashboardDate(row.date)).length
+  }));
+  const workersAllowedByFilters = WORKERS.filter((worker) => matchesWorker(worker.id));
+  const workerProduction = workersAllowedByFilters.map((worker) => ({
     name: worker.name,
-    value: Math.round(workerPointsForPeriod(worker, selectedYears, dateParts) * productionTaskRatio)
-  })).filter((item) => item.value > 0 || selectedWorkerIds.length), [workersAllowedByFilters, selectedYears, dateParts, selectedWorkerIds, productionTaskRatio]);
-  const filteredTopWorkers = useMemo(
-    () => [...workerProduction].sort((a, b) => b.value - a.value).slice(0, 5),
-    [workerProduction]
-  );
-  const filteredBottomWorkers = useMemo(() => (
-    [...workerProduction].sort((a, b) => a.value - b.value).slice(0, 5).sort((a, b) => b.value - a.value)
-  ), [workerProduction]);
-
-  const filteredMonthlyTasks = useMemo(() => MONTHLY_TASKS.map((month, monthIndex) => {
-    const value = effectiveYears.reduce((total, year) => {
-      const base = selectedTaskIds.length || selectedTaskTypes.length
-        ? tasksAllowedByFilters.reduce((taskTotal, taskItem) => taskTotal + taskMonthlySeries(taskItem, year)[monthIndex], 0)
-        : YEAR_MONTHLY_TASKS[year][monthIndex];
-      return total + base * workerMonthFactor(year, monthIndex) * monthSelectionFactor(dateParts, monthIndex + 1, effectiveYears);
-    }, 0);
-    return { ...month, value: Math.round(value) };
-  }).filter((month, monthIndex) => !Object.keys(dateParts).length || monthSelectionFactor(dateParts, monthIndex + 1, effectiveYears) > 0), [
-    effectiveYears,
-    selectedTaskIds,
-    selectedTaskTypes,
-    tasksAllowedByFilters,
-    workersAllowedByFilters,
-    dateParts
-  ]);
-
-  const dateRatio = useMemo(() => {
-    const total = effectiveYears.reduce((sum, year) => sum + YEAR_MONTHLY_TASKS[year].reduce((a, b) => a + b, 0), 0);
-    const visible = effectiveYears.reduce((sum, year) => sum + YEAR_MONTHLY_TASKS[year].reduce((yearSum, value, monthIndex) => (
-      yearSum + value * monthSelectionFactor(dateParts, monthIndex + 1, effectiveYears)
-    ), 0), 0);
-    return total ? visible / total : 0;
-  }, [effectiveYears, dateParts]);
-
-  const workerRatio = useMemo(() => {
-    if (!selectedRoles.length && !selectedWorkerIds.length) return 1;
-    const all = WORKERS.reduce((total, worker) => total + workerPointsForPeriod(worker, selectedYears, dateParts), 0);
-    const selected = workersAllowedByFilters.reduce((total, worker) => total + workerPointsForPeriod(worker, selectedYears, dateParts), 0);
-    return all ? selected / all : 0;
-  }, [selectedRoles, selectedWorkerIds, workersAllowedByFilters, selectedYears, dateParts]);
-
-  function taskValueForCurrentFilters(taskItem) {
-    let value = effectiveYears.reduce((total, year) => total + taskMonthlySeries(taskItem, year).reduce((yearTotal, monthValue, monthIndex) => (
-      yearTotal + monthValue * monthSelectionFactor(dateParts, monthIndex + 1, effectiveYears) * workerMonthFactor(year, monthIndex)
-    ), 0), 0);
-    if (selectedBrands.length) {
-      value = taskItem.id === 3
-        ? effectiveYears.reduce((total, year) => total + selectedBrands.reduce((brandTotal, brandName) => brandTotal + (BRAND_BY_YEAR[year]?.[brandName] || 0), 0), 0) * dateRatio * workerRatio
-        : 0;
-    }
-    return Math.round(value);
-  }
-
-  const allFilteredTaskRows = tasksAllowedByFilters.map((taskItem) => ({
-    id: taskItem.id,
-    name: taskItem.shortName,
-    value: taskValueForCurrentFilters(taskItem),
-    type: taskItem.type
+    value: visibleActivities.filter((row) => row.workerId === worker.id).reduce((sum, row) => sum + row.points, 0)
+  })).filter((item) => item.value > 0 || selectedWorkerIds.length);
+  const filteredTopWorkers = [...workerProduction].sort((a, b) => b.value - a.value).slice(0, 5);
+  const filteredBottomWorkers = [...workerProduction].sort((a, b) => a.value - b.value).slice(0, 5).sort((a, b) => b.value - a.value);
+  const filteredMonthlyTasks = MONTHLY_TASKS.map((month, monthIndex) => ({
+    ...month,
+    value: visibleActivities.filter((row) => Number(row.date.slice(5, 7)) === monthIndex + 1).length
+  })).filter((month, monthIndex) => !Object.keys(dateParts).length || Object.prototype.hasOwnProperty.call(dateParts, monthIndex + 1));
+  const allFilteredTaskRows = tasksAllowedByFilters.map((task) => ({
+    id: task.id, name: task.shortName, type: task.type,
+    value: visibleActivities.filter((row) => row.taskId === task.id).length
   })).filter((item) => item.value > 0).sort((a, b) => b.value - a.value);
   const filteredTaskVolume = (!selectedTaskIds.length && !selectedTaskTypes.length && !selectedBrands.length)
-    ? allFilteredTaskRows.slice(0, 10)
-    : allFilteredTaskRows;
-
-  const filteredBrands = useMemo(() => {
-    if ((selectedTaskIds.length || selectedTaskTypes.length) && !tasksAllowedByFilters.some((taskItem) => taskItem.id === 3)) return [];
-    return BRAND_PAIRS.map((brandItem) => ({
-      ...brandItem,
-      value: Math.round(effectiveYears.reduce((total, year) => total + (BRAND_BY_YEAR[year]?.[brandItem.name] || 0), 0) * dateRatio * workerRatio)
-    })).filter((item) => item.value > 0 && (!selectedBrands.length || selectedBrands.includes(item.name)));
-  }, [effectiveYears, selectedBrands, selectedTaskIds, selectedTaskTypes, tasksAllowedByFilters, dateRatio, workerRatio]);
-
-  const selectedTaskTotal = filteredMonthlyTasks.reduce((sum, item) => sum + item.value, 0);
+    ? allFilteredTaskRows.slice(0, 10) : allFilteredTaskRows;
+  const filteredBrands = [...visibleActivities.reduce((totals, row) => {
+    const name = brandById.get(row.brandId);
+    if (name) totals.set(name, (totals.get(name) || 0) + Math.max(0, row.quantity || 0));
+    return totals;
+  }, new Map()).entries()].map(([name, value]) => ({ name, value })).filter((item) => item.value > 0).sort((a, b) => b.value - a.value);
+  const selectedTaskTotal = visibleActivities.length;
   const taskVolumeTotal = filteredTaskVolume.reduce((sum, item) => sum + item.value, 0);
-  const filteredActivityKpis = ACTIVITY_KPIS.map((item) => {
-    const taskItem = TASK_CATALOG.find((taskOption) => taskOption.shortName === item.label || taskOption.name.startsWith(item.label));
-    const compatible = !taskItem || tasksAllowedByFilters.some((candidate) => candidate.id === taskItem.id);
-    const ratio = compatible && taskItem ? Math.min(1, taskValueForCurrentFilters(taskItem) / Math.max(taskItem.total, 1)) : compatible ? 1 : 0;
-    return { ...item, daily: Math.round(item.daily * ratio), hourly: Math.round(item.hourly * ratio) };
+  const filteredActivityKpis = TASK_CATALOG.filter((task) => task.requiresTime && allowedTaskIds.has(task.id)).slice(0, 5).map((task) => {
+    const rows = visibleActivities.filter((row) => row.taskId === task.id);
+    const quantity = rows.reduce((sum, row) => sum + row.quantity, 0);
+    const days = new Set(rows.map((row) => row.date)).size;
+    const timedRows = rows.filter((row) => row.minutes > 0);
+    const hours = timedRows.reduce((sum, row) => sum + row.minutes, 0) / 60;
+    const timedQuantity = timedRows.reduce((sum, row) => sum + row.quantity, 0);
+    return { label: task.shortName, daily: days ? Math.round(quantity / days) : 0, hourly: hours ? Math.round(timedQuantity / hours) : 0 };
   });
 
-  const selectedWorkerNames = selectedWorkerIds.map((id) => WORKERS.find((worker) => worker.id === id)?.name).filter(Boolean);
-  const visibleIncidentRecords = INCIDENT_RECORDS.filter((incident) => {
-    const worker = WORKERS.find((candidate) => candidate.id === incident.workerId);
-    const role = worker?.role || "operante";
-    const dateMatches = !Object.keys(dateParts).length
-      || (Object.prototype.hasOwnProperty.call(dateParts, 7) && (dateParts[7] === null || dateParts[7].includes(incident.day)));
-    return effectiveYears.includes(2026)
-      && dateMatches
-      && tasksAllowedByFilters.some((taskItem) => taskItem.id === incident.taskId)
-      && (!selectedWorkerIds.length || selectedWorkerIds.includes(incident.workerId))
-      && (!selectedRoles.length || selectedRoles.includes(role));
-  });
+  const selectedWorkerNames = selectedWorkerIds.map((id) => workerById.get(id)?.name).filter(Boolean);
+  const visibleIncidentRecords = (dashboardData?.incidents || []).filter((incident) => (
+    matchesDashboardDate(incident.date) && matchesWorker(incident.workerId)
+    && (!incident.taskId || allowedTaskIds.has(incident.taskId))
+  ));
   const incidentCountByTask = visibleIncidentRecords.reduce((counts, incident) => {
     counts.set(incident.taskId, (counts.get(incident.taskId) || 0) + 1);
     return counts;
   }, new Map());
   const filteredErrorsByTask = [...incidentCountByTask.entries()].map(([taskId, value]) => ({
     id: taskId,
-    name: TASK_CATALOG.find((taskItem) => taskItem.id === taskId)?.shortName || `Tarea ${taskId}`,
+    name: taskById.get(taskId)?.shortName || `Tarea ${taskId}`,
     value
   })).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
   const filteredErrorRates = filteredErrorsByTask.map((item) => {
-    const taskItem = TASK_CATALOG.find((candidate) => candidate.id === item.id);
-    const denominator = taskItem ? taskValueForCurrentFilters(taskItem) : 0;
+    const taskItem = taskById.get(item.id);
+    const denominator = visibleActivities.filter((row) => row.taskId === item.id).length;
     return {
       ...item,
       name: taskItem?.name || item.name,
@@ -1638,94 +1666,103 @@ export default function FootwearDashboard() {
     };
   }).filter((item) => item.value > 0).sort((a, b) => b.value - a.value);
   const filteredErrorsByWorker = [...visibleIncidentRecords.reduce((counts, incident) => {
-    counts.set(incident.workerAlias, (counts.get(incident.workerAlias) || 0) + 1);
+    const workerName = workerById.get(incident.workerId)?.name || "Sin trabajador";
+    counts.set(workerName, (counts.get(workerName) || 0) + 1);
     return counts;
-  }, new Map()).entries()].map(([name, value]) => ({ name, value, workerName: aliasToWorkerName(name) })).sort((a, b) => b.value - a.value);
-  const filteredErrorsByType = ["Contenido", "Liberado"].map((name) => ({
+  }, new Map()).entries()].map(([name, value]) => ({ name, value, workerName: name })).sort((a, b) => b.value - a.value);
+  const errorTypes = [...new Set(visibleIncidentRecords.map((incident) => incident.errorType))];
+  const filteredErrorsByType = errorTypes.map((name) => ({
     name,
     primary: visibleIncidentRecords.filter((incident) => incident.errorType === name && incident.shift === "regular").length,
     secondary: visibleIncidentRecords.filter((incident) => incident.errorType === name && incident.shift === "extra").length
   })).filter((item) => item.primary + item.secondary > 0);
-  function attendanceForSelectedDate(item) {
-    if (!Object.keys(dateParts).length) return item;
-    const augustPunctual = item.augustPunctual || 0;
-    const marchFactor = Object.prototype.hasOwnProperty.call(dateParts, 3)
-      ? dateParts[3] === null ? 1 : dateParts[3].length / 31
-      : 0;
-    const augustFactor = Object.prototype.hasOwnProperty.call(dateParts, 8)
-      ? dateParts[8] === null || dateParts[8].includes(4) ? 1 : 0
-      : 0;
-    return {
-      ...item,
-      absent: Math.round(item.absent * marchFactor),
-      punctual: Math.round((item.punctual - augustPunctual) * marchFactor + augustPunctual * augustFactor),
-      late: Math.round(item.late * marchFactor)
-    };
-  }
-
-  const filteredAttendance = ATTENDANCE_BY_WORKER.map((item) => ({ ...attendanceForSelectedDate(item), workerName: aliasToWorkerName(item.name) })).filter((item) => (
-    effectiveYears.includes(2026)
-    && (!selectedWorkerIds.length || selectedWorkerNames.includes(item.workerName))
-    && (!selectedRoles.length || selectedRoles.includes(WORKERS.find((worker) => worker.name === item.workerName)?.role))
-    && item.absent + item.punctual + item.late > 0
-  ));
-  const filteredTrainingProgress = TRAINING_PROGRESS_BY_WORKER.filter((item) => {
-    const worker = WORKERS.find((candidate) => candidate.id === item.workerId);
-    return worker
-      && (!selectedWorkerIds.length || selectedWorkerIds.includes(item.workerId))
-      && (!selectedRoles.length || selectedRoles.includes(worker.role));
-  });
+  const filteredAttendance = [...(dashboardData?.attendances || []).filter((row) => matchesDashboardDate(row.date) && matchesWorker(row.workerId)).reduce((totals, row) => {
+    const worker = workerById.get(row.workerId);
+    if (!worker) return totals;
+    const item = totals.get(row.workerId) || { name: worker.alias, workerName: worker.name, workerId: worker.id, absent: 0, punctual: 0, late: 0 };
+    if (row.state === "PUNTUAL") item.punctual += 1;
+    else if (row.state === "TARDANZA") item.late += 1;
+    else item.absent += 1;
+    totals.set(row.workerId, item);
+    return totals;
+  }, new Map()).values()];
+  const trainingById = new Map((dashboardData?.trainings || []).map((course) => [course.id, course]));
+  const visibleAssignments = (dashboardData?.trainingAssignments || []).filter((row) => matchesWorker(row.workerId));
+  const filteredTrainingProgress = [...visibleAssignments.reduce((totals, assignment) => {
+    const worker = workerById.get(assignment.workerId);
+    if (!worker) return totals;
+    const item = totals.get(worker.id) || { workerId: worker.id, name: worker.alias, workerName: worker.name, completed: 0, pending: 0 };
+    if (["finalizado", "completado"].includes(assignment.state)) item.completed += 1;
+    else item.pending += 1;
+    totals.set(worker.id, item);
+    return totals;
+  }, new Map()).values()];
   const trainingCompleted = filteredTrainingProgress.reduce((sum, item) => sum + item.completed, 0);
   const trainingTotal = filteredTrainingProgress.reduce((sum, item) => sum + item.completed + item.pending, 0);
-  const filteredTrainingHistory = filteredTrainingProgress.flatMap((item) => TRAINING_COURSES.map((course) => ({
-    ...course,
-    id: `${item.workerId}-${course.id}`,
-    worker: item.name,
-    status: PENDING_TRAINING_BY_WORKER[item.workerId].includes(course.id) ? "Pendiente" : "Completado"
-  })));
-  const unmappedAttendanceAbsent = !selectedWorkerIds.length && !selectedRoles.length && effectiveYears.includes(2026)
-    ? !Object.keys(dateParts).length
-      ? 19
-      : Object.prototype.hasOwnProperty.call(dateParts, 3)
-        ? Math.round(19 * (dateParts[3] === null ? 1 : dateParts[3].length / 31))
-        : 0
-    : 0;
+  const filteredTrainingHistory = visibleAssignments.map((assignment) => {
+    const course = trainingById.get(assignment.trainingId) || {};
+    const worker = workerById.get(assignment.workerId);
+    return { ...course, id: assignment.id, worker: worker?.alias || worker?.name || "Sin trabajador", status: ["finalizado", "completado"].includes(assignment.state) ? "Completado" : assignment.state === "en_curso" ? "En curso" : "Pendiente" };
+  });
   const attendanceTotals = filteredAttendance.reduce((totals, item) => ({
     absent: totals.absent + item.absent,
     punctual: totals.punctual + item.punctual,
     late: totals.late + item.late
-  }), { absent: unmappedAttendanceAbsent, punctual: 0, late: 0 });
+  }), { absent: 0, punctual: 0, late: 0 });
   const attendanceTotal = attendanceTotals.absent + attendanceTotals.punctual + attendanceTotals.late;
   const filteredIndicators = [
-    { ...INDICATORS[0], value: `${selectedTaskTotal ? ((visibleIncidentRecords.length / selectedTaskTotal) * 100).toFixed(2) : "0.00"}%` },
-    { ...INDICATORS[1], value: `${attendanceTotal ? ((attendanceTotals.absent / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
-    { ...INDICATORS[2], value: `${attendanceTotal ? ((attendanceTotals.late / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
-    INDICATORS[3]
+    { label: "Margen de error", detail: "Incidentes / registros", value: `${selectedTaskTotal ? ((visibleIncidentRecords.length / selectedTaskTotal) * 100).toFixed(2) : "0.00"}%` },
+    { label: "Ausentismo", detail: "Registro de asistencias", value: `${attendanceTotal ? ((attendanceTotals.absent / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
+    { label: "Tardanza", detail: "Llegadas fuera de hora", value: `${attendanceTotal ? ((attendanceTotals.late / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
+    { label: "Permanencia promedio", detail: "Personal activo", suffix: "meses", value: (() => {
+      const active = workersAllowedByFilters.filter((worker) => worker.active && worker.joinedAt);
+      if (!active.length) return "0.00";
+      return (active.reduce((sum, worker) => sum + Math.max(0, (Date.now() - new Date(`${worker.joinedAt}T00:00:00`).getTime()) / 2_629_746_000), 0) / active.length).toFixed(2);
+    })() }
   ];
-  const filteredWarnings = WARNINGS.map((item) => ({ ...item, workerName: aliasToWorkerName(item.alias) })).filter((item) => (
-    (!selectedWorkerIds.length || selectedWorkerNames.includes(item.workerName))
-    && (!selectedRoles.length || selectedRoles.includes(WORKERS.find((worker) => worker.name === item.workerName)?.role))
-  ));
+  const filteredWarnings = [...(dashboardData?.warnings || []).filter((row) => matchesDashboardDate(row.date) && matchesWorker(row.workerId)).reduce((totals, row) => {
+    const worker = workerById.get(row.workerId);
+    const alias = worker?.alias || worker?.name || "Sin trabajador";
+    totals.set(alias, { alias, workerName: worker?.name || alias, value: (totals.get(alias)?.value || 0) + 1 });
+    return totals;
+  }, new Map()).values()].sort((a, b) => b.value - a.value);
 
-  const movementYears = movementYear ? [Number(movementYear)] : [2023, 2024, 2025, 2026];
+  const movementYears = movementYear ? [Number(movementYear)] : dashboardYears;
+  const visibleMovements = (dashboardData?.movements || []).filter((row) => movementYears.includes(Number(row.date.slice(0, 4))) && matchesWorker(row.workerId));
   const filteredRotation = MONTHLY_TASKS.map((month, monthIndex) => ({
     name: month.label,
-    primary: movementYears.reduce((total, year) => total + MOVEMENT_BY_YEAR[year][monthIndex][0], 0),
-    secondary: movementYears.reduce((total, year) => total + MOVEMENT_BY_YEAR[year][monthIndex][1], 0)
+    primary: visibleMovements.filter((row) => Number(row.date.slice(5, 7)) === monthIndex + 1 && /ingreso/i.test(row.type)).length,
+    secondary: visibleMovements.filter((row) => Number(row.date.slice(5, 7)) === monthIndex + 1 && /salida/i.test(row.type)).length
   }));
+  const EXIT_REASONS = [...visibleMovements.filter((row) => /salida/i.test(row.type) && (!selectedMovementMonths.length || selectedMovementMonths.includes(MONTHLY_TASKS[Number(row.date.slice(5, 7)) - 1].label))).reduce((totals, row) => {
+    const name = row.reason || "Sin especificar";
+    totals.set(name, (totals.get(name) || 0) + 1);
+    return totals;
+  }, new Map()).entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
 
-  const roleHeadcount = selectedRoles.length
-    ? ROLE_OPTIONS.filter((role) => selectedRoles.includes(role.value)).reduce((total, role) => total + role.active, 0)
-    : 15;
-  const payrollFactor = roleHeadcount / 15;
-  const filteredPayroll = PAYROLL.map((item) => ({ ...item, value: Math.round(item.value * payrollFactor) }));
+  const payrollYear = selectedYears.length === 1 ? selectedYears[0] : dashboardYears.includes(new Date().getFullYear()) ? new Date().getFullYear() : dashboardYears.at(-1);
+  const filteredPayroll = MONTHLY_TASKS.map((month, monthIndex) => ({
+    label: month.label,
+    value: Object.entries(dashboardData?.payrollByRole?.[payrollYear]?.[monthIndex] || {}).reduce((sum, [role, value]) => (
+      !selectedRoles.length || selectedRoles.includes(role) ? sum + Number(value || 0) : sum
+    ), 0)
+  }));
   const payrollTotal = filteredPayroll.reduce((sum, item) => sum + item.value, 0);
-
+  const activeWorkers = workersAllowedByFilters.filter((worker) => worker.active);
   const personnelKpis = [
-    { label: "Total Trabajadores", value: selectedWorkerIds.length ? workersAllowedByFilters.length : roleHeadcount },
-    { label: "Total Operantes", value: selectedWorkerIds.length ? workersAllowedByFilters.length : (selectedRoles.length ? ROLE_OPTIONS.filter((role) => selectedRoles.includes(role.value) && ["operante", "jefe de equipo"].includes(role.value)).reduce((total, role) => total + role.active, 0) : 11) },
-    { label: "Total Administrativo", value: selectedWorkerIds.length ? 0 : (selectedRoles.length ? ROLE_OPTIONS.filter((role) => selectedRoles.includes(role.value) && ["administrador", "otros"].includes(role.value)).reduce((total, role) => total + role.active, 0) : 4) }
+    { label: "Total Trabajadores", value: activeWorkers.length },
+    { label: "Total Operantes", value: activeWorkers.filter((worker) => ["operante", "jefe de equipo"].includes(worker.role)).length },
+    { label: "Total Administrativo", value: activeWorkers.filter((worker) => !["operante", "jefe de equipo"].includes(worker.role)).length }
   ];
+  const nextBirthday = (() => {
+    const today = new Date();
+    return WORKERS.filter((worker) => worker.active && worker.birthday).map((worker) => {
+      const [, month, day] = worker.birthday.split("-").map(Number);
+      let date = new Date(today.getFullYear(), month - 1, day);
+      if (date < new Date(today.getFullYear(), today.getMonth(), today.getDate())) date = new Date(today.getFullYear() + 1, month - 1, day);
+      return { ...worker, nextBirthday: date };
+    }).sort((a, b) => a.nextBirthday - b.nextBirthday)[0];
+  })();
 
   function closeOpenSlicers() {
     dashboardRef.current?.querySelectorAll("details.pbi-slicer[open]").forEach((element) => {
@@ -1825,7 +1862,10 @@ export default function FootwearDashboard() {
   ].filter(Boolean);
   const filterSummary = activeFilters.length
     ? `${activeFilters.length} filtros activos · ${numberFormatter.format(selectedTaskTotal)} registros visibles`
-    : "Todos los trabajadores · Todos los cargos · 2025–2026 · Todas las fechas";
+    : `Todos los trabajadores · Todos los cargos · ${dashboardYears.join("–") || "Sin período"} · Todas las fechas`;
+  const updatedAtLabel = dashboardData?.generatedAt
+    ? new Intl.DateTimeFormat("es-PE", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(dashboardData.generatedAt))
+    : "Sin sincronizar";
 
   return (
     <section
@@ -1840,6 +1880,10 @@ export default function FootwearDashboard() {
             <span className="pbi-filter-summary" aria-live="polite">{filterSummary}</span>
           </div>
           <div className="pbi-actions">
+            <button className={`pbi-icon-btn${isRefreshing ? " is-loading" : ""}`} type="button" onClick={() => refreshDashboard()} disabled={isRefreshing} aria-label="Actualizar datos desde Supabase">
+              <RefreshIcon />
+              <span>{isRefreshing ? "Actualizando" : "Actualizar"}</span>
+            </button>
             <button className="pbi-icon-btn" type="button" onClick={resetFilters} aria-label="Restablecer todos los filtros">
               <ResetIcon />
               <span>Restablecer</span>
@@ -1867,9 +1911,17 @@ export default function FootwearDashboard() {
           </div>
           <div className="pbi-header-status">
             <span className="pbi-status-dot" aria-hidden="true" />
-            <span>Datos consolidados</span>
+            <span>{dashboardData ? `Supabase · actualizado ${updatedAtLabel}` : "Conectando con Supabase"}</span>
           </div>
         </header>
+
+        {dashboardError ? (
+          <div className="pbi-data-alert" role="alert">
+            <strong>No se pudo sincronizar.</strong>
+            <span>{dashboardError}</span>
+            <button type="button" onClick={() => refreshDashboard()}>Reintentar</button>
+          </div>
+        ) : null}
 
         <main className="pbi-main">
           <aside className="pbi-sidebar" aria-label="Filtros del dashboard">
@@ -1886,7 +1938,7 @@ export default function FootwearDashboard() {
             <fieldset className="pbi-filter pbi-filter--year">
               <legend className="pbi-filter-label">Año</legend>
               <div className="pbi-period" role="group" aria-label="Seleccionar uno o varios años" data-testid="slicer-years">
-                {[2025, 2026].map((item) => (
+                {dashboardYears.map((item) => (
                   <button
                     className={`pbi-period-btn${selectedYears.includes(item) ? " pbi-period-btn--active" : ""}`}
                     type="button"
@@ -1900,7 +1952,7 @@ export default function FootwearDashboard() {
               </div>
             </fieldset>
 
-            <DateHierarchySlicer selected={dateParts} onChange={setDateParts} years={selectedYears} />
+            <DateHierarchySlicer selected={dateParts} onChange={setDateParts} years={selectedYears.length ? selectedYears : dashboardYears} dateDaysByYear={dateDaysByYear} />
 
             <fieldset className="pbi-filter pbi-filter--tasks">
               <legend className="pbi-filter-label">Tareas</legend>
@@ -1967,8 +2019,8 @@ export default function FootwearDashboard() {
               {filteredIndicators.map((item) => <IndicatorKpi key={item.label} {...item} />)}
               <article className="pbi-kpi pbi-kpi--birthday">
                 <span className="pbi-kpi-label">Próximo Cumpleaños</span>
-                <strong className="pbi-birthday-name">Marco Alanoca</strong>
-                <span className="pbi-birthday-date">12 de agosto</span>
+                <strong className="pbi-birthday-name">{nextBirthday?.name || "Sin fecha registrada"}</strong>
+                <span className="pbi-birthday-date">{nextBirthday ? new Intl.DateTimeFormat("es-PE", { day: "numeric", month: "long" }).format(nextBirthday.nextBirthday) : "—"}</span>
               </article>
             </section>
 
@@ -2081,7 +2133,7 @@ export default function FootwearDashboard() {
                     <label htmlFor="pbi-movement-year">Período de rotación</label>
                     <select id="pbi-movement-year" value={movementYear} onChange={(event) => setMovementYear(event.target.value)} data-testid="movement-year-filter">
                       <option value="">Todos los años</option>
-                      {[2023, 2024, 2025, 2026].map((year) => <option key={year} value={year}>{year}</option>)}
+                      {dashboardYears.map((year) => <option key={year} value={year}>{year}</option>)}
                     </select>
                   </div>
                   <ComparisonBars
@@ -2113,7 +2165,7 @@ export default function FootwearDashboard() {
                 <Card
                   id="pbi-warnings"
                   title="Amonestaciones por Trabajador"
-                  meta="9 amonestaciones"
+                  meta={`${filteredWarnings.reduce((sum, item) => sum + item.value, 0)} amonestaciones`}
                   className="pbi-card--table pbi-card--span-4"
                 >
                   <DataTable
@@ -2294,7 +2346,7 @@ export default function FootwearDashboard() {
 
         <footer className="pbi-footer">
           <span>Dashboard Calzado</span>
-          <span>Fuente: modelo Power BI dashboard_calzadoV3.pbix</span>
+          <span>Fuente en vivo: base de datos Supabase · actualización automática cada 30 s</span>
         </footer>
       </div>
     </section>
