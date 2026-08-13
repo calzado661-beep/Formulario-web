@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { CheckCircle2, Minus, Plus, RefreshCcw, Save, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BadgeCheck, CheckCircle2, ChevronDown, Clock3, Minus, Plus, RefreshCcw, Save, Timer, X } from "lucide-react";
 import {
   createWorkerActivityLog,
   friendlyError,
@@ -8,7 +8,8 @@ import {
   listTiendas,
   listTaskScoreRanges,
   listTasks,
-  listWorkerActivityLogs
+  listWorkerActivityLogs,
+  loadWorkerLiveProgress
 } from "../lib/repository";
 import { formatDateTimeLima, todayLimaISO } from "../lib/dates";
 import {
@@ -62,11 +63,14 @@ function emptyRecord() {
 
 export default function WorkerDashboard({ user, embedded = false }) {
   const [tab, setTab] = useState("Registrar actividad");
+  const tabs = embedded ? ["Registrar actividad", "Historial"] : ["Registrar actividad", "Progreso en vivo", "Historial"];
 
   return (
     <div className={embedded ? "stack embedded-worker" : "stack"}>
-      <Tabs tabs={["Registrar actividad", "Historial"]} active={tab} onChange={setTab} />
-      {tab === "Registrar actividad" ? <RegisterActivity user={user} /> : <WorkerHistory user={user} />}
+      <Tabs tabs={tabs} active={tab} onChange={setTab} />
+      {tab === "Registrar actividad" ? <RegisterActivity user={user} /> : null}
+      {tab === "Progreso en vivo" ? <WorkerLiveProgress user={user} /> : null}
+      {tab === "Historial" ? <WorkerHistory user={user} /> : null}
     </div>
   );
 }
@@ -612,6 +616,177 @@ function logSortTime(log) {
   return Number.isNaN(value) ? 0 : value;
 }
 
+function liveProgressNumber(value) {
+  return Number(value || 0).toLocaleString("es-PE");
+}
+
+function liveProgressTime(value) {
+  if (!value) return "--:--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--:--";
+  return new Intl.DateTimeFormat("es-PE", {
+    timeZone: "America/Lima",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function liveProgressDuration(startValue, endValue = new Date().toISOString()) {
+  const start = new Date(startValue);
+  const end = new Date(endValue);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return "0 min";
+  const total = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000));
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  if (!hours) return `${minutes} min`;
+  return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
+}
+
+function WorkerLiveProgress({ user }) {
+  const requestRef = useRef(null);
+  const [data, setData] = useState({ activities: [], generatedAt: null, operationsMigrationRequired: false });
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+
+  async function refresh({ initial = false } = {}) {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    if (initial) setLoading(true);
+    else setRefreshing(true);
+    try {
+      const result = await loadWorkerLiveProgress({ signal: controller.signal });
+      setData(result);
+      setError("");
+    } catch (err) {
+      if (err?.name !== "AbortError") setError(friendlyError(err));
+    } finally {
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }
+
+  useEffect(() => {
+    refresh({ initial: true });
+    const timer = window.setInterval(() => refresh(), 10_000);
+    return () => {
+      window.clearInterval(timer);
+      requestRef.current?.abort();
+      requestRef.current = null;
+    };
+  }, [user?.id]);
+
+  const openActivities = (data.activities || []).filter((activity) => activity.estado === "EN_CURSO");
+  const lastUpdate = data.generatedAt
+    ? new Intl.DateTimeFormat("es-PE", { timeZone: "America/Lima", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(data.generatedAt))
+    : "--:--";
+
+  return (
+    <Panel
+      title="Mi progreso en vivo"
+      eyebrow="Seguimiento del jefe de equipo"
+      className="worker-live-progress-panel"
+      actions={<Button variant="secondary" icon={RefreshCcw} loading={refreshing} onClick={() => refresh()}>Actualizar</Button>}
+    >
+      <div className="worker-progress-hero">
+        <div>
+          <span className="worker-progress-live"><i /> Sincronización en vivo</span>
+          <h3>Revisa cómo avanza tu actividad</h3>
+          <p>Esta vista es de solo lectura. La cantidad y el historial cambian cuando tu jefe guarda un nuevo avance.</p>
+        </div>
+        <div className="worker-progress-updated">
+          <Clock3 />
+          <span>Última lectura</span>
+          <strong>{lastUpdate}</strong>
+        </div>
+      </div>
+
+      {loading ? <LoadingBlock /> : null}
+      {error ? <Alert type="error">No se pudo actualizar el progreso. {error}</Alert> : null}
+      {data.operationsMigrationRequired ? <Alert type="error">Falta aplicar la migración SQL 026 en Supabase para consultar las actividades en vivo.</Alert> : null}
+      {!loading && !data.operationsMigrationRequired && !openActivities.length ? (
+        <Alert>No tienes una actividad abierta por el jefe de equipo en este momento. Cuando inicie una, aparecerá aquí automáticamente.</Alert>
+      ) : null}
+
+      <div className="activity-session-grid worker-progress-grid">
+        {openActivities.map((activity) => <WorkerProgressCard key={activity.id} activity={activity} />)}
+      </div>
+    </Panel>
+  );
+}
+
+function WorkerProgressCard({ activity }) {
+  const [expanded, setExpanded] = useState(true);
+  const history = activity.history || [];
+  const lastAdvance = history.at(-1);
+
+  return (
+    <article className="activity-session-card open worker-progress-card">
+      <button type="button" className="activity-session-summary" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+        <span className="activity-session-status"><i /> En curso</span>
+        <span className="activity-session-title">
+          <strong>{activity.tarea_nombre}</strong>
+          <small>Registrada por {activity.encargado_nombre || "Jefe de equipo"}</small>
+        </span>
+        <span className="activity-session-start">Inicio {liveProgressTime(activity.hora_inicio)}</span>
+        <ChevronDown className={expanded ? "expanded" : ""} />
+      </button>
+      {expanded ? (
+        <div className="activity-session-body">
+          <div className="activity-session-stats">
+            <div><span>Cantidad actual</span><strong>{liveProgressNumber(activity.cantidad)}</strong></div>
+            <div><span>Tiempo transcurrido</span><strong>{liveProgressDuration(activity.hora_inicio)}</strong></div>
+            <div><span>Puntaje</span><strong>Pendiente</strong></div>
+          </div>
+
+          <div className="worker-progress-context">
+            {activity.marca_nombre ? <span>Marca <strong>{activity.marca_nombre}</strong></span> : null}
+            {activity.lote ? <span>Lote <strong>{activity.lote}</strong></span> : null}
+            {activity.tienda_nombre ? <span>Tienda <strong>{activity.tienda_nombre}</strong></span> : null}
+            {activity.numero_guia ? <span>Guía <strong>{activity.numero_guia}</strong></span> : null}
+            {activity.observacion ? <span>Detalle <strong>{activity.observacion}</strong></span> : null}
+          </div>
+
+          <div className="worker-progress-current">
+            <Timer />
+            <div>
+              <span>Último avance registrado</span>
+              <strong>{lastAdvance ? `${liveProgressNumber(lastAdvance.cantidad)} a las ${liveProgressTime(lastAdvance.created_at)}` : "Actividad iniciada"}</strong>
+            </div>
+          </div>
+
+          <WorkerProgressHistory activity={activity} />
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function WorkerProgressHistory({ activity }) {
+  return (
+    <div className="activity-session-history">
+      <h3>Historial de avances</h3>
+      <ol>
+        {(activity.history || []).map((entry, index) => {
+          const previous = Number(activity.history?.[index - 1]?.cantidad || 0);
+          const delta = Number(entry.cantidad || 0) - previous;
+          return (
+            <li key={entry.id}>
+              <span>{liveProgressTime(entry.created_at)}</span>
+              <strong>{liveProgressNumber(entry.cantidad)} acumulado</strong>
+              <small>{entry.tipo === "INICIO" ? "Actividad iniciada" : entry.tipo === "FINALIZACION" ? `Finalizada · ${entry.puntaje || activity.puntaje || 0} pts` : `+${liveProgressNumber(delta)} desde el avance anterior`}</small>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
 export function WorkerHistory({ user }) {
   const [sortOrder, setSortOrder] = useState("desc");
   const { data, loading, error, reload } = useAsyncData(
@@ -636,6 +811,8 @@ export function WorkerHistory({ user }) {
     const registeredByLeader = log.origen === "jefe_equipo";
     return {
       Fecha: formatDateTimeLima(log.created_at) || log.fecha_registro,
+      "Hora inicio": log.hora_inicio ? liveProgressTime(log.hora_inicio) : "",
+      "Hora fin": log.hora_fin ? liveProgressTime(log.hora_fin) : "",
       Tarea: taskName,
       Cantidad: log.cantidad ?? "",
       "Tiempo (min)": log.tiempo_minutos ?? "",

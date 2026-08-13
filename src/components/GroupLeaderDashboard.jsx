@@ -66,6 +66,8 @@ function recordSortTime(record) {
 const historyColumns = [
   "ID",
   "Fecha",
+  "Hora inicio",
+  "Hora fin",
   "Encargado",
   "Operante",
   "Tarea",
@@ -482,6 +484,8 @@ function GroupTimeDashboard({ user }) {
     id: record.id,
     ID: record.id,
     Fecha: formatDateTimeLima(record.created_at) || record.fecha_registro,
+    "Hora inicio": formatTimeLima(record.hora_inicio),
+    "Hora fin": formatTimeLima(record.hora_fin),
     Encargado: record.encargado_nombre || record.encargado_email,
     Operante: record.trabajador_nombre || record.trabajador_email,
     Tarea: record.tarea_nombre,

@@ -24,6 +24,12 @@ export async function handler(event) {
     let statusCode = 200;
     let headers = {};
     const response = {
+      setHeader(name, value) {
+        headers[String(name).toLowerCase()] = String(value);
+      },
+      getHeader(name) {
+        return headers[String(name).toLowerCase()];
+      },
       writeHead(status, nextHeaders = {}) {
         statusCode = status;
         headers = { ...headers, ...nextHeaders };

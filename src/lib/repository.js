@@ -82,15 +82,15 @@ async function requestLocalApi(path, options = {}, config = {}) {
 
   if (config.requiredBackend) {
     if (sawNotFound) {
-      throw new Error("El backend esta desactualizado y aun no incluye Notificaciones. Reinicialo localmente o publica las nuevas Functions de Netlify.");
+      throw new Error("El backend esta desactualizado y aun no incluye esta funcion. Reinicialo localmente o publica las nuevas Functions de Netlify.");
     }
     if (sawNonJson) {
-      throw new Error("La ruta de Notificaciones esta devolviendo la pagina web en lugar de la API. Reinicia el backend y revisa la redireccion /api de Netlify.");
+      throw new Error("La ruta solicitada esta devolviendo la pagina web en lugar de la API. Reinicia el backend y revisa la redireccion /api de Netlify.");
     }
     if (sawNetworkFailure) {
-      throw new Error("No se pudo conectar con el backend de Notificaciones. Ejecuta npm.cmd run dev o verifica que las Functions esten publicadas.");
+      throw new Error("No se pudo conectar con el backend. Ejecuta npm.cmd run dev o verifica que las Functions esten publicadas.");
     }
-    throw new Error("El servicio de Notificaciones no esta disponible en este momento.");
+    throw new Error("El servicio solicitado no esta disponible en este momento.");
   }
 
   return null;
@@ -98,6 +98,15 @@ async function requestLocalApi(path, options = {}, config = {}) {
 
 export async function loadFootwearDashboard({ signal } = {}) {
   return requestLocalApi("/api/dashboard", { signal }, { requiredBackend: true });
+}
+
+export async function loadWorkerLiveProgress({ signal } = {}) {
+  const result = await requestLocalApi("/api/worker/live-progress", { signal }, { requiredBackend: true });
+  return {
+    generatedAt: result?.generatedAt || null,
+    operationsMigrationRequired: Boolean(result?.operationsMigrationRequired),
+    activities: result?.activities || []
+  };
 }
 
 function errorMessage(error) {

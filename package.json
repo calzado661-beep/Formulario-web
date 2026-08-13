@@ -10,7 +10,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "start": "node server.mjs",
     "test:attendance-report": "node --test tests/attendance_report.test.mjs tests/activity_report.test.mjs tests/operations.test.mjs",
-    "test:operations": "node --test tests/operations.test.mjs"
+    "test:operations": "node --test tests/operations.test.mjs",
+    "test:worker-progress": "node scripts/smoke_test_worker_progress.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.50.0",

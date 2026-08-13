@@ -1079,11 +1079,15 @@ async function selectGroupLeaderActivityLogsForWorker(workerId) {
   const taskIds = Array.from(new Set(rows.map((row) => Number(row.tarea_id)).filter(Boolean)));
   const encargadoIds = Array.from(new Set(rows.map((row) => Number(row.encargado_id)).filter(Boolean)));
   const brandIds = Array.from(new Set(rows.map((row) => Number(row.marca_id)).filter(Boolean)));
-  const [tasksResult, rulesResult, leadersResult, brandsResult] = await Promise.all([
+  const recordIds = Array.from(new Set(rows.map((row) => Number(row.id)).filter(Boolean)));
+  const [tasksResult, rulesResult, leadersResult, brandsResult, liveActivitiesResult] = await Promise.all([
     taskIds.length ? supabase.from(tableName).select("*").in("id", taskIds) : Promise.resolve({ data: [] }),
     taskIds.length ? supabase.from("reglas_puntaje").select("*").in("tarea_id", taskIds) : Promise.resolve({ data: [] }),
     encargadoIds.length ? supabase.from("usuarios").select("id,nombre,email").in("id", encargadoIds) : Promise.resolve({ data: [] }),
-    brandIds.length ? supabase.from("marcas").select("id,nombre").in("id", brandIds) : Promise.resolve({ data: [] })
+    brandIds.length ? supabase.from("marcas").select("id,nombre").in("id", brandIds) : Promise.resolve({ data: [] }),
+    recordIds.length
+      ? supabase.from("actividades_jefe_equipo").select("id,registro_tarea_id,hora_inicio,hora_fin").in("registro_tarea_id", recordIds)
+      : Promise.resolve({ data: [] })
   ]);
   const rulesByTaskId = new Map();
   (rulesResult.data || []).forEach((rule) => {
@@ -1096,11 +1100,14 @@ async function selectGroupLeaderActivityLogsForWorker(workerId) {
   );
   const leaderById = new Map((leadersResult.data || []).map((leader) => [Number(leader.id), leader]));
   const brandById = new Map((brandsResult.data || []).map((brand) => [Number(brand.id), brand]));
+  if (liveActivitiesResult.error && !operationsSchemaMissing(liveActivitiesResult.error)) throw liveActivitiesResult.error;
+  const liveActivityByRecordId = new Map((liveActivitiesResult.data || []).map((activity) => [Number(activity.registro_tarea_id), activity]));
 
   return rows.map((row) => {
     const leader = leaderById.get(Number(row.encargado_id));
     const task = scoredTaskById.get(Number(row.tarea_id));
     const brand = row.marca_id ? brandById.get(Number(row.marca_id)) : null;
+    const liveActivity = liveActivityByRecordId.get(Number(row.id));
     // Se puntua con las reglas configuradas en el admin (por cantidad, fijo o
     // turno). El tiempo registrado es solo para seguimiento, no para puntaje.
     const storedPoints = row.puntaje === null || row.puntaje === undefined ? null : Number(row.puntaje);
@@ -1122,6 +1129,8 @@ async function selectGroupLeaderActivityLogsForWorker(workerId) {
       puntaje: puntosObtenidos,
       marcas: brand ? [{ marca_id: brand.id, marca_nombre: brand.nombre, cantidad: nullableNumber(row.cantidad) }] : [],
       created_at: row.created_at,
+      hora_inicio: liveActivity?.hora_inicio || null,
+      hora_fin: liveActivity?.hora_fin || null,
       origen: "jefe_equipo",
       encargado_id: row.encargado_id,
       encargado_nombre: leader?.nombre || leader?.email || `Usuario ${row.encargado_id}`
@@ -2471,11 +2480,26 @@ async function loadGroupLeaderData() {
     operationsMigrationRequired = true;
   }
 
+  const liveActivityByRecordId = new Map(
+    activities
+      .filter((activity) => activity.registro_tarea_id)
+      .map((activity) => [Number(activity.registro_tarea_id), activity])
+  );
+  const recordsWithTimes = records.map((record) => {
+    const activity = liveActivityByRecordId.get(Number(record.id));
+    return {
+      ...record,
+      hora_inicio: activity?.hora_inicio || null,
+      hora_fin: activity?.hora_fin || null,
+      actividad_seguimiento_id: activity?.id || null
+    };
+  });
+
   return {
     workers,
     tasks,
     leaders,
-    records,
+    records: recordsWithTimes,
     activities,
     operationsMigrationRequired,
     brands: (brandsResult.data || []).filter((brand) => isActive(brand.activo)),
@@ -2490,6 +2514,39 @@ async function handleGroupLeaderContext(request, response) {
     sendJson(response, 200, data);
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron cargar los datos." });
+  }
+}
+
+async function handleWorkerLiveProgress(request, response) {
+  try {
+    const session = requireSessionRole(request, response, ["operante"]);
+    if (!session) return;
+
+    let activities = [];
+    try {
+      activities = await selectLiveGroupLeaderActivities();
+    } catch (error) {
+      if (!operationsSchemaMissing(error)) throw error;
+      sendJson(response, 200, {
+        generatedAt: new Date().toISOString(),
+        operationsMigrationRequired: true,
+        activities: []
+      });
+      return;
+    }
+
+    const workerActivities = activities
+      .filter((activity) => Number(activity.trabajador_id) === Number(session.id))
+      .sort((a, b) => new Date(b.updated_at || b.hora_inicio || 0) - new Date(a.updated_at || a.hora_inicio || 0));
+
+    response.setHeader("cache-control", "no-store, no-cache, must-revalidate");
+    sendJson(response, 200, {
+      generatedAt: new Date().toISOString(),
+      operationsMigrationRequired: false,
+      activities: workerActivities
+    });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo cargar el progreso en vivo." });
   }
 }
 
@@ -3213,7 +3270,7 @@ export async function handleRequest(request, response, { serveFiles = true } = {
   if (/^\/api\/health\/?$/.test(apiPath) && request.method === "GET") {
     sendJson(response, 200, {
       ok: true,
-      apiVersion: 7,
+      apiVersion: 9,
       features: [
         "attendance-report",
         "attendance-report-schedules",
@@ -3221,7 +3278,9 @@ export async function handleRequest(request, response, { serveFiles = true } = {
         "activity-report-schedules",
         "attendance-early-exit",
         "live-group-activities",
-        "live-footwear-dashboard"
+        "live-footwear-dashboard",
+        "worker-live-progress",
+        "group-history-times"
       ]
     });
     return;
@@ -3441,6 +3500,11 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (request.url?.startsWith("/api/group-leader/context") && request.method === "GET") {
     await handleGroupLeaderContext(request, response);
+    return;
+  }
+
+  if (/^\/api\/worker\/live-progress\/?$/.test(apiPath) && request.method === "GET") {
+    await handleWorkerLiveProgress(request, response);
     return;
   }
 
