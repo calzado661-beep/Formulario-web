@@ -37,6 +37,26 @@ create index if not exists idx_tarea_asignado_a
 create index if not exists idx_tarea_estado
   on public.tarea(estado);
 
+create table if not exists public.marcas (
+  id bigserial primary key,
+  nombre text not null unique,
+  activo boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.reglas_puntaje (
+  id bigserial primary key,
+  tarea_id bigint not null references public.tarea(id) on delete cascade,
+  tipo_regla text not null check (tipo_regla in ('CANTIDAD', 'FIJO', 'TURNO')),
+  desde numeric,
+  hasta numeric,
+  turno text,
+  puntos integer not null check (puntos between 1 and 10)
+);
+
+create index if not exists idx_reglas_puntaje_tarea
+  on public.reglas_puntaje(tarea_id, puntos);
+
 create table if not exists public.rangos_puntaje (
   id bigserial primary key,
   tarea_id bigint not null references public.tarea(id) on delete cascade,
@@ -81,7 +101,21 @@ create table if not exists public.asistencias (
   fecha date not null,
   estado varchar(20) not null default 'AUSENTE' check (estado in ('AUSENTE', 'PUNTUAL', 'TARDANZA')),
   created_at timestamptz default now(),
-  constraint uq_asistencia unique (usuario_id, fecha)
+  retiro_anticipado boolean not null default false,
+  motivo_retiro text,
+  retirado_en timestamptz,
+  updated_at timestamptz not null default now(),
+  constraint uq_asistencia unique (usuario_id, fecha),
+  constraint asistencias_retiro_valido check (
+    (not retiro_anticipado and motivo_retiro is null and retirado_en is null)
+    or (
+      estado in ('PUNTUAL', 'TARDANZA')
+      and nullif(btrim(motivo_retiro), '') is not null
+      and char_length(motivo_retiro) <= 500
+      and retirado_en is not null
+      and (created_at is null or retirado_en >= created_at)
+    )
+  )
 );
 
 create table if not exists public.tiendas (
@@ -150,6 +184,31 @@ create index if not exists idx_registros_jefe_grupo_trabajador
 
 create index if not exists idx_registros_jefe_grupo_tarea
   on public.registros_jefe_grupo(tarea_id);
+
+-- Registro canonico usado por el panel actual de jefe de equipo. Las
+-- actividades en curso e historial se agregan con la migracion SQL 026.
+create table if not exists public.registros_tareas_jefe_equipo (
+  id bigserial primary key,
+  encargado_id bigint not null references public.usuarios(id) on delete restrict,
+  trabajador_id bigint not null references public.usuarios(id) on delete restrict,
+  tarea_id bigint not null references public.tarea(id) on delete restrict,
+  fecha_registro date not null default current_date,
+  cantidad numeric not null default 0 check (cantidad >= 0),
+  tiempo_minutos numeric not null default 0 check (tiempo_minutos >= 0),
+  numero_guia text,
+  lote text,
+  marca_id bigint references public.marcas(id) on delete set null,
+  tienda_id bigint references public.tiendas(id) on delete set null,
+  observacion text,
+  puntaje integer check (puntaje is null or (puntaje >= 0 and puntaje <= 10)),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_registros_tareas_jefe_equipo_encargado
+  on public.registros_tareas_jefe_equipo(encargado_id, created_at desc);
+
+create index if not exists idx_registros_tareas_jefe_equipo_trabajador
+  on public.registros_tareas_jefe_equipo(trabajador_id, created_at desc);
 
 create or replace view public.v_registros_jefe_grupo as
 select

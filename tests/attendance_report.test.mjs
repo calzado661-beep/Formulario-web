@@ -252,13 +252,19 @@ test("genera correo HTML, texto y CSV escapando contenido peligroso", () => {
       nombre: "<Ana & Luis>",
       email: "ana@example.com",
       rol: "=ADMIN",
-      marcado_en: "2026-08-04T14:30:00Z"
+      marcado_en: "2026-08-04T14:30:00Z",
+      retiro_anticipado: true,
+      retirado_en: "2026-08-04T18:00:00Z",
+      motivo_retiro: "Cita <médica>"
     }]
   });
 
   assert.match(report.html, /&lt;Ana &amp; Luis&gt;/);
   assert.doesNotMatch(report.html, /<Ana & Luis>/);
   assert.match(report.text, /Total de asistentes: 1/);
+  assert.match(report.html, /Cita &lt;médica&gt;/);
+  assert.match(report.text, /Retiro:/);
+  assert.match(report.csv, /Motivo del retiro/);
   assert.match(report.csv, /"'=ADMIN"/);
   assert.ok(report.csv.startsWith("\uFEFF"));
 });

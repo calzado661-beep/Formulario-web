@@ -30,7 +30,9 @@ async function backendIsCompatible() {
     });
     if (!response.ok || !(response.headers.get("content-type") || "").includes("application/json")) return false;
     const payload = await response.json();
-    return Number(payload.apiVersion) >= 4 && payload.features?.includes("attendance-report-schedules");
+    return Number(payload.apiVersion) >= 7 &&
+      payload.features?.includes("attendance-early-exit") &&
+      payload.features?.includes("live-group-activities");
   } catch {
     return false;
   }

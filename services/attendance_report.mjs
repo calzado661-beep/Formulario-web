@@ -254,11 +254,18 @@ const ATTENDED_STATES = new Set(["PUNTUAL", "TARDANZA"]);
 
 async function readAttendanceRowsForDate(db, reportDate) {
   if (!DATE_PATTERN.test(String(reportDate || ""))) throw new Error("La fecha del reporte no es valida.");
-  const attendanceResult = await db
+  let attendanceResult = await db
     .from("asistencias")
-    .select("id,usuario_id,fecha,estado,created_at")
+    .select("id,usuario_id,fecha,estado,created_at,retiro_anticipado,motivo_retiro,retirado_en")
     .eq("fecha", reportDate)
     .order("created_at", { ascending: true });
+  if (["42703", "PGRST204"].includes(attendanceResult.error?.code)) {
+    attendanceResult = await db
+      .from("asistencias")
+      .select("id,usuario_id,fecha,estado,created_at")
+      .eq("fecha", reportDate)
+      .order("created_at", { ascending: true });
+  }
   return databaseError(attendanceResult, "No se pudo consultar la asistencia.") || [];
 }
 
@@ -286,6 +293,9 @@ export async function readPresentAttendances(db, reportDate, config = null) {
         fecha: attendance.fecha,
         marcado_en: attendance.created_at,
         estado: String(attendance.estado || "").toUpperCase(),
+        retiro_anticipado: Boolean(attendance.retiro_anticipado),
+        motivo_retiro: attendance.motivo_retiro || "",
+        retirado_en: attendance.retirado_en || null,
         nombre: user?.nombre || `Usuario ${attendance.usuario_id}`,
         email: user?.email || "",
         rol: user?.rol || ""
@@ -332,9 +342,10 @@ export function buildAttendanceReport({ reportDate, attendees, absentees = [], t
       <td style="padding:10px;border-bottom:1px solid #dce6e2;">${escapeHtml(row.rol || "Sin rol")}</td>
       <td style="padding:10px;border-bottom:1px solid #dce6e2;">${escapeHtml(attendanceStateLabel(row.estado))}</td>
       <td style="padding:10px;border-bottom:1px solid #dce6e2;">${escapeHtml(displayDateTime(row.marcado_en, timeZone))}</td>
+      <td style="padding:10px;border-bottom:1px solid #dce6e2;">${row.retiro_anticipado ? escapeHtml(`${displayDateTime(row.retirado_en, timeZone)} · ${row.motivo_retiro || "Sin motivo"}`) : "No"}</td>
     </tr>`).join("");
   const attendeeEmptyRow = `
-    <tr><td colspan="6" style="padding:24px;text-align:center;color:#66756f;">No se registraron personas presentes en esta fecha.</td></tr>`;
+    <tr><td colspan="7" style="padding:24px;text-align:center;color:#66756f;">No se registraron personas presentes en esta fecha.</td></tr>`;
 
   const absentTableRows = absentRows.map((row, index) => `
     <tr>
@@ -376,6 +387,7 @@ export function buildAttendanceReport({ reportDate, attendees, absentees = [], t
                   <th style="padding:10px;">Rol</th>
                   <th style="padding:10px;">Estado</th>
                   <th style="padding:10px;">Marcado en</th>
+                  <th style="padding:10px;">Retiro anticipado</th>
                 </tr>
               </thead>
               <tbody>${attendeeTableRows || attendeeEmptyRow}</tbody>
@@ -404,14 +416,14 @@ export function buildAttendanceReport({ reportDate, attendees, absentees = [], t
   </html>`;
 
   const textAttendeeRows = attendeeRows.length
-    ? attendeeRows.map((row, index) => `${index + 1}. ${row.nombre} | ${row.email || "Sin correo"} | ${row.rol || "Sin rol"} | ${attendanceStateLabel(row.estado)} | ${displayDateTime(row.marcado_en, timeZone)}`).join("\n")
+    ? attendeeRows.map((row, index) => `${index + 1}. ${row.nombre} | ${row.email || "Sin correo"} | ${row.rol || "Sin rol"} | ${attendanceStateLabel(row.estado)} | ${displayDateTime(row.marcado_en, timeZone)}${row.retiro_anticipado ? ` | Retiro: ${displayDateTime(row.retirado_en, timeZone)} · ${row.motivo_retiro || "Sin motivo"}` : ""}`).join("\n")
     : "No se registraron personas presentes en esta fecha.";
   const textAbsentRows = absentRows.length
     ? absentRows.map((row, index) => `${index + 1}. ${row.nombre} | ${row.email || "Sin correo"} | ${row.rol || "Sin rol"}`).join("\n")
     : "No se registraron personas ausentes en esta fecha.";
   const text = `REPORTE DIARIO DE ASISTENCIA\nFecha: ${formattedDate}\nTotal de asistentes: ${attendeeRows.length}\nTotal de ausentes: ${absentRows.length}\n\nREPORTE 1 - ASISTIERON\n${textAttendeeRows}\n\nREPORTE 2 - NO ASISTIERON\n${textAbsentRows}`;
 
-  const csvHeader = ["Reporte", "Nro.", "Trabajador", "Correo", "Rol", "Estado", "Fecha", "Marcado en"];
+  const csvHeader = ["Reporte", "Nro.", "Trabajador", "Correo", "Rol", "Estado", "Fecha", "Marcado en", "Retiro anticipado", "Retirado en", "Motivo del retiro"];
   const csvAttendeeRows = attendeeRows.map((row, index) => [
     "Asistieron",
     index + 1,
@@ -420,7 +432,10 @@ export function buildAttendanceReport({ reportDate, attendees, absentees = [], t
     row.rol,
     attendanceStateLabel(row.estado),
     reportDate,
-    displayDateTime(row.marcado_en, timeZone)
+    displayDateTime(row.marcado_en, timeZone),
+    row.retiro_anticipado ? "Si" : "No",
+    row.retiro_anticipado ? displayDateTime(row.retirado_en, timeZone) : "",
+    row.retiro_anticipado ? row.motivo_retiro : ""
   ]);
   const csvAbsentRows = absentRows.map((row, index) => [
     "No asistieron",
@@ -430,6 +445,9 @@ export function buildAttendanceReport({ reportDate, attendees, absentees = [], t
     row.rol,
     "Ausente",
     reportDate,
+    "",
+    "No",
+    "",
     ""
   ]);
   const csv = `\uFEFF${[csvHeader, ...csvAttendeeRows, ...csvAbsentRows].map((row) => row.map(csvCell).join(",")).join("\r\n")}`;

@@ -56,6 +56,7 @@ import {
   taskUsesLote,
   validateQuantityRanges
 } from "../lib/scoring";
+import { validateAttendanceEdit } from "../lib/operations";
 import { useAsyncData } from "../lib/hooks";
 import FootwearDashboard from "./FootwearDashboard";
 import {
@@ -1074,6 +1075,9 @@ function AttendancePanel() {
   const [attendanceValues, setAttendanceValues] = useState({});
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [editingAttendanceId, setEditingAttendanceId] = useState(null);
+  const [attendanceEdit, setAttendanceEdit] = useState({ estado: "PUNTUAL", retiro_anticipado: false, motivo_retiro: "" });
+  const [savingAttendanceId, setSavingAttendanceId] = useState(null);
   const todayRef = useRef(todayLimaISO());
 
   // Si la pestana se queda abierta y pasa la medianoche (Lima), la marcacion
@@ -1093,15 +1097,16 @@ function AttendancePanel() {
 
   const { data, loading, error, reload } = useAsyncData(
     async () => {
-      const [workers, current, attendances] = await Promise.all([
+      const [workers, current, attendances, todayRows] = await Promise.all([
         listWorkers(),
         getAttendanceForDate(selectedDate),
-        listAttendances()
+        listAttendances(),
+        selectedDate === todayLimaISO() ? Promise.resolve(null) : getAttendanceForDate(todayLimaISO())
       ]);
-      return { workers, current, attendances };
+      return { workers, current, attendances, today: todayRows || current };
     },
     [selectedDate],
-    { workers: [], current: [], attendances: [] }
+    { workers: [], current: [], today: [], attendances: [] }
   );
 
   useEffect(() => {
@@ -1174,16 +1179,54 @@ function AttendancePanel() {
 
   const workerNameById = Object.fromEntries((data.workers || []).map((worker) => [worker.id, worker.nombre || worker.email]));
   const workerEmailById = Object.fromEntries((data.workers || []).map((worker) => [worker.id, worker.email]));
+  const todayAttendances = (data.today || []).filter((item) => String(item.estado || "AUSENTE").toUpperCase() !== "AUSENTE");
   const attendanceRows = (data.attendances || []).map((item) => ({
     Fecha: item.fecha,
     Trabajador: workerNameById[item.usuario_id],
     Email: workerEmailById[item.usuario_id],
     Estado: attendanceStateLabel(String(item.estado || "AUSENTE").toUpperCase()),
+    "Retiro anticipado": item.retiro_anticipado ? "Sí" : "No",
+    "Motivo del retiro": item.motivo_retiro || "",
+    "Retirado en": item.retirado_en ? formatDateTimeLima(item.retirado_en) : "",
     "Marcado en": String(item.estado || "").toUpperCase() === "AUSENTE" ? "" : formatDateTimeLima(item.created_at)
   }));
 
+  function openAttendanceEditor(item) {
+    setEditingAttendanceId(item.id);
+    setAttendanceEdit({
+      estado: String(item.estado || "PUNTUAL").toUpperCase(),
+      retiro_anticipado: Boolean(item.retiro_anticipado),
+      motivo_retiro: item.motivo_retiro || ""
+    });
+    setStatus(null);
+  }
+
+  async function saveAttendanceEdit(item) {
+    const validation = validateAttendanceEdit(attendanceEdit);
+    if (validation) {
+      setStatus({ type: "error", message: validation });
+      return;
+    }
+    setSavingAttendanceId(item.id);
+    setStatus(null);
+    try {
+      await markAttendance(item.usuario_id, todayLimaISO(), attendanceEdit.estado !== "AUSENTE", cutoffTime, {
+        estado: attendanceEdit.estado,
+        retiro_anticipado: attendanceEdit.retiro_anticipado,
+        motivo_retiro: attendanceEdit.retiro_anticipado ? attendanceEdit.motivo_retiro.trim() : null
+      });
+      setEditingAttendanceId(null);
+      setStatus({ type: "success", message: "Asistencia del día actualizada correctamente." });
+      reload();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSavingAttendanceId(null);
+    }
+  }
+
   function exportAttendance() {
-    const columns = ["Fecha", "Trabajador", "Email", "Estado", "Marcado en"];
+    const columns = ["Fecha", "Trabajador", "Email", "Estado", "Retiro anticipado", "Motivo del retiro", "Retirado en", "Marcado en"];
     const header = columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("");
     const body = attendanceRows
       .map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>`)
@@ -1204,7 +1247,7 @@ function AttendancePanel() {
     <div className="stack">
       <Panel title="Gestion de asistencia" eyebrow="Control diario">
         <div className="toolbar">
-          <TextInput label="Fecha" type="date" value={selectedDate} onChange={setSelectedDate} />
+          <TextInput label="Fecha" type="date" value={selectedDate} onChange={setSelectedDate} max={todayLimaISO()} />
           <TextInput
             label="Hora limite"
             type="time"
@@ -1272,6 +1315,66 @@ function AttendancePanel() {
         </div>
         <div className="form-actions">
           <Button icon={Save} loading={saving} onClick={handleSave}>Guardar asistencia</Button>
+        </div>
+      </Panel>
+
+      <Panel title="Asistencias del día de hoy" eyebrow={`Registros editables · ${todayLimaISO()}`}>
+        {!loading && !todayAttendances.length ? <Alert>Todavía no hay trabajadores presentes marcados para este día.</Alert> : null}
+        <div className="attendance-today-list">
+          {todayAttendances.map((item) => {
+            const editing = editingAttendanceId === item.id;
+            return (
+              <article key={item.id} className={`attendance-today-card${editing ? " editing" : ""}`}>
+                <div className="attendance-today-header">
+                  <div>
+                    <strong>{workerNameById[item.usuario_id] || `Usuario ${item.usuario_id}`}</strong>
+                    <small>{workerEmailById[item.usuario_id] || ""}</small>
+                  </div>
+                  <div className="attendance-today-badges">
+                    <span className="notification-status-badge active">{attendanceStateLabel(String(item.estado).toUpperCase())}</span>
+                    {item.retiro_anticipado ? <span className="attendance-withdrawal-badge">Retiro anticipado</span> : null}
+                  </div>
+                </div>
+                <div className="attendance-today-meta">
+                  <span><b>Entrada:</b> {formatDateTimeLima(item.created_at) || "Sin hora"}</span>
+                  {item.retiro_anticipado ? <span><b>Retiro:</b> {formatDateTimeLima(item.retirado_en)} · {item.motivo_retiro}</span> : null}
+                </div>
+                {editing ? (
+                  <div className="attendance-edit-grid">
+                    <SelectInput
+                      label="Estado de llegada"
+                      value={attendanceEdit.estado}
+                      onChange={(estado) => setAttendanceEdit((current) => ({ ...current, estado }))}
+                      options={attendanceStateOptions.filter((option) => option.value !== "AUSENTE")}
+                    />
+                    <SelectInput
+                      label="Salida"
+                      value={attendanceEdit.retiro_anticipado ? "retiro" : "normal"}
+                      onChange={(value) => setAttendanceEdit((current) => ({ ...current, retiro_anticipado: value === "retiro", motivo_retiro: value === "retiro" ? current.motivo_retiro : "" }))}
+                      options={[{ value: "normal", label: "Asistencia normal" }, { value: "retiro", label: "Retiro anticipado" }]}
+                    />
+                    {attendanceEdit.retiro_anticipado ? (
+                      <TextArea
+                        label="Motivo del retiro"
+                        value={attendanceEdit.motivo_retiro}
+                        onChange={(motivo_retiro) => setAttendanceEdit((current) => ({ ...current, motivo_retiro }))}
+                        maxLength={500}
+                        placeholder="Indica por qué se retiró antes de tiempo"
+                      />
+                    ) : null}
+                    <div className="attendance-edit-actions">
+                      <Button variant="secondary" type="button" onClick={() => setEditingAttendanceId(null)}>Cancelar</Button>
+                      <Button type="button" icon={Save} loading={savingAttendanceId === item.id} onClick={() => saveAttendanceEdit(item)}>Guardar cambios</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="attendance-edit-actions">
+                    <Button variant="secondary" type="button" icon={Pencil} onClick={() => openAttendanceEditor(item)}>Editar asistencia</Button>
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       </Panel>
 

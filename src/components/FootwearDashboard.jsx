@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import "../footwear-dashboard.css";
 
 const ACTIVITY_KPIS = [
@@ -333,6 +334,22 @@ function FullscreenIcon({ active }) {
   ) : (
     <svg className="pbi-button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
+    </svg>
+  );
+}
+
+function ExpandVisualIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="m6 6 12 12M18 6 6 18" />
     </svg>
   );
 }
@@ -695,18 +712,66 @@ function ActivityKpi({ label, daily, hourly }) {
   );
 }
 
-function Card({ id, title, meta, icon, className = "", children }) {
-  return (
-    <section id={id} className={`pbi-card ${className}`.trim()} aria-labelledby={`${id}-title`}>
+function Card({ id, title, meta, icon, className = "", children, expandable }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const canExpand = expandable ?? className.includes("pbi-card--chart");
+
+  useEffect(() => {
+    if (!isExpanded) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setIsExpanded(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isExpanded]);
+
+  const cardContent = (expanded = false) => (
+    <section
+      id={expanded ? undefined : id}
+      className={`pbi-card ${className}${expanded ? " pbi-card--expanded" : ""}`.trim()}
+      aria-labelledby={`${id}-title${expanded ? "-expanded" : ""}`}
+    >
       <header className="pbi-card-header">
-        <h2 className="pbi-card-title" id={`${id}-title`}>
+        <h2 className="pbi-card-title" id={`${id}-title${expanded ? "-expanded" : ""}`}>
           {icon}
           <span>{title}</span>
         </h2>
-        {meta ? <span className="pbi-card-meta">{meta}</span> : null}
+        <div className="pbi-card-tools">
+          {meta ? <span className="pbi-card-meta">{meta}</span> : null}
+          {canExpand ? (
+            <button
+              className="pbi-card-expand"
+              type="button"
+              onClick={() => setIsExpanded(!expanded)}
+              aria-label={expanded ? `Cerrar ${title}` : `Ampliar ${title}`}
+              title={expanded ? "Cerrar vista ampliada" : "Ampliar gráfica"}
+            >
+              {expanded ? <CloseIcon /> : <ExpandVisualIcon />}
+            </button>
+          ) : null}
+        </div>
       </header>
       <div className="pbi-card-body">{children}</div>
     </section>
+  );
+
+  return (
+    <>
+      {!isExpanded ? cardContent(false) : null}
+      {isExpanded && typeof document !== "undefined" ? createPortal(
+        <div className="pbi-visual-modal" role="dialog" aria-modal="true" aria-label={`Vista ampliada: ${title}`} onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setIsExpanded(false);
+        }}>
+          <div className="pbi-visual-modal-dialog">{cardContent(true)}</div>
+        </div>,
+        document.body
+      ) : null}
+    </>
   );
 }
 

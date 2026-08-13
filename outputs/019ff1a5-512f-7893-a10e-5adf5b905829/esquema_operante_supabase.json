@@ -1,0 +1,108 @@
+{
+  "registros_tareas": {
+    "columns": [
+      "id",
+      "usuario_id",
+      "tarea_id",
+      "fecha_registro",
+      "cantidad",
+      "turno",
+      "marca_id",
+      "tienda_id",
+      "lote",
+      "numero_guia",
+      "observacion",
+      "dato_extra",
+      "cumplimiento",
+      "created_at",
+      "puntaje"
+    ],
+    "sample": {
+      "id": 901,
+      "usuario_id": 70,
+      "tarea_id": 7,
+      "fecha_registro": "2025-03-07",
+      "cantidad": 4,
+      "turno": null,
+      "marca_id": 7,
+      "tienda_id": 4,
+      "lote": null,
+      "numero_guia": null,
+      "observacion": null,
+      "dato_extra": null,
+      "cumplimiento": null,
+      "created_at": "2025-03-07T13:38:00-05:00",
+      "puntaje": 2
+    }
+  },
+  "tarea": {
+    "columns": [
+      "id",
+      "nombre",
+      "activo",
+      "unidad_medida",
+      "fecha_creacion",
+      "tipo_tarea",
+      "requiere_marca",
+      "requiere_tiempo",
+      "requiere_lote",
+      "requiere_numero_guia"
+    ],
+    "sample": {
+      "id": 1,
+      "nombre": "Recepción de Mercaderías",
+      "activo": true,
+      "unidad_medida": "Ninguna",
+      "fecha_creacion": "2026-06-19",
+      "tipo_tarea": "Ingreso",
+      "requiere_marca": false,
+      "requiere_tiempo": false,
+      "requiere_lote": false,
+      "requiere_numero_guia": false
+    }
+  },
+  "marcas": {
+    "columns": [
+      "id",
+      "nombre"
+    ],
+    "sample": {
+      "id": 1,
+      "nombre": "Fila"
+    }
+  },
+  "tiendas": {
+    "columns": [
+      "id",
+      "nombre",
+      "activo",
+      "created_at"
+    ],
+    "sample": {
+      "id": 1,
+      "nombre": "ALFONSO UGARTE",
+      "activo": true,
+      "created_at": "2026-06-30T17:22:57.310216-05:00"
+    }
+  },
+  "reglas_puntaje": {
+    "columns": [
+      "id",
+      "tarea_id",
+      "tipo_regla",
+      "desde",
+      "hasta",
+      "turno",
+      "puntos"
+    ],
+    "sample": {
+      "id": 176,
+      "tarea_id": 9,
+      "tipo_regla": "CANTIDAD",
+      "desde": 0,
+      "hasta": 200,
+      "turno": null,
+      "puntos": 1
+    }
+  }
+}

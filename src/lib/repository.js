@@ -68,7 +68,9 @@ async function requestLocalApi(path, options = {}, config = {}) {
       if (response.ok) return payload;
       if (config.nullOnAuthFailure && [400, 401, 403].includes(response.status)) return null;
 
-      throw new Error(payload.error || payload.message || `Error ${response.status} al consultar el backend local.`);
+      const apiError = new Error(payload.error || payload.message || `Error ${response.status} al consultar el backend local.`);
+      if (payload.code) apiError.code = payload.code;
+      throw apiError;
     } catch (error) {
       if (error instanceof TypeError) {
         sawNetworkFailure = true;
@@ -165,6 +167,12 @@ function isActiveValue(value) {
 
 export function friendlyError(error) {
   const message = errorMessage(error);
+  if (error?.code === "OPERATIONS_MIGRATION_REQUIRED") {
+    return "Falta ejecutar la migracion sql/026_asistencia_retiro_y_actividades_en_curso.sql en Supabase.";
+  }
+  if (/OPERATIONS_MIGRATION_REQUIRED|sql\/026|actividades_jefe_equipo|retiro_anticipado/i.test(message) && /migraci|could not find|does not exist|schema cache/i.test(message)) {
+    return "Falta ejecutar la migracion sql/026_asistencia_retiro_y_actividades_en_curso.sql en Supabase.";
+  }
   if (/numeric field overflow|precision 10, scale 2/i.test(message)) {
     return "Una cantidad supera el maximo permitido por la base de datos: 99,999,999.99.";
   }
@@ -628,30 +636,49 @@ export async function getAttendanceForDate(fecha) {
 
 export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA"];
 
-export async function markAttendance(usuarioId, fecha, presente, horaLimite) {
+export async function markAttendance(usuarioId, fecha, presente, horaLimite, changes = {}) {
   const isPresent = Boolean(presente);
+  const body = {
+    usuario_id: usuarioId,
+    fecha,
+    presente: isPresent,
+    hora_limite: horaLimite,
+    ...changes
+  };
   const apiResult = await requestLocalApi("/api/attendances", {
     method: "PUT",
-    body: JSON.stringify({ usuario_id: usuarioId, fecha, presente: isPresent, hora_limite: horaLimite })
+    body: JSON.stringify(body)
   });
   if (apiResult?.attendance) return apiResult.attendance;
 
+  if (Object.keys(changes).length) {
+    throw new Error("El backend debe estar activo para editar una asistencia o registrar un retiro anticipado.");
+  }
+
   const tableName = await getAttendanceTableName();
-  const estado = !isPresent
+  const estado = changes.estado ? String(changes.estado).toUpperCase() : !isPresent
     ? "AUSENTE"
     : nowLimaTimeHHMM() <= String(horaLimite || "").slice(0, 5)
       ? "PUNTUAL"
       : "TARDANZA";
+  const retiroAnticipado = Boolean(changes.retiro_anticipado) && estado !== "AUSENTE";
   const payload = {
     usuario_id: usuarioId,
     fecha,
     estado,
-    created_at: isPresent ? nowLimaISODateTime() : null
+    created_at: estado !== "AUSENTE" ? (changes.created_at || nowLimaISODateTime()) : null
   };
-  const result = await db().from(tableName).upsert(payload, { onConflict: "usuario_id,fecha" });
-  if (result.error) {
-    ensureOk(await db().from(tableName).insert(payload));
+  if (Object.keys(changes).length) {
+    payload.retiro_anticipado = retiroAnticipado;
+    payload.motivo_retiro = retiroAnticipado ? String(changes.motivo_retiro || "").trim() : null;
+    payload.retirado_en = retiroAnticipado ? (changes.retirado_en || nowLimaISODateTime()) : null;
+    payload.updated_at = nowLimaISODateTime();
   }
+  const result = await db().from(tableName).upsert(payload, { onConflict: "usuario_id,fecha" }).select("*").single();
+  if (result.error) {
+    throw result.error;
+  }
+  return result.data;
 }
 
 export async function getAttendanceReportSettings() {
@@ -955,6 +982,32 @@ export async function createGroupLeaderRecord(payload) {
   return null;
 }
 
+export async function startGroupLeaderActivity(payload) {
+  const result = await requestLocalApi("/api/group-leader/activities", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  }, { requiredBackend: true });
+  if (!result?.activity) throw new Error("No se pudo iniciar la actividad.");
+  return result.activity;
+}
+
+export async function updateGroupLeaderActivity(activityId, payload) {
+  const result = await requestLocalApi(`/api/group-leader/activities/${encodeURIComponent(activityId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  }, { requiredBackend: true });
+  if (!result?.activity) throw new Error("No se pudo actualizar la actividad.");
+  return result.activity;
+}
+
+export async function cancelGroupLeaderActivity(activityId) {
+  const result = await requestLocalApi(`/api/group-leader/activities/${encodeURIComponent(activityId)}`, {
+    method: "DELETE"
+  }, { requiredBackend: true });
+  if (!result?.deleted) throw new Error("No se pudo cancelar la actividad.");
+  return result;
+}
+
 export async function loadGroupLeaderContext() {
   const apiContext = await requestLocalApi("/api/group-leader/context");
   if (apiContext) {
@@ -964,6 +1017,8 @@ export async function loadGroupLeaderContext() {
       brands: apiContext.brands || [],
       stores: apiContext.stores || [],
       leaders: apiContext.leaders || [],
+      activities: apiContext.activities || [],
+      operationsMigrationRequired: Boolean(apiContext.operationsMigrationRequired),
       records: (apiContext.records || []).map(normalizeGroupLeaderLog)
     };
   }
@@ -975,7 +1030,7 @@ export async function loadGroupLeaderContext() {
     listTiendas().then((stores) => stores.filter((store) => String(store.activo ?? true) !== "false")),
     listGroupLeaderRecords()
   ]);
-  return { workers, tasks, brands, stores, leaders: [], records };
+  return { workers, tasks, brands, stores, leaders: [], activities: [], records };
 }
 
 export async function listGroupLeaderRecords(encargadoId = null) {

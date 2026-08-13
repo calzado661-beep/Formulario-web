@@ -938,7 +938,8 @@ async function selectGroupLeaderActivityLogsForWorker(workerId) {
     const brand = row.marca_id ? brandById.get(Number(row.marca_id)) : null;
     // Se puntua con las reglas configuradas en el admin (por cantidad, fijo o
     // turno). El tiempo registrado es solo para seguimiento, no para puntaje.
-    const puntosObtenidos = task ? calculatePoints(task, row.cantidad, null, true) : null;
+    const storedPoints = row.puntaje === null || row.puntaje === undefined ? null : Number(row.puntaje);
+    const puntosObtenidos = storedPoints ?? (task ? calculatePoints(task, row.cantidad, null, true) : null);
     return {
       id: `jefe-equipo-${row.id}`,
       trabajador_id: row.trabajador_id,
@@ -1180,6 +1181,14 @@ async function handleReplaceTaskScoreRanges(request, response) {
       return;
     }
 
+    const quantityRules = normalized
+      .filter((rule) => rule.tipo_regla === "CANTIDAD")
+      .sort((a, b) => a.puntos - b.puntos);
+    if (quantityRules.length && (quantityRules.length !== 10 || quantityRules.at(-1)?.puntos !== 10 || quantityRules.at(-1)?.hasta !== null)) {
+      sendJson(response, 400, { error: "Las tareas por cantidad necesitan 10 rangos y el rango de 10 puntos debe quedar sin límite final." });
+      return;
+    }
+
     const previousRules = await selectTaskScoreRanges(taskId);
     const deleteResult = await supabase.from("reglas_puntaje").delete().eq("tarea_id", taskId);
     if (deleteResult.error) {
@@ -1417,6 +1426,43 @@ function attendanceCutoffMinutes(value) {
   return match ? Number(match[1]) * 60 + Number(match[2]) : null;
 }
 
+function currentLimaDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: ATTENDANCE_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function operationsSchemaMissing(error) {
+  return ["42P01", "42703", "42883", "PGRST202", "PGRST203", "PGRST204", "PGRST205"].includes(error?.code);
+}
+
+function handleOperationsError(response, error, fallback) {
+  if (operationsSchemaMissing(error)) {
+    sendJson(response, 503, {
+      code: "OPERATIONS_MIGRATION_REQUIRED",
+      error: "Falta ejecutar sql/026_asistencia_retiro_y_actividades_en_curso.sql en Supabase."
+    });
+    return;
+  }
+  const statusByCode = {
+    "23514": 409,
+    "42501": 403,
+    P0002: 404,
+    "22P02": 400,
+    "23503": 400
+  };
+  if (statusByCode[error?.code]) {
+    sendJson(response, statusByCode[error.code], { error: error?.message || fallback });
+    return;
+  }
+  sendJson(response, 500, { error: error?.message || fallback });
+}
+
 async function handleMarkAttendance(request, response) {
   try {
     if (!requireAdministrator(request, response)) return;
@@ -1445,12 +1491,58 @@ async function handleMarkAttendance(request, response) {
       return;
     }
     const present = estado !== "AUSENTE";
+    const hasWithdrawalFields = "retiro_anticipado" in body || "motivo_retiro" in body || "retirado_en" in body;
+    const requestedEarlyExit = Boolean(body.retiro_anticipado);
+    const earlyExitReason = String(body.motivo_retiro || "").trim();
+    if (hasWithdrawalFields && date !== currentLimaDate()) {
+      sendJson(response, 409, { error: "El retiro anticipado solo puede editarse para la asistencia del dia de hoy." });
+      return;
+    }
+    if (earlyExitReason.length > 500) {
+      sendJson(response, 400, { error: "El motivo del retiro no puede superar 500 caracteres." });
+      return;
+    }
+    if (requestedEarlyExit && !present) {
+      sendJson(response, 400, { error: "Un trabajador ausente no puede figurar con retiro anticipado." });
+      return;
+    }
+    if (requestedEarlyExit && !earlyExitReason) {
+      sendJson(response, 400, { error: "Ingresa el motivo del retiro anticipado." });
+      return;
+    }
+    const existingResult = await supabase
+      .from("asistencias")
+      .select(hasWithdrawalFields ? "id,created_at,retiro_anticipado,motivo_retiro,retirado_en" : "id,created_at")
+      .eq("usuario_id", userId)
+      .eq("fecha", date)
+      .maybeSingle();
+    if (existingResult.error) throw existingResult.error;
+    if (hasWithdrawalFields && !existingResult.data) {
+      sendJson(response, 409, { error: "Primero guarda la asistencia de hoy antes de editar su salida." });
+      return;
+    }
     const payload = {
       usuario_id: userId,
       fecha: date,
       estado,
-      created_at: present ? new Date().toISOString() : null
+      created_at: present ? (existingResult.data?.created_at || new Date().toISOString()) : null,
+      ...(existingResult.data?.id ? { updated_at: new Date().toISOString() } : {})
     };
+    if (hasWithdrawalFields) {
+      payload.retiro_anticipado = requestedEarlyExit && present;
+      payload.motivo_retiro = requestedEarlyExit && present ? earlyExitReason : null;
+      payload.retirado_en = requestedEarlyExit && present
+        ? (existingResult.data?.retiro_anticipado ? existingResult.data.retirado_en : new Date().toISOString())
+        : null;
+      payload.updated_at = new Date().toISOString();
+    } else if (!present && existingResult.data?.id) {
+      // Si se desmarca desde la lista principal, elimina cualquier retiro previo
+      // para no dejar AUSENTE + retiro_anticipado, combinacion invalida en SQL.
+      payload.retiro_anticipado = false;
+      payload.motivo_retiro = null;
+      payload.retirado_en = null;
+      payload.updated_at = new Date().toISOString();
+    }
     let result = await supabase
       .from("asistencias")
       .upsert(payload, { onConflict: "usuario_id,fecha" })
@@ -1466,7 +1558,7 @@ async function handleMarkAttendance(request, response) {
     if (result.error) throw result.error;
     sendJson(response, 200, { attendance: result.data });
   } catch (error) {
-    sendJson(response, 500, { error: error.message || "No se pudo guardar la asistencia." });
+    handleOperationsError(response, error, "No se pudo guardar la asistencia.");
   }
 }
 
@@ -2118,9 +2210,9 @@ async function handleCreateActivityLog(request, response) {
 }
 
 const GROUP_RECORD_COLUMNS_WITH_EXTRAS =
-  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,marca_id,tienda_id,observacion,created_at";
+  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,marca_id,tienda_id,observacion,puntaje,created_at";
 const GROUP_RECORD_COLUMNS_BASE =
-  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at";
+  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,puntaje,created_at";
 
 // marca_id/tienda_id solo existen despues de aplicar sql/024. Hasta entonces,
 // esta consulta cae de vuelta a las columnas base para no romper el resto del
@@ -2129,12 +2221,19 @@ async function selectGroupLeaderRecordRows(applyFilters) {
   let query = supabase.from("registros_tareas_jefe_equipo").select(GROUP_RECORD_COLUMNS_WITH_EXTRAS);
   query = applyFilters(query);
   let result = await query;
-  if (result.error?.code === "42703") {
+  if (["42703", "PGRST204"].includes(result.error?.code)) {
     let fallbackQuery = supabase.from("registros_tareas_jefe_equipo").select(GROUP_RECORD_COLUMNS_BASE);
     fallbackQuery = applyFilters(fallbackQuery);
     result = await fallbackQuery;
+    if (["42703", "PGRST204"].includes(result.error?.code)) {
+      let legacyQuery = supabase
+        .from("registros_tareas_jefe_equipo")
+        .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at");
+      legacyQuery = applyFilters(legacyQuery);
+      result = await legacyQuery;
+    }
     if (!result.error) {
-      result.data = (result.data || []).map((row) => ({ ...row, marca_id: null, tienda_id: null }));
+      result.data = (result.data || []).map((row) => ({ ...row, marca_id: row.marca_id ?? null, tienda_id: row.tienda_id ?? null, puntaje: row.puntaje ?? null }));
     }
   }
   return result;
@@ -2172,13 +2271,15 @@ async function loadGroupLeaderData() {
     supabase.from("usuarios").select("id,nombre,email,rol,activo").order("id", { ascending: true }),
     supabase.from(tableName).select("*").order("id", { ascending: true }),
     selectGroupLeaderRecordRows((query) => query.order("created_at", { ascending: false })),
-    supabase.from("marcas").select("id,nombre"),
+    supabase.from("marcas").select("*").order("nombre", { ascending: true }),
     supabase.from("tiendas").select("id,nombre")
   ]);
 
   if (usersResult.error) throw usersResult.error;
   if (tasksResult.error) throw tasksResult.error;
   if (recordsResult.error) throw recordsResult.error;
+  if (brandsResult.error) throw brandsResult.error;
+  if (storesResult.error) throw storesResult.error;
 
   const users = usersResult.data || [];
   const tasks = (tasksResult.data || []).filter((task) => isActive(task.activo) && isGroupLeaderTimeTask(task));
@@ -2196,8 +2297,25 @@ async function loadGroupLeaderData() {
     storesResult.data || []
   );
   const stores = (storesResult.data || []).filter((store) => isActive(store.activo));
+  let activities = [];
+  let operationsMigrationRequired = false;
+  try {
+    activities = await selectLiveGroupLeaderActivities();
+  } catch (error) {
+    if (!operationsSchemaMissing(error)) throw error;
+    operationsMigrationRequired = true;
+  }
 
-  return { workers, tasks, leaders, records, brands: brandsResult.data || [], stores };
+  return {
+    workers,
+    tasks,
+    leaders,
+    records,
+    activities,
+    operationsMigrationRequired,
+    brands: (brandsResult.data || []).filter((brand) => isActive(brand.activo)),
+    stores
+  };
 }
 
 async function handleGroupLeaderContext(request, response) {
@@ -2375,6 +2493,372 @@ async function handleCreateGroupLeaderRecord(request, response) {
     sendJson(response, 201, { record });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo guardar el registro." });
+  }
+}
+
+function normalizeLiveActivity(activity, usersById, tasksById, brandsById, storesById, history = []) {
+  const worker = usersById.get(Number(activity.trabajador_id));
+  const leader = usersById.get(Number(activity.encargado_id));
+  const task = tasksById.get(Number(activity.tarea_id));
+  return {
+    ...activity,
+    trabajador_nombre: worker?.nombre || worker?.email || `Usuario ${activity.trabajador_id}`,
+    trabajador_email: worker?.email || "",
+    encargado_nombre: leader?.nombre || leader?.email || `Usuario ${activity.encargado_id}`,
+    tarea_nombre: taskTitle(task) || `Tarea ${activity.tarea_id}`,
+    marca_nombre: brandsById.get(Number(activity.marca_id))?.nombre || "",
+    tienda_nombre: storesById.get(Number(activity.tienda_id))?.nombre || "",
+    history
+  };
+}
+
+async function selectLiveGroupLeaderActivities() {
+  const activitiesResult = await supabase
+    .from("actividades_jefe_equipo")
+    .select("*")
+    .order("hora_inicio", { ascending: false });
+  if (activitiesResult.error) throw activitiesResult.error;
+  const activities = activitiesResult.data || [];
+  if (!activities.length) return [];
+
+  const activityIds = activities.map((item) => Number(item.id));
+  const [usersResult, tasksResult, brandsResult, storesResult, historyResult] = await Promise.all([
+    supabase.from("usuarios").select("id,nombre,email"),
+    supabase.from(await getTaskTableName()).select("*"),
+    supabase.from("marcas").select("id,nombre"),
+    supabase.from("tiendas").select("id,nombre"),
+    supabase.from("actividades_jefe_equipo_historial").select("*").in("actividad_id", activityIds).order("created_at", { ascending: true }).order("id", { ascending: true })
+  ]);
+  if (usersResult.error) throw usersResult.error;
+  if (tasksResult.error) throw tasksResult.error;
+  if (brandsResult.error) throw brandsResult.error;
+  if (storesResult.error) throw storesResult.error;
+  if (historyResult.error) throw historyResult.error;
+
+  const usersById = new Map((usersResult.data || []).map((item) => [Number(item.id), item]));
+  const tasksById = new Map((tasksResult.data || []).map((item) => [Number(item.id), item]));
+  const brandsById = new Map((brandsResult.data || []).map((item) => [Number(item.id), item]));
+  const storesById = new Map((storesResult.data || []).map((item) => [Number(item.id), item]));
+  const historyByActivity = new Map();
+  (historyResult.data || []).forEach((item) => {
+    const key = Number(item.actividad_id);
+    if (!historyByActivity.has(key)) historyByActivity.set(key, []);
+    historyByActivity.get(key).push(item);
+  });
+  return activities.map((item) => normalizeLiveActivity(
+    item,
+    usersById,
+    tasksById,
+    brandsById,
+    storesById,
+    historyByActivity.get(Number(item.id)) || []
+  ));
+}
+
+async function taskWithScoringRules(taskId) {
+  const tableName = await getTaskTableName();
+  const [taskResult, rulesResult] = await Promise.all([
+    supabase.from(tableName).select("*").eq("id", taskId).maybeSingle(),
+    supabase.from("reglas_puntaje").select("*").eq("tarea_id", taskId)
+  ]);
+  if (taskResult.error) throw taskResult.error;
+  if (rulesResult.error) throw rulesResult.error;
+  return taskResult.data ? applyScoringRules(taskResult.data, rulesResult.data || []) : null;
+}
+
+async function validateLiveActivityContext(body) {
+  const taskId = Number(body.tarea_id);
+  const workerId = Number(body.trabajador_id);
+  if (!Number.isInteger(taskId) || taskId <= 0 || !Number.isInteger(workerId) || workerId <= 0) {
+    throw new Error("Operante y tarea son obligatorios.");
+  }
+  const [task, workerResult] = await Promise.all([
+    taskWithScoringRules(taskId),
+    supabase.from("usuarios").select("id,rol,activo").eq("id", workerId).maybeSingle()
+  ]);
+  if (!task || !isActive(task.activo) || !isGroupLeaderTimeTask(task)) {
+    throw new Error("Selecciona una tarea por tiempo valida.");
+  }
+  if (workerResult.error || !workerResult.data || normalizeRole(workerResult.data.rol) !== "operante" || !isActive(workerResult.data.activo)) {
+    throw new Error("Selecciona un operante activo.");
+  }
+  return { task, taskId, workerId };
+}
+
+async function insertLiveActivityHistory(activityId, quantity, userId, type, points = null) {
+  let result = await supabase.from("actividades_jefe_equipo_historial").insert({
+    actividad_id: activityId,
+    cantidad: quantity,
+    registrado_por: userId,
+    tipo: type,
+    puntaje: points
+  });
+  if (isPrimaryKeySequenceConflict(result.error)) {
+    result = await supabase.from("actividades_jefe_equipo_historial").insert({
+      id: await nextTableId("actividades_jefe_equipo_historial"),
+      actividad_id: activityId,
+      cantidad: quantity,
+      registrado_por: userId,
+      tipo: type,
+      puntaje: points
+    });
+  }
+  if (result.error) throw result.error;
+}
+
+async function handleCreateLiveGroupLeaderActivity(request, response) {
+  try {
+    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    if (!session) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const { task, taskId, workerId } = await validateLiveActivityContext(body);
+    const start = new Date(body.hora_inicio || "");
+    if (Number.isNaN(start.getTime())) {
+      sendJson(response, 400, { error: "Selecciona una hora de inicio valida." });
+      return;
+    }
+    if (start.getTime() > Date.now() + 60000) {
+      sendJson(response, 400, { error: "La hora de inicio no puede estar en el futuro." });
+      return;
+    }
+    const startLimaDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: ATTENDANCE_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(start);
+    if (startLimaDate !== currentLimaDate()) {
+      sendJson(response, 400, { error: "La hora de inicio debe pertenecer al dia actual en Lima." });
+      return;
+    }
+    const openResult = await supabase.from("actividades_jefe_equipo").select("id").eq("trabajador_id", workerId).eq("estado", "EN_CURSO").maybeSingle();
+    if (openResult.error) throw openResult.error;
+    if (openResult.data) {
+      sendJson(response, 409, { error: "El operante ya tiene una actividad en curso. Finalizala antes de iniciar otra." });
+      return;
+    }
+
+    const requiresStore = taskUsesStore(task);
+    const tiendaId = nullableNumber(body.tienda_id);
+    const guideNumber = String(body.numero_guia || body.codigo_guia || "").trim();
+    if (requiresStore && !tiendaId) {
+      sendJson(response, 400, { error: `Selecciona una tienda para ${taskTitle(task)}.` });
+      return;
+    }
+    if (guideNumber && !isGuideBreakdownTask(task)) {
+      sendJson(response, 400, { error: "El numero de guia no esta disponible para esta tarea." });
+      return;
+    }
+    if (tiendaId) {
+      const storeResult = await supabase.from("tiendas").select("id,activo").eq("id", tiendaId).maybeSingle();
+      if (storeResult.error || !storeResult.data || !isActive(storeResult.data.activo)) {
+        sendJson(response, 400, { error: "Selecciona una tienda activa y valida." });
+        return;
+      }
+    }
+    const payload = {
+      encargado_id: Number(session.id),
+      trabajador_id: workerId,
+      tarea_id: taskId,
+      fecha_registro: currentLimaDate(),
+      hora_inicio: start.toISOString(),
+      cantidad: 0,
+      puntaje: null,
+      numero_guia: guideNumber || null,
+      lote: null,
+      marca_id: null,
+      tienda_id: requiresStore ? tiendaId : null,
+      observacion: String(body.observacion || body.detalle || "").trim() || null,
+      estado: "EN_CURSO",
+      updated_at: new Date().toISOString()
+    };
+    const result = await supabase.rpc("iniciar_actividad_jefe_equipo", {
+      p_encargado_id: payload.encargado_id,
+      p_trabajador_id: payload.trabajador_id,
+      p_tarea_id: payload.tarea_id,
+      p_fecha_registro: payload.fecha_registro,
+      p_hora_inicio: payload.hora_inicio,
+      p_numero_guia: payload.numero_guia,
+      p_lote: payload.lote,
+      p_marca_id: payload.marca_id,
+      p_tienda_id: payload.tienda_id,
+      p_observacion: payload.observacion
+    });
+    if (result.error?.code === "23505") {
+      sendJson(response, 409, { error: "El operante ya tiene una actividad en curso." });
+      return;
+    }
+    if (result.error) throw result.error;
+    const createdActivity = Array.isArray(result.data) ? result.data[0] : result.data;
+    const activity = (await selectLiveGroupLeaderActivities()).find((item) => Number(item.id) === Number(createdActivity.id));
+    sendJson(response, 201, { activity });
+  } catch (error) {
+    if (/obligatorios|valida|activo/i.test(String(error?.message || "")) && !operationsSchemaMissing(error)) {
+      sendJson(response, 400, { error: error.message });
+      return;
+    }
+    handleOperationsError(response, error, "No se pudo iniciar la actividad.");
+  }
+}
+
+async function handleUpdateLiveGroupLeaderActivity(request, response, activityId) {
+  try {
+    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    if (!session) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const currentResult = await supabase.from("actividades_jefe_equipo").select("*").eq("id", activityId).maybeSingle();
+    if (currentResult.error) throw currentResult.error;
+    const current = currentResult.data;
+    if (!current) {
+      sendJson(response, 404, { error: "Actividad no encontrada." });
+      return;
+    }
+    if (Number(current.encargado_id) !== Number(session.id)) {
+      sendJson(response, 403, { error: "Solo el jefe que inicio la actividad puede actualizarla." });
+      return;
+    }
+    if (current.estado !== "EN_CURSO") {
+      sendJson(response, 409, { error: "La actividad ya fue finalizada y no admite mas cambios." });
+      return;
+    }
+    const task = await taskWithScoringRules(current.tarea_id);
+    if (!task || !isActive(task.activo) || !isGroupLeaderTimeTask(task)) {
+      sendJson(response, 409, { error: "La tarea de esta actividad ya no esta activa o disponible." });
+      return;
+    }
+    const supportsMetadata = isEtiquetadoTask(task);
+    const hasBrandField = Object.hasOwn(body, "marca_id");
+    const hasLoteField = Object.hasOwn(body, "lote");
+    const hasUnexpectedBrand = hasBrandField && body.marca_id !== null && body.marca_id !== "";
+    const hasUnexpectedLote = hasLoteField && String(body.lote || "").trim() !== "";
+    if (!supportsMetadata && (hasUnexpectedBrand || hasUnexpectedLote || Boolean(body.actualizar_datos))) {
+      sendJson(response, 400, { error: "Marca y lote solo estan disponibles para la tarea Etiquetado." });
+      return;
+    }
+    let marcaId = supportsMetadata
+      ? (hasBrandField ? nullableNumber(body.marca_id) : nullableNumber(current.marca_id))
+      : null;
+    const lote = supportsMetadata
+      ? (hasLoteField ? String(body.lote || "").trim().toUpperCase() || null : current.lote || null)
+      : null;
+    if (lote && lote.length > 100) {
+      sendJson(response, 400, { error: "El codigo de lote no puede superar 100 caracteres." });
+      return;
+    }
+    if (hasBrandField && body.marca_id !== null && body.marca_id !== "" && (!Number.isInteger(marcaId) || marcaId <= 0)) {
+      sendJson(response, 400, { error: "Selecciona una marca valida." });
+      return;
+    }
+    if (marcaId) {
+      const brandResult = await supabase.from("marcas").select("*").eq("id", marcaId).maybeSingle();
+      if (brandResult.error) throw brandResult.error;
+      if (!brandResult.data || !isActive(brandResult.data.activo)) {
+        sendJson(response, 400, { error: "Selecciona una marca activa y valida." });
+        return;
+      }
+    }
+    const metadataOnly = Boolean(body.actualizar_datos);
+    const quantity = metadataOnly ? Number(current.cantidad || 0) : Number(body.cantidad);
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      sendJson(response, 400, { error: "La cantidad debe ser un numero entero mayor o igual a cero." });
+      return;
+    }
+    if (quantity < Number(current.cantidad || 0)) {
+      sendJson(response, 400, { error: "La cantidad no puede ser menor que la ultima cantidad registrada." });
+      return;
+    }
+    const finishRequested = Boolean(body.finalizar) || Boolean(body.hora_fin);
+    if (metadataOnly && finishRequested) {
+      sendJson(response, 400, { error: "Guarda los datos o finaliza la actividad, pero no ambas acciones en modo solo datos." });
+      return;
+    }
+    const metadataChanged = supportsMetadata && (
+      Number(marcaId || 0) !== Number(current.marca_id || 0) ||
+      String(lote || "") !== String(current.lote || "")
+    );
+    if (!finishRequested && quantity === Number(current.cantidad || 0) && !metadataChanged && !metadataOnly) {
+      sendJson(response, 400, { error: "Ingresa una cantidad mayor para registrar un nuevo avance." });
+      return;
+    }
+
+    if (!finishRequested) {
+      const updateResult = await supabase.rpc("actualizar_actividad_jefe_equipo", {
+        p_actividad_id: activityId,
+        p_encargado_id: Number(session.id),
+        p_cantidad: quantity,
+        p_hora_fin: null,
+        p_marca_id: marcaId,
+        p_lote: lote,
+        p_actualizar_datos: metadataChanged || metadataOnly
+      });
+      if (updateResult.error) throw updateResult.error;
+      if (!updateResult.data) {
+        sendJson(response, 409, { error: "La actividad fue modificada por otra solicitud. Actualiza la pantalla." });
+        return;
+      }
+      const activity = (await selectLiveGroupLeaderActivities()).find((item) => Number(item.id) === Number(activityId));
+      sendJson(response, 200, { activity });
+      return;
+    }
+
+    if (quantity <= 0) {
+      sendJson(response, 400, { error: "Para finalizar, la cantidad debe ser mayor a cero." });
+      return;
+    }
+    if (supportsMetadata && !marcaId) {
+      sendJson(response, 400, { error: "Selecciona una marca antes de finalizar la actividad de Etiquetado." });
+      return;
+    }
+    const finish = new Date(body.hora_fin || "");
+    const start = new Date(current.hora_inicio);
+    if (Number.isNaN(finish.getTime()) || finish <= start || finish.getTime() > Date.now() + 60000) {
+      sendJson(response, 400, { error: "La hora fin debe ser posterior al inicio y no puede estar en el futuro." });
+      return;
+    }
+    const closeResult = await supabase.rpc("actualizar_actividad_jefe_equipo", {
+      p_actividad_id: activityId,
+      p_encargado_id: Number(session.id),
+      p_cantidad: quantity,
+      p_hora_fin: finish.toISOString(),
+      p_marca_id: marcaId,
+      p_lote: lote,
+      p_actualizar_datos: supportsMetadata
+    });
+    if (closeResult.error?.code === "23514") {
+      sendJson(response, 409, { error: closeResult.error.message || "La actividad o sus reglas cambiaron. Actualiza la pantalla e intenta nuevamente." });
+      return;
+    }
+    if (closeResult.error) throw closeResult.error;
+    const activity = (await selectLiveGroupLeaderActivities()).find((item) => Number(item.id) === Number(activityId));
+    sendJson(response, 200, { activity });
+  } catch (error) {
+    handleOperationsError(response, error, "No se pudo actualizar la actividad.");
+  }
+}
+
+async function handleCancelLiveGroupLeaderActivity(request, response, activityId) {
+  try {
+    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    if (!session) return;
+    const currentResult = await supabase.from("actividades_jefe_equipo").select("id,encargado_id,estado,registro_tarea_id").eq("id", activityId).maybeSingle();
+    if (currentResult.error) throw currentResult.error;
+    if (!currentResult.data) {
+      sendJson(response, 404, { error: "Actividad no encontrada." });
+      return;
+    }
+    if (Number(currentResult.data.encargado_id) !== Number(session.id)) {
+      sendJson(response, 403, { error: "Solo el jefe que inicio la actividad puede cancelarla." });
+      return;
+    }
+    if (currentResult.data.estado !== "EN_CURSO" || currentResult.data.registro_tarea_id) {
+      sendJson(response, 409, { error: "Solo se pueden cancelar actividades que siguen en curso." });
+      return;
+    }
+    const deleteResult = await supabase.from("actividades_jefe_equipo").delete().eq("id", activityId).eq("estado", "EN_CURSO").select("id").maybeSingle();
+    if (deleteResult.error) throw deleteResult.error;
+    sendJson(response, 200, { deleted: Boolean(deleteResult.data) });
+  } catch (error) {
+    handleOperationsError(response, error, "No se pudo cancelar la actividad.");
   }
 }
 
@@ -2559,12 +3043,20 @@ export async function handleRequest(request, response, { serveFiles = true } = {
   const activityReportSettingMatch = apiPath.match(/^\/api\/activity-report\/settings\/(\d+)\/?$/);
   const activityReportSendMatch = apiPath.match(/^\/api\/activity-report\/settings\/(\d+)\/send\/?$/);
   const activityReportPreviewMatch = apiPath.match(/^\/api\/activity-report\/settings\/(\d+)\/preview\/?$/);
+  const groupLeaderActivityMatch = apiPath.match(/^\/api\/group-leader\/activities\/(\d+)\/?$/);
 
   if (/^\/api\/health\/?$/.test(apiPath) && request.method === "GET") {
     sendJson(response, 200, {
       ok: true,
-      apiVersion: 6,
-      features: ["attendance-report", "attendance-report-schedules", "activity-report-shifts", "activity-report-schedules"]
+      apiVersion: 7,
+      features: [
+        "attendance-report",
+        "attendance-report-schedules",
+        "activity-report-shifts",
+        "activity-report-schedules",
+        "attendance-early-exit",
+        "live-group-activities"
+      ]
     });
     return;
   }
@@ -2778,6 +3270,21 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (request.url?.startsWith("/api/group-leader/context") && request.method === "GET") {
     await handleGroupLeaderContext(request, response);
+    return;
+  }
+
+  if (/^\/api\/group-leader\/activities\/?$/.test(apiPath) && request.method === "POST") {
+    await handleCreateLiveGroupLeaderActivity(request, response);
+    return;
+  }
+
+  if (groupLeaderActivityMatch && request.method === "PUT") {
+    await handleUpdateLiveGroupLeaderActivity(request, response, Number(groupLeaderActivityMatch[1]));
+    return;
+  }
+
+  if (groupLeaderActivityMatch && request.method === "DELETE") {
+    await handleCancelLiveGroupLeaderActivity(request, response, Number(groupLeaderActivityMatch[1]));
     return;
   }
 

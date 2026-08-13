@@ -524,6 +524,9 @@ export function validateQuantityRanges(ranges = []) {
     if (index < ranges.length - 1 && (to === null || !Number.isFinite(to))) {
       return `Ingresa una cantidad final para ${index + 1} punto${index ? "s" : ""}.`;
     }
+    if (index === ranges.length - 1 && to !== null) {
+      return "Deja vacío el final del rango de 10 puntos para cubrir cualquier cantidad superior.";
+    }
     if (to !== null && (!Number.isFinite(to) || to < from)) {
       return `El final del rango de ${index + 1} punto${index ? "s" : ""} no puede ser menor que el inicio.`;
     }

@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import {
   BadgeCheck,
+  ChevronDown,
   ClipboardCheck,
   Filter,
   Hash,
@@ -12,13 +13,15 @@ import {
   UsersRound
 } from "lucide-react";
 import {
+  cancelGroupLeaderActivity,
   createIncident,
-  createGroupLeaderRecord,
   friendlyError,
   loadIncidentContext,
-  loadGroupLeaderContext
+  loadGroupLeaderContext,
+  startGroupLeaderActivity,
+  updateGroupLeaderActivity
 } from "../lib/repository";
-import { formatDateTimeLima, todayLimaISO } from "../lib/dates";
+import { formatDateTimeLima, limaDateTimeToISO, nowLimaTimeHHMM, todayLimaISO } from "../lib/dates";
 import {
   getGroupLeaderTaskMode,
   getTaskTitle,
@@ -31,23 +34,21 @@ import {
   taskUsesStore
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
+import { validateActivityCardMetadata, validateProgressQuantity } from "../lib/operations";
 import { Alert, Button, CheckboxInput, DataTable, LoadingBlock, Panel, SelectInput, Tabs, TextArea, TextInput } from "./ui";
 import WorkerDashboard from "./WorkerDashboard";
 
-const initialForm = {
-  trabajador_id: "",
-  tarea_id: "",
-  cantidad: "",
-  horas: "",
-  minutos: "",
-  usaCodigoGuia: false,
-  codigo_guia: "",
-  usaLote: false,
-  lote: "",
-  marca_id: "",
-  tienda_id: "",
-  detalle: ""
-};
+function createInitialForm() {
+  return {
+    trabajador_id: "",
+    tarea_id: "",
+    hora_inicio: nowLimaTimeHHMM(),
+    usaCodigoGuia: false,
+    codigo_guia: "",
+    tienda_id: "",
+    detalle: ""
+  };
+}
 
 const initialFilters = {
   scope: "all",
@@ -404,15 +405,16 @@ function IncidentDashboard({ user }) {
 }
 
 function GroupTimeDashboard({ user }) {
-  const [form, setForm] = useState(initialForm);
+  const [form, setForm] = useState(createInitialForm);
   const [filters, setFilters] = useState(initialFilters);
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [activityDrafts, setActivityDrafts] = useState({});
 
   const { data, loading, error, reload } = useAsyncData(
     loadGroupLeaderContext,
     [user?.id],
-    { workers: [], tasks: [], brands: [], stores: [], leaders: [], records: [] }
+    { workers: [], tasks: [], brands: [], stores: [], leaders: [], activities: [], records: [] }
   );
 
   const workers = data.workers || [];
@@ -420,6 +422,10 @@ function GroupTimeDashboard({ user }) {
   const brands = data.brands || [];
   const stores = data.stores || [];
   const records = data.records || [];
+  const activities = data.activities || [];
+  const openActivities = activities.filter((activity) => activity.estado === "EN_CURSO" && String(activity.encargado_id) === String(user.id));
+  const completedActivities = activities.filter((activity) => activity.estado === "FINALIZADA");
+  const myCompletedActivities = completedActivities.filter((activity) => String(activity.encargado_id) === String(user.id));
 
   const selectedTask = useMemo(
     () => tasks.find((task) => String(task.id) === String(form.tarea_id)),
@@ -433,13 +439,14 @@ function GroupTimeDashboard({ user }) {
 
   const metrics = useMemo(() => {
     const today = todayLimaISO();
+    const mineActivities = activities.filter((record) => String(record.encargado_id) === String(user.id));
     return {
-      total: records.length,
-      today: records.filter((record) => String(record.fecha_registro || "").slice(0, 10) === today).length,
-      mine: records.filter((record) => String(record.encargado_id) === String(user.id)).length,
-      adicionales: records.filter((record) => record.codigo_guia || record.lote).length
+      total: myCompletedActivities.length,
+      today: mineActivities.filter((record) => String(record.fecha_registro || "").slice(0, 10) === today).length,
+      mine: openActivities.length,
+      adicionales: openActivities.length
     };
-  }, [records, user.id]);
+  }, [activities, myCompletedActivities.length, openActivities.length, user.id]);
 
   const filteredRecords = useMemo(() => {
     const term = normalizeText(filters.search);
@@ -496,7 +503,7 @@ function GroupTimeDashboard({ user }) {
   }
 
   function resetForm() {
-    setForm(initialForm);
+    setForm(createInitialForm());
   }
 
   function validate() {
@@ -504,67 +511,31 @@ function GroupTimeDashboard({ user }) {
     if (!selectedTask) return "Selecciona una tarea.";
     if (!isGroupLeaderTimeTask(selectedTask)) return "Esta tarea no pertenece al registro por tiempo.";
     if (form.usaCodigoGuia && !taskUsesGuideBreakdown(selectedTask)) return "Esta tarea no permite numero de guia.";
-    if (form.usaLote && !taskUsesLote(selectedTask)) return "Esta tarea no permite lote.";
-    if (taskMode.requiresQuantity && (!form.cantidad || Number(form.cantidad) <= 0)) {
-      return "Ingresa una cantidad mayor a cero.";
-    }
-    if (taskMode.requiresQuantity && !Number.isInteger(Number(form.cantidad))) {
-      return "La cantidad debe ser un número entero.";
-    }
-    if (form.usaCodigoGuia && !form.codigo_guia.trim()) {
-      return "Ingresa el número de guía.";
-    }
-    if (form.usaLote && !form.lote.trim()) {
-      return "Ingresa el código de lote.";
-    }
-    if (taskMode.requiresBrand && !form.marca_id) {
-      return "Selecciona una marca.";
-    }
-    if (taskMode.requiresStore && !form.tienda_id) {
-      return "Selecciona una tienda.";
-    }
-    if (taskMode.requiresTime) {
-      const hours = Number(form.horas || 0);
-      const minutes = Number(form.minutos || 0);
-      const totalMinutes = hours * 60 + minutes;
-      if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return "Horas y minutos deben ser números enteros.";
-      if (minutes < 0 || minutes > 59) return "Los minutos deben estar entre 0 y 59.";
-      if (totalMinutes <= 0) return "Ingresa el tiempo realizado.";
-    }
+    if (form.usaCodigoGuia && !form.codigo_guia.trim()) return "Ingresa el numero de guia.";
+    if (taskMode.requiresStore && !form.tienda_id) return "Selecciona una tienda.";
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.hora_inicio)) return "Selecciona una hora de inicio valida.";
     return "";
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
     setStatus(null);
-
     const validation = validate();
     if (validation) {
       setStatus({ type: "error", message: validation });
       return;
     }
-
-    const totalMinutes = taskMode.requiresTime ? Number(form.horas || 0) * 60 + Number(form.minutos || 0) : null;
-
     setSaving(true);
     try {
-      const payload = {
-        encargado_id: user.id,
+      await startGroupLeaderActivity({
         trabajador_id: Number(form.trabajador_id),
         tarea_id: Number(form.tarea_id),
-        tarea_nombre: getTaskTitle(selectedTask),
-        fecha_registro: todayLimaISO(),
-        cantidad: Number(form.cantidad),
-        tiempo_minutos: totalMinutes,
+        hora_inicio: new Date(`${todayLimaISO()}T${form.hora_inicio}:00-05:00`).toISOString(),
         codigo_guia: taskUsesGuideBreakdown(selectedTask) && form.usaCodigoGuia ? form.codigo_guia.trim() : null,
-        lote: taskUsesLote(selectedTask) && form.usaLote ? form.lote.trim().toUpperCase() : null,
-        marca_id: taskMode.requiresBrand ? Number(form.marca_id) : null,
         tienda_id: taskMode.requiresStore ? Number(form.tienda_id) : null,
         detalle: form.detalle.trim() || null
-      };
-
-      await createGroupLeaderRecord(payload);
-      setStatus({ type: "success", message: "Registro guardado correctamente." });
+      });
+      setStatus({ type: "success", message: "Actividad iniciada. Registra los avances desde la tarjeta creada abajo." });
       resetForm();
       reload();
     } catch (err) {
@@ -574,6 +545,106 @@ function GroupTimeDashboard({ user }) {
     }
   }
 
+  function draftFor(activity) {
+    return activityDrafts[activity.id] || {
+      cantidad: String(activity.cantidad ?? 0),
+      marca_id: activity.marca_id ? String(activity.marca_id) : "",
+      usaLote: Boolean(activity.lote),
+      lote: activity.lote || "",
+      fecha_fin: todayLimaISO(),
+      hora_fin: nowLimaTimeHHMM(),
+      expanded: true,
+      saving: false
+    };
+  }
+
+  function updateActivityDraft(activity, changes) {
+    setActivityDrafts((current) => ({ ...current, [activity.id]: { ...draftFor(activity), ...(current[activity.id] || {}), ...changes } }));
+  }
+
+  async function saveActivityProgress(activity, action = "progress") {
+    const draft = draftFor(activity);
+    const task = tasks.find((item) => String(item.id) === String(activity.tarea_id)) || { nombre: activity.tarea_nombre };
+    const usesBrand = taskUsesBrandsByDefault(task);
+    const usesLote = taskUsesLote(task);
+    const finalize = action === "finish";
+    const metadataOnly = action === "metadata";
+    if (!metadataOnly) {
+      const validation = validateProgressQuantity(activity.cantidad, draft.cantidad);
+      if (validation) {
+        setStatus({ type: "error", message: validation });
+        return;
+      }
+    }
+    const metadataValidation = validateActivityCardMetadata({
+      requiresBrand: usesBrand,
+      allowsLote: usesLote,
+      marcaId: draft.marca_id,
+      useLote: draft.usaLote,
+      lote: draft.lote,
+      requireBrand: finalize
+    });
+    if (metadataValidation) {
+      setStatus({ type: "error", message: metadataValidation });
+      return;
+    }
+    if (!metadataOnly && !finalize && Number(draft.cantidad) === Number(activity.cantidad || 0)) {
+      setStatus({ type: "error", message: "Ingresa una cantidad mayor para registrar un nuevo avance." });
+      return;
+    }
+    const finishDateTime = finalize ? limaDateTimeToISO(draft.fecha_fin, draft.hora_fin) : "";
+    if (finalize && !finishDateTime) {
+      setStatus({ type: "error", message: "Selecciona una fecha y hora fin validas." });
+      return;
+    }
+    updateActivityDraft(activity, { saving: true });
+    setStatus(null);
+    try {
+      await updateGroupLeaderActivity(activity.id, {
+        cantidad: metadataOnly ? Number(activity.cantidad || 0) : Number(draft.cantidad),
+        ...(usesBrand ? { marca_id: draft.marca_id ? Number(draft.marca_id) : null } : {}),
+        ...(usesLote ? { lote: draft.usaLote ? String(draft.lote || "").trim().toUpperCase() : null } : {}),
+        ...(metadataOnly ? { actualizar_datos: true } : {}),
+        ...(finalize ? { finalizar: true, hora_fin: finishDateTime } : {})
+      });
+      setStatus({
+        type: "success",
+        message: finalize
+          ? "Actividad finalizada y puntaje asignado."
+          : metadataOnly
+            ? "Marca y lote guardados en la tarjeta."
+            : "Avance guardado en el historial."
+      });
+      if (metadataOnly) {
+        updateActivityDraft(activity, {
+          marca_id: draft.marca_id,
+          usaLote: draft.usaLote,
+          lote: draft.usaLote ? String(draft.lote || "").trim().toUpperCase() : "",
+          saving: false
+        });
+      } else {
+        setActivityDrafts((current) => { const next = { ...current }; delete next[activity.id]; return next; });
+      }
+      reload();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+      updateActivityDraft(activity, { saving: false });
+    }
+  }
+
+  async function cancelActivity(activity) {
+    if (!window.confirm(`¿Cancelar la actividad de ${activity.trabajador_nombre}? Se eliminará su historial de avances y esta acción no se puede deshacer.`)) return;
+    setStatus(null);
+    updateActivityDraft(activity, { saving: true });
+    try {
+      await cancelGroupLeaderActivity(activity.id);
+      setStatus({ type: "success", message: "Actividad cancelada. El operante queda disponible para una nueva actividad." });
+      reload();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+      updateActivityDraft(activity, { saving: false });
+    }
+  }
   return (
     <div className="group-dashboard stack">
       <section className="group-hero">
@@ -583,25 +654,26 @@ function GroupTimeDashboard({ user }) {
           <span>{user.nombre || user.email}</span>
         </div>
         <div className="group-metrics" aria-label="Resumen de registros">
-          <MetricTile icon={ClipboardCheck} label="Registros" value={metrics.total} />
-          <MetricTile icon={Timer} label="Hoy" value={metrics.today} />
-          <MetricTile icon={UserRound} label="Mios" value={metrics.mine} />
-          <MetricTile icon={Hash} label="Con guía/lote" value={metrics.adicionales} />
+          <MetricTile icon={ClipboardCheck} label="Finalizadas" value={metrics.total} />
+          <MetricTile icon={Timer} label="Actividades hoy" value={metrics.today} />
+          <MetricTile icon={UserRound} label="Abiertas por mí" value={metrics.mine} />
+          <MetricTile icon={Hash} label="En curso" value={metrics.adicionales} />
         </div>
       </section>
 
       <div className="group-layout">
         <Panel
-          title="Nuevo registro independiente"
-          eyebrow="Cantidad y tiempo"
+          title="Iniciar actividad"
+          eyebrow="Seguimiento en tiempo real"
           className="group-form-panel"
           actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}
         >
           {loading ? <LoadingBlock /> : null}
           {error ? <Alert type="error">{error}</Alert> : null}
           {status ? <Alert type={status.type}>{status.message}</Alert> : null}
+          {data.operationsMigrationRequired ? <Alert type="error">Falta aplicar la migración SQL 026 en Supabase para activar las tarjetas en tiempo real.</Alert> : null}
           <Alert>
-            Este formulario crea un registro de actividad por tiempo para el operante seleccionado.
+            Selecciona operante, tarea y hora de inicio. Para Etiquetado, la marca y el lote se completan después dentro de la tarjeta.
           </Alert>
           {!loading && !workers.length ? <Alert>No hay trabajadores operantes activos.</Alert> : null}
           {!loading && !tasks.length ? <Alert>No hay tareas registradas en la base de datos.</Alert> : null}
@@ -619,12 +691,20 @@ function GroupTimeDashboard({ user }) {
                 }))
               ]}
             />
+            <TextInput
+              label="Hora de inicio"
+              type="time"
+              value={form.hora_inicio}
+              onChange={(hora_inicio) => updateForm({ hora_inicio })}
+              max={nowLimaTimeHHMM()}
+            />
             <SelectInput
               label="Tarea"
               value={form.tarea_id}
               onChange={(tarea_id) =>
                 setForm({
-                  ...initialForm,
+                  ...createInitialForm(),
+                  hora_inicio: form.hora_inicio,
                   trabajador_id: form.trabajador_id,
                   tarea_id
                 })
@@ -644,7 +724,6 @@ function GroupTimeDashboard({ user }) {
                 task={selectedTask}
                 form={form}
                 updateForm={updateForm}
-                brands={brands}
                 stores={stores}
               />
             ) : null}
@@ -664,7 +743,7 @@ function GroupTimeDashboard({ user }) {
             </div>
 
             <div className="form-span form-actions">
-              <Button type="submit" icon={Save} loading={saving}>Guardar registro</Button>
+              <Button type="submit" icon={Save} loading={saving} disabled={data.operationsMigrationRequired}>Iniciar actividad</Button>
             </div>
           </form>
         </Panel>
@@ -682,6 +761,38 @@ function GroupTimeDashboard({ user }) {
           </div>
         </Panel>
       </div>
+
+      <Panel
+        title="Actividades en curso"
+        eyebrow="Actualización de cantidad en tiempo real"
+        actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}
+      >
+        {!loading && !openActivities.length ? <Alert>No hay actividades abiertas. Inicia una para crear su tarjeta.</Alert> : null}
+        <div className="activity-session-grid">
+          {openActivities.map((activity) => (
+            <LiveActivityCard
+              key={activity.id}
+              activity={activity}
+              task={tasks.find((item) => String(item.id) === String(activity.tarea_id)) || { nombre: activity.tarea_nombre }}
+              brands={brands}
+              draft={draftFor(activity)}
+              onDraft={(changes) => updateActivityDraft(activity, changes)}
+              onSaveMetadata={() => saveActivityProgress(activity, "metadata")}
+              onSave={() => saveActivityProgress(activity, "progress")}
+              onFinish={() => saveActivityProgress(activity, "finish")}
+              onCancel={() => cancelActivity(activity)}
+            />
+          ))}
+        </div>
+      </Panel>
+
+      {myCompletedActivities.length ? (
+        <Panel title="Actividades finalizadas" eyebrow="Puntaje ya asignado">
+          <div className="activity-session-grid activity-completed-list">
+            {myCompletedActivities.slice(0, 12).map((activity) => <CompletedActivityCard key={activity.id} activity={activity} />)}
+          </div>
+        </Panel>
+      ) : null}
 
       <Panel
         title="Historial registrado"
@@ -758,7 +869,7 @@ function GroupTimeDashboard({ user }) {
   );
 }
 
-function DynamicGroupFields({ mode, task, form, updateForm, brands, stores }) {
+function DynamicGroupFields({ mode, task, form, updateForm, stores }) {
   if (mode.completedOnly) {
     return (
       <div className="form-span">
@@ -769,49 +880,6 @@ function DynamicGroupFields({ mode, task, form, updateForm, brands, stores }) {
 
   return (
     <>
-      {mode.requiresQuantity ? (
-        <TextInput
-          label="Cantidad realizada"
-          type="number"
-          min="1"
-          step="1"
-          value={form.cantidad}
-          onChange={(cantidad) => updateForm({ cantidad })}
-        />
-      ) : null}
-      {mode.requiresTime ? (
-        <>
-          <TextInput
-            label="Horas"
-            type="number"
-            min="0"
-            step="1"
-            value={form.horas}
-            onChange={(horas) => updateForm({ horas })}
-          />
-          <TextInput
-            label="Minutos"
-            type="number"
-            min="0"
-            max="59"
-            step="1"
-            value={form.minutos}
-            onChange={(minutos) => updateForm({ minutos })}
-          />
-        </>
-      ) : null}
-      {mode.requiresBrand ? (
-        <SelectInput
-          label="Marca"
-          value={form.marca_id}
-          onChange={(marca_id) => updateForm({ marca_id })}
-          options={[
-            { value: "", label: "Selecciona marca" },
-            ...(brands || []).map((brand) => ({ value: String(brand.id), label: brand.nombre }))
-          ]}
-          hint="Igual que en el registro del operante para esta tarea."
-        />
-      ) : null}
       {mode.requiresStore ? (
         <SelectInput
           label="Tienda"
@@ -842,23 +910,163 @@ function DynamicGroupFields({ mode, task, form, updateForm, brands, stores }) {
           ) : null}
         </>
       ) : null}
-      {taskUsesLote(task) ? (
-        <CheckboxInput
-          label="Añadir código de lote"
-          checked={form.usaLote}
-          onChange={(usaLote) => updateForm({ usaLote, lote: usaLote ? form.lote : "" })}
-          hint="Disponible solo para Etiquetado."
-        />
-      ) : null}
-      {taskUsesLote(task) && form.usaLote ? (
-        <TextInput
-          label="Código de lote"
-          value={form.lote}
-          onChange={(lote) => updateForm({ lote: lote.toUpperCase() })}
-          placeholder="Ej. A05"
-        />
-      ) : null}
     </>
+  );
+}
+
+function LiveActivityCard({ activity, task, brands, draft, onDraft, onSaveMetadata, onSave, onFinish, onCancel }) {
+  const expanded = draft.expanded !== false;
+  const usesBrand = taskUsesBrandsByDefault(task);
+  const usesLote = taskUsesLote(task);
+  return (
+    <article className="activity-session-card open">
+      <button type="button" className="activity-session-summary" aria-expanded={expanded} onClick={() => onDraft({ expanded: !expanded })}>
+        <span className="activity-session-status"><i /> En curso</span>
+        <span className="activity-session-title">
+          <strong>{activity.trabajador_nombre}</strong>
+          <small>{activity.tarea_nombre}</small>
+        </span>
+        <span className="activity-session-start">Inicio {formatTimeLima(activity.hora_inicio)}</span>
+        <ChevronDown className={expanded ? "expanded" : ""} />
+      </button>
+      {expanded ? (
+        <div className="activity-session-body">
+          <div className="activity-session-stats">
+            <div><span>Cantidad actual</span><strong>{formatNumber(activity.cantidad || 0)}</strong></div>
+            <div><span>Duración</span><strong>{formatDurationFromDates(activity.hora_inicio, new Date().toISOString())}</strong></div>
+            <div><span>Puntaje</span><strong>Pendiente</strong></div>
+          </div>
+          {usesBrand || usesLote ? (
+            <section className="activity-metadata-panel" aria-label="Datos de la actividad">
+              <div className="activity-metadata-heading">
+                <div>
+                  <h3>Datos de la actividad</h3>
+                  <p>Completa la marca y, si corresponde, el lote después de iniciar la tarjeta. La marca será obligatoria al finalizar.</p>
+                </div>
+                {!draft.marca_id ? <span className="activity-metadata-warning">Marca pendiente</span> : <span className="activity-metadata-ready">Datos listos</span>}
+              </div>
+              <div className="activity-metadata-grid">
+                {usesBrand ? (
+                  <SelectInput
+                    label="Marca"
+                    value={draft.marca_id}
+                    onChange={(marca_id) => onDraft({ marca_id })}
+                    options={[
+                      { value: "", label: "Selecciona marca" },
+                      ...(brands || []).map((brand) => ({ value: String(brand.id), label: brand.nombre }))
+                    ]}
+                    hint="Obligatoria antes de finalizar la actividad."
+                  />
+                ) : null}
+                {usesLote ? (
+                  <CheckboxInput
+                    label="Añadir código de lote"
+                    checked={draft.usaLote}
+                    onChange={(usaLote) => onDraft({ usaLote, lote: usaLote ? draft.lote : "" })}
+                    hint="El lote es opcional para Etiquetado."
+                  />
+                ) : null}
+                {usesLote && draft.usaLote ? (
+                  <TextInput
+                    label="Código de lote"
+                    value={draft.lote}
+                    onChange={(lote) => onDraft({ lote: lote.toUpperCase() })}
+                    placeholder="Ej. A05"
+                  />
+                ) : null}
+              </div>
+              <div className="activity-metadata-actions">
+                <Button type="button" variant="secondary" icon={Save} loading={draft.saving} onClick={onSaveMetadata}>Guardar marca y lote</Button>
+              </div>
+            </section>
+          ) : null}
+          <div className="activity-progress-form">
+            <TextInput
+              label="Cantidad acumulada"
+              type="number"
+              min={activity.cantidad || 0}
+              step="1"
+              value={draft.cantidad}
+              onChange={(cantidad) => onDraft({ cantidad })}
+              hint="Escribe el total alcanzado hasta este momento."
+            />
+            <TextInput
+              label="Fecha fin"
+              type="date"
+              min={String(activity.fecha_registro || "").slice(0, 10)}
+              max={todayLimaISO()}
+              value={draft.fecha_fin}
+              onChange={(fecha_fin) => onDraft({ fecha_fin })}
+              hint="Permite finalizar actividades que cruzaron la medianoche."
+            />
+            <TextInput
+              label="Hora fin"
+              type="time"
+              value={draft.hora_fin}
+              onChange={(hora_fin) => onDraft({ hora_fin })}
+              hint="Solo se usa al finalizar la actividad."
+            />
+          </div>
+          <div className="activity-session-actions">
+            <Button type="button" variant="danger" loading={draft.saving} onClick={onCancel}>Cancelar actividad</Button>
+            <Button type="button" variant="secondary" icon={Save} loading={draft.saving} onClick={onSave}>Guardar avance</Button>
+            <Button type="button" icon={BadgeCheck} loading={draft.saving} onClick={onFinish}>Finalizar actividad</Button>
+          </div>
+          <ActivityHistory activity={activity} />
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function CompletedActivityCard({ activity }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <article className="activity-session-card completed">
+      <button type="button" className="activity-session-summary" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+        <span className="activity-session-status completed"><BadgeCheck /> Finalizada</span>
+        <span className="activity-session-title"><strong>{activity.trabajador_nombre}</strong><small>{activity.tarea_nombre}</small></span>
+        <span className="activity-session-start">{formatNumber(activity.cantidad)} · {activity.puntaje} pts</span>
+        <ChevronDown className={expanded ? "expanded" : ""} />
+      </button>
+      {expanded ? (
+        <div className="activity-session-body">
+          <div className="activity-session-stats">
+            <div><span>Cantidad final</span><strong>{formatNumber(activity.cantidad)}</strong></div>
+            <div><span>Duración</span><strong>{formatDurationFromDates(activity.hora_inicio, activity.hora_fin)}</strong></div>
+            <div><span>Puntaje</span><strong>{activity.puntaje} pts</strong></div>
+          </div>
+          {activity.marca_nombre || activity.lote ? (
+            <div className="activity-completed-metadata">
+              {activity.marca_nombre ? <span>Marca <strong>{activity.marca_nombre}</strong></span> : null}
+              {activity.lote ? <span>Lote <strong>{activity.lote}</strong></span> : null}
+            </div>
+          ) : null}
+          <ActivityHistory activity={activity} />
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function ActivityHistory({ activity }) {
+  return (
+    <div className="activity-session-history">
+      <h3>Historial de avances</h3>
+      <ol>
+        {(activity.history || []).map((entry, index) => {
+          const previous = Number(activity.history?.[index - 1]?.cantidad || 0);
+          const delta = Number(entry.cantidad || 0) - previous;
+          return (
+            <li key={entry.id}>
+              <span>{formatTimeLima(entry.created_at)}</span>
+              <strong>{formatNumber(entry.cantidad)} acumulado</strong>
+              <small>{entry.tipo === "INICIO" ? "Actividad iniciada" : entry.tipo === "FINALIZACION" ? `Finalizada · ${entry.puntaje || activity.puntaje || 0} pts` : `+${formatNumber(delta)} desde el avance anterior`}</small>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }
 
@@ -934,8 +1142,8 @@ function modePills(mode) {
   if (mode.requiresQuantity) pills.push("Cantidad");
   if (mode.requiresTime) pills.push("Tiempo");
   if (mode.requiresGuideCode) pills.push("Codigo guia");
-  if (mode.requiresLote) pills.push("Lote");
-  if (mode.requiresBrand) pills.push("Marca");
+  if (mode.requiresLote) pills.push("Lote en tarjeta");
+  if (mode.requiresBrand) pills.push("Marca en tarjeta");
   if (mode.requiresStore) pills.push("Tienda");
   return pills.length ? pills : ["Registro"];
 }
@@ -977,4 +1185,22 @@ function formatDuration(value) {
   if (!hours) return `${minutes} min`;
   if (!minutes) return `${hours} h`;
   return `${hours} h ${minutes} min`;
+}
+
+function formatTimeLima(value) {
+  if (!value) return "--:--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--:--";
+  return new Intl.DateTimeFormat("es-PE", {
+    timeZone: "America/Lima",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function formatDurationFromDates(startValue, endValue) {
+  const start = new Date(startValue);
+  const end = new Date(endValue);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return "0 min";
+  return formatDuration(Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000)));
 }
