@@ -79,7 +79,7 @@ const historyColumns = [
 
 export default function GroupLeaderDashboard({ user }) {
   const [workspace, setWorkspace] = useState("Registrar actividad normal");
-  const tabs = ["Registrar actividad normal", "Registrar actividad (tiempo)", "Registrar incidencias"];
+  const tabs = ["Registrar actividad normal", "Registrar actividad (tiempo)", "Registrar incidencias", "Ranking"];
 
   return (
     <div className="stack">
@@ -97,9 +97,136 @@ export default function GroupLeaderDashboard({ user }) {
         </div>
       ) : workspace === "Registrar actividad (tiempo)" ? (
         <GroupTimeDashboard user={user} />
-      ) : (
+      ) : workspace === "Registrar incidencias" ? (
         <IncidentDashboard user={user} />
+      ) : (
+        <RankingDashboard user={user} />
       )}
+    </div>
+  );
+}
+
+function RankingDashboard({ user }) {
+  const [taskId, setTaskId] = useState("");
+  const [topLimit, setTopLimit] = useState("5");
+
+  const { data, loading, error, reload } = useAsyncData(
+    loadGroupLeaderContext,
+    [user?.id],
+    { workers: [], tasks: [], brands: [], stores: [], leaders: [], records: [] }
+  );
+
+  const tasks = (data.tasks || []).filter(isGroupLeaderTimeTask);
+  const workers = data.workers || [];
+  const records = data.records || [];
+
+  const rankingByTask = useMemo(() => {
+    const taskIds = new Set(tasks.map((task) => String(task.id)));
+    // data.workers ya llega filtrado a usuarios operantes con activo = true.
+    const activeWorkers = new Map(workers.map((worker) => [String(worker.id), worker]));
+
+    const grouped = new Map();
+    for (const record of records) {
+      if (!taskIds.has(String(record.tarea_id))) continue;
+      const worker = activeWorkers.get(String(record.trabajador_id));
+      if (!worker) continue;
+      const cantidad = Number(record.cantidad || 0);
+      const minutos = Number(record.tiempo_minutos || 0);
+      if (cantidad <= 0 || minutos <= 0) continue;
+
+      const taskKey = String(record.tarea_id);
+      if (!grouped.has(taskKey)) grouped.set(taskKey, new Map());
+      const workersMap = grouped.get(taskKey);
+
+      const workerKey = String(record.trabajador_id);
+      const current = workersMap.get(workerKey) || {
+        nombre: worker.nombre || worker.email || `ID ${worker.id}`,
+        cantidad: 0,
+        minutos: 0,
+        registros: 0
+      };
+      current.cantidad += cantidad;
+      current.minutos += minutos;
+      current.registros += 1;
+      workersMap.set(workerKey, current);
+    }
+
+    return tasks
+      .map((task) => {
+        const workersMap = grouped.get(String(task.id));
+        if (!workersMap) return null;
+        const ranked = [...workersMap.values()]
+          .map((entry) => ({ ...entry, rendimiento: (entry.cantidad / entry.minutos) * 60 }))
+          .sort((a, b) => b.rendimiento - a.rendimiento);
+        if (!ranked.length) return null;
+        return { id: task.id, nombre: getTaskTitle(task) || `Tarea ${task.id}`, ranked };
+      })
+      .filter(Boolean);
+  }, [records, tasks, workers]);
+
+  const visibleRanking = taskId
+    ? rankingByTask.filter((item) => String(item.id) === String(taskId))
+    : rankingByTask;
+  const limit = Number(topLimit);
+
+  return (
+    <div className="stack">
+      <Panel
+        title="Ranking por tarea"
+        eyebrow="Rendimiento promedio"
+        actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}
+      >
+        {loading ? <LoadingBlock /> : null}
+        {error ? <Alert type="error">{error}</Alert> : null}
+        <Alert>
+          El rendimiento se calcula como cantidad total entre tiempo total, expresado por hora. Solo se consideran las
+          tareas de jefe de equipo que registran cantidad y tiempo, y únicamente operantes activos.
+        </Alert>
+
+        <div className="history-toolbar">
+          <SelectInput
+            label="Tarea"
+            value={taskId}
+            onChange={setTaskId}
+            options={[
+              { value: "", label: "Todas" },
+              ...tasks.map((task) => ({ value: String(task.id), label: getTaskTitle(task) || `ID ${task.id}` }))
+            ]}
+          />
+          <SelectInput
+            label="Mostrar"
+            value={topLimit}
+            onChange={setTopLimit}
+            options={[
+              { value: "3", label: "Top 3" },
+              { value: "5", label: "Top 5" },
+              { value: "10", label: "Top 10" },
+              { value: "0", label: "Todos" }
+            ]}
+          />
+        </div>
+
+        {!loading && !visibleRanking.length ? (
+          <Alert>Aún no hay registros con cantidad y tiempo para armar el ranking.</Alert>
+        ) : null}
+      </Panel>
+
+      {visibleRanking.map((item) => (
+        <Panel key={item.id} title={item.nombre} eyebrow="Top operantes">
+          <DataTable
+            rows={(limit ? item.ranked.slice(0, limit) : item.ranked).map((entry, index) => ({
+              "#": index + 1,
+              Operante: entry.nombre,
+              "Rendimiento (por hora)": formatRate(entry.rendimiento),
+              "Cantidad total": formatNumber(entry.cantidad),
+              "Tiempo total": formatDuration(entry.minutos),
+              Registros: entry.registros
+            }))}
+            columns={["#", "Operante", "Rendimiento (por hora)", "Cantidad total", "Tiempo total", "Registros"]}
+            compact
+          />
+        </Panel>
+      ))}
     </div>
   );
 }
@@ -836,6 +963,10 @@ function SelectionLine({ icon: Icon, label, value }) {
 function formatNumber(value) {
   if (value === null || value === undefined || value === "") return "";
   return Number(value).toLocaleString("es-PE");
+}
+
+function formatRate(value) {
+  return Number(value || 0).toLocaleString("es-PE", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 function formatDuration(value) {

@@ -565,6 +565,47 @@ export async function deleteAmonestacion(amonestacionId) {
   return { deleted: true };
 }
 
+export const PENALTY_KEYS = [
+  { clave: "amonestacion", etiqueta: "Amonestacion", descripcion: "Puntos que resta cada amonestacion registrada." },
+  { clave: "inasistencia", etiqueta: "Inasistencia", descripcion: "Puntos que resta cada dia marcado como AUSENTE." },
+  { clave: "tardanza", etiqueta: "Tardanza", descripcion: "Puntos que resta cada dia marcado como TARDANZA." }
+];
+
+export async function listPenalizaciones() {
+  const result = await db().from("penalizaciones").select("*");
+  if (result.error) {
+    if (isMissingTableError(result.error, "penalizaciones") || isMissingResource(result.error)) {
+      throw new Error("La tabla public.penalizaciones no existe. Ejecuta sql/026_penalizaciones.sql en Supabase.");
+    }
+    throw result.error;
+  }
+
+  const byKey = Object.fromEntries((result.data || []).map((row) => [row.clave, row]));
+  return PENALTY_KEYS.map((item) => ({
+    ...item,
+    puntos: Number(byKey[item.clave]?.puntos ?? 0)
+  }));
+}
+
+export async function savePenalizaciones(items) {
+  const payload = items.map((item) => ({
+    clave: item.clave,
+    etiqueta: item.etiqueta,
+    descripcion: item.descripcion || null,
+    puntos: Number(item.puntos || 0),
+    updated_at: nowLimaISODateTime()
+  }));
+
+  const result = await db().from("penalizaciones").upsert(payload, { onConflict: "clave" }).select("*");
+  if (result.error) {
+    if (isMissingTableError(result.error, "penalizaciones") || isMissingResource(result.error)) {
+      throw new Error("La tabla public.penalizaciones no existe. Ejecuta sql/026_penalizaciones.sql en Supabase.");
+    }
+    throw result.error;
+  }
+  return result.data || [];
+}
+
 export async function listAttendances() {
   const apiResult = await requestLocalApi("/api/attendances");
   if (apiResult?.attendances) return apiResult.attendances;

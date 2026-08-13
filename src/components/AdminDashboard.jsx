@@ -22,10 +22,13 @@ import {
   listAllActivityLogs,
   listAmonestaciones,
   listAttendances,
+  listPenalizaciones,
   listTasks,
   listTiendas,
   listWorkers,
   markAttendance,
+  PENALTY_KEYS,
+  savePenalizaciones,
   selectUsers,
   sendAttendanceReportNow,
   sendActivityReportNow,
@@ -640,6 +643,108 @@ async function loadTaskBundle() {
 }
 
 function TasksPanel() {
+  const [section, setSection] = useState("Puntos a favor");
+
+  return (
+    <div className="stack">
+      <Tabs tabs={["Puntos a favor", "Puntos en contra"]} active={section} onChange={setSection} />
+      {section === "Puntos a favor" ? <TaskScoringSection /> : <PenaltiesSection />}
+    </div>
+  );
+}
+
+function PenaltiesSection() {
+  const { data, loading, error, reload } = useAsyncData(listPenalizaciones, [], null);
+  const [form, setForm] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (data) setForm(data.map((item) => ({ ...item, puntos: String(item.puntos) })));
+  }, [data]);
+
+  const rows = form || PENALTY_KEYS.map((item) => ({ ...item, puntos: "0" }));
+
+  function updatePoints(clave, puntos) {
+    setForm((current) => (current || []).map((item) => (item.clave === clave ? { ...item, puntos } : item)));
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setStatus(null);
+
+    for (const item of rows) {
+      const value = Number(item.puntos);
+      if (item.puntos === "" || !Number.isFinite(value) || value < 0) {
+        setStatus({ type: "error", message: `Ingresa un valor valido y no negativo para ${item.etiqueta}.` });
+        return;
+      }
+    }
+
+    setSaving(true);
+    try {
+      await savePenalizaciones(rows);
+      setStatus({ type: "success", message: "Puntos en contra guardados correctamente." });
+      reload();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <Panel
+        title="Puntos en contra"
+        eyebrow="Descuentos"
+        actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}
+      >
+        {loading ? <LoadingBlock /> : null}
+        {error ? <Alert type="error">{error}</Alert> : null}
+        <StatusAlert status={status} />
+        <Alert>
+          Define cuantos puntos resta cada ocurrencia. Ingresa el valor como numero positivo: se descuenta esa cantidad
+          por cada amonestacion, inasistencia o tardanza.
+        </Alert>
+
+        <form className="stack" onSubmit={handleSubmit} noValidate>
+          <div className="form-grid">
+            {rows.map((item) => (
+              <TextInput
+                key={item.clave}
+                label={`${item.etiqueta} (puntos a restar)`}
+                type="number"
+                min="0"
+                step="0.5"
+                value={item.puntos}
+                onChange={(puntos) => updatePoints(item.clave, puntos)}
+                hint={item.descripcion}
+              />
+            ))}
+          </div>
+          <div className="form-actions">
+            <Button type="submit" icon={Save} loading={saving} disabled={loading}>Guardar puntos en contra</Button>
+          </div>
+        </form>
+      </Panel>
+
+      <Panel title="Resumen de descuentos" eyebrow="Configuracion actual">
+        <DataTable
+          rows={rows.map((item) => ({
+            Concepto: item.etiqueta,
+            "Puntos por ocurrencia": `-${Number(item.puntos || 0)}`,
+            Detalle: item.descripcion
+          }))}
+          columns={["Concepto", "Puntos por ocurrencia", "Detalle"]}
+          compact
+        />
+      </Panel>
+    </div>
+  );
+}
+
+function TaskScoringSection() {
   const { data, loading, error, reload } = useAsyncData(loadTaskBundle, [], { tasks: [], rulesByTaskId: {} });
   const [tab, setTab] = useState("Crear tarea");
   const [status, setStatus] = useState(null);
