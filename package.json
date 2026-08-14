@@ -9,7 +9,9 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "node server.mjs",
-    "test:attendance-report": "node --test tests/attendance_report.test.mjs tests/activity_report.test.mjs tests/operations.test.mjs",
+    "test:attendance-report": "node --test tests/attendance_report.test.mjs tests/activity_report.test.mjs tests/operations.test.mjs tests/dashboard_metrics.test.mjs",
+    "test:dashboard": "node --test tests/dashboard_metrics.test.mjs",
+    "test:dashboard-live": "node scripts/verify_dashboard_data.mjs",
     "test:operations": "node --test tests/operations.test.mjs",
     "test:worker-progress": "node scripts/smoke_test_worker_progress.mjs"
   },

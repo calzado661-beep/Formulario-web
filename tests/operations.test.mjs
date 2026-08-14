@@ -10,6 +10,7 @@ import {
 } from "../src/lib/operations.js";
 import { limaDateTimeToISO } from "../src/lib/dates.js";
 import { validateQuantityRanges } from "../src/lib/scoring.js";
+import { groupLeaderRecordTiming } from "../server.mjs";
 
 test("retiro anticipado conserva puntualidad y exige motivo", () => {
   assert.equal(validateAttendanceEdit({ estado: "PUNTUAL", retiro_anticipado: true, motivo_retiro: "" }), "Ingresa el motivo del retiro anticipado.");
@@ -70,4 +71,32 @@ test("el rango de 10 puntos debe quedar abierto", () => {
   assert.match(validateQuantityRanges(ranges), /sin limite|vacío|vacío/i);
   ranges[9].hasta = "";
   assert.equal(validateQuantityRanges(ranges), "");
+});
+
+test("el historial del jefe deriva fecha y minutos de inicio y fin", () => {
+  const timing = groupLeaderRecordTiming(
+    "2026-08-13T08:05:00-05:00",
+    "2026-08-13T09:35:00-05:00",
+    { now: new Date("2026-08-13T10:00:00-05:00").getTime() }
+  );
+  assert.equal(timing.fecha_registro, "2026-08-13");
+  assert.equal(timing.tiempo_minutos, 90);
+  assert.equal(timing.hora_inicio, "2026-08-13T13:05:00.000Z");
+  assert.equal(timing.hora_fin, "2026-08-13T14:35:00.000Z");
+});
+
+test("el historial rechaza fin anterior, futuro y duraciones absurdas", () => {
+  const now = new Date("2026-08-13T10:00:00-05:00").getTime();
+  assert.throws(
+    () => groupLeaderRecordTiming("2026-08-13T09:00:00-05:00", "2026-08-13T08:00:00-05:00", { now }),
+    /posterior/i
+  );
+  assert.throws(
+    () => groupLeaderRecordTiming("2026-08-13T09:00:00-05:00", "2026-08-13T10:05:00-05:00", { now }),
+    /futuro/i
+  );
+  assert.throws(
+    () => groupLeaderRecordTiming("2026-08-11T08:00:00-05:00", "2026-08-13T08:01:00-05:00", { now }),
+    /24 horas/i
+  );
 });

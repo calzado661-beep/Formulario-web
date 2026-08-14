@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { applyScoringRules, calculatePoints } from "./src/lib/scoring.js";
+import { buildDashboardPayroll } from "./src/lib/dashboardMetrics.js";
 import {
   gmailConfiguration,
   localDateTimeParts,
@@ -844,6 +845,7 @@ async function selectAllDashboardRows(tableName, { optional = false } = {}) {
     const result = await supabase
       .from(tableName)
       .select("*")
+      .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
     if (result.error) {
       if (optional && isMissingDashboardResource(result.error)) return [];
@@ -857,28 +859,20 @@ async function selectAllDashboardRows(tableName, { optional = false } = {}) {
 }
 
 function dashboardDate(value) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ""));
-  return match ? match[0] : null;
-}
-
-function dashboardPayrollByRole(users, years) {
-  const result = {};
-  for (const year of years) {
-    result[year] = Array.from({ length: 12 }, () => ({}));
-    for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
-      const monthStart = `${year}-${String(monthIndex + 1).padStart(2, "0")}-01`;
-      const monthEnd = `${year}-${String(monthIndex + 1).padStart(2, "0")}-31`;
-      for (const user of users) {
-        const salary = Number(user.sueldo || 0);
-        const joined = dashboardDate(user.fecha_ingreso) || dashboardDate(user.created_at);
-        const left = dashboardDate(user.fecha_salida);
-        if (!salary || (joined && joined > monthEnd) || (left && left < monthStart)) continue;
-        const role = normalizeRole(user.rol) || "otros";
-        result[year][monthIndex][role] = (result[year][monthIndex][role] || 0) + salary;
-      }
-    }
-  }
-  return result;
+  const raw = String(value || "").trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+  if (!match) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw) || !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)) return match[0];
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return match[0];
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: ATTENDANCE_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(parsed);
+  const fields = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${fields.year}-${fields.month}-${fields.day}`;
 }
 
 async function handleReadFootwearDashboard(request, response) {
@@ -896,7 +890,8 @@ async function handleReadFootwearDashboard(request, response) {
       warnings,
       movements,
       trainings,
-      trainingAssignments
+      trainingAssignments,
+      scoringRules
     ] = await Promise.all([
       selectAllDashboardRows("usuarios"),
       selectAllDashboardRows(taskTable),
@@ -908,10 +903,11 @@ async function handleReadFootwearDashboard(request, response) {
       selectAllDashboardRows("amonestaciones", { optional: true }),
       selectAllDashboardRows("movimientos_personal", { optional: true }),
       selectAllDashboardRows("capacitaciones", { optional: true }),
-      selectAllDashboardRows("usuario_capacitaciones", { optional: true })
+      selectAllDashboardRows("usuario_capacitaciones", { optional: true }),
+      selectAllDashboardRows("reglas_puntaje", { optional: true })
     ]);
 
-    const years = new Set([new Date().getFullYear()]);
+    const years = new Set([Number(currentLimaDate().slice(0, 4))]);
     const collectYear = (value) => {
       const date = dashboardDate(value);
       if (date) years.add(Number(date.slice(0, 4)));
@@ -922,7 +918,19 @@ async function handleReadFootwearDashboard(request, response) {
     incidents.forEach((row) => collectYear(row.created_at));
     warnings.forEach((row) => collectYear(row.created_at));
     movements.forEach((row) => collectYear(row.fecha_movimiento || row.created_at));
+    trainingAssignments.forEach((row) => collectYear(row.completado_en || row.created_at));
     const dashboardYears = [...years].filter(Number.isFinite).sort((a, b) => a - b);
+
+    const rulesByTaskId = new Map();
+    scoringRules.forEach((rule) => {
+      const taskId = Number(rule.tarea_id);
+      if (!rulesByTaskId.has(taskId)) rulesByTaskId.set(taskId, []);
+      rulesByTaskId.get(taskId).push(rule);
+    });
+    const scoredTaskById = new Map(tasks.map((task) => [
+      Number(task.id),
+      applyScoringRules(task, rulesByTaskId.get(Number(task.id)) || [])
+    ]));
 
     const safeWorkers = users.map((user) => ({
       id: Number(user.id),
@@ -935,17 +943,31 @@ async function handleReadFootwearDashboard(request, response) {
       birthday: dashboardDate(user.fecha_cumpleanos)
     }));
 
-    const normalizeActivity = (row, source) => ({
-      id: `${source}-${row.id}`,
-      source,
-      workerId: Number(row.usuario_id || row.trabajador_id),
-      taskId: Number(row.tarea_id),
-      date: dashboardDate(row.fecha_registro || row.created_at),
-      quantity: Number(row.cantidad || 0),
-      minutes: Number(row.tiempo_minutos || 0),
-      brandId: Number(row.marca_id) || null,
-      points: Number(row.puntaje || 0)
-    });
+    const normalizeActivity = (row, source) => {
+      const task = scoredTaskById.get(Number(row.tarea_id));
+      const storedPoints = row.puntaje === null || row.puntaje === undefined ? null : Number(row.puntaje);
+      const numericExtra = row.dato_extra === null || row.dato_extra === undefined || row.dato_extra === ""
+        ? 0
+        : Number(row.dato_extra);
+      const minutes = Number(row.tiempo_minutos ?? (Number.isFinite(numericExtra) ? numericExtra : 0) ?? 0);
+      const fallbackPoints = task
+        ? calculatePoints(task, Number(row.cantidad || 0), minutes, source === "jefe-equipo" || Boolean(row.cumplimiento))
+        : 0;
+      return {
+        id: `${source}-${row.id}`,
+        source,
+        workerId: Number(row.usuario_id || row.trabajador_id),
+        taskId: Number(row.tarea_id),
+        date: dashboardDate(row.fecha_registro || row.created_at),
+        quantity: Number(row.cantidad || 0),
+        minutes,
+        brandId: Number(row.marca_id) || null,
+        points: Number.isFinite(storedPoints) ? storedPoints : Number(fallbackPoints || 0),
+        pointsStored: storedPoints !== null && Number.isFinite(storedPoints)
+      };
+    };
+
+    const payroll = buildDashboardPayroll(users, dashboardYears, { normalizeRole });
 
     response.setHeader("cache-control", "no-store, no-cache, must-revalidate");
     sendJson(response, 200, {
@@ -983,14 +1005,22 @@ async function handleReadFootwearDashboard(request, response) {
         id: Number(row.id), code: String(row.id_curso || row.id),
         course: String(row.nombre_curso || row.curso || `Capacitacion ${row.id}`),
         competence: String(row.competencias || row.competencia || "General"),
-        hours: Number(row.nro_horas ?? row.numero_horas ?? 0)
+        hours: row.numero_horas !== null && row.numero_horas !== undefined && Number.isFinite(Number(row.numero_horas))
+          ? Number(row.numero_horas)
+          : null
       })),
       trainingAssignments: trainingAssignments.map((row) => ({
         id: Number(row.id), workerId: Number(row.usuario_id),
         trainingId: Number(row.capacitacion_id || row.curso_id),
-        state: String(row.estado || (row.completado ? "finalizado" : "pendiente")).toLowerCase()
+        state: String(row.estado || (row.completado ? "finalizado" : "pendiente")).toLowerCase(),
+        date: dashboardDate(row.completado_en || row.created_at)
       })),
-      payrollByRole: dashboardPayrollByRole(users, dashboardYears)
+      payrollByRole: payroll.byRole,
+      payrollByWorker: payroll.byWorker,
+      dataQuality: {
+        activitiesWithoutStoredScore: [...workerRecords, ...leaderRecords]
+          .filter((row) => row.puntaje === null || row.puntaje === undefined).length
+      }
     });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo cargar la informacion del dashboard." });
@@ -1129,8 +1159,8 @@ async function selectGroupLeaderActivityLogsForWorker(workerId) {
       puntaje: puntosObtenidos,
       marcas: brand ? [{ marca_id: brand.id, marca_nombre: brand.nombre, cantidad: nullableNumber(row.cantidad) }] : [],
       created_at: row.created_at,
-      hora_inicio: liveActivity?.hora_inicio || null,
-      hora_fin: liveActivity?.hora_fin || null,
+      hora_inicio: row.hora_inicio || liveActivity?.hora_inicio || null,
+      hora_fin: row.hora_fin || liveActivity?.hora_fin || null,
       origen: "jefe_equipo",
       encargado_id: row.encargado_id,
       encargado_nombre: leader?.nombre || leader?.email || `Usuario ${row.encargado_id}`
@@ -1625,6 +1655,7 @@ function handleOperationsError(response, error, fallback) {
   }
   const statusByCode = {
     "23514": 409,
+    "23P01": 409,
     "42501": 403,
     P0002: 404,
     "22P02": 400,
@@ -2383,6 +2414,8 @@ async function handleCreateActivityLog(request, response) {
   }
 }
 
+const GROUP_RECORD_COLUMNS_CURRENT =
+  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,marca_id,tienda_id,observacion,puntaje,hora_inicio,hora_fin,created_at,updated_at,revision";
 const GROUP_RECORD_COLUMNS_WITH_EXTRAS =
   "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,marca_id,tienda_id,observacion,puntaje,created_at";
 const GROUP_RECORD_COLUMNS_BASE =
@@ -2392,22 +2425,37 @@ const GROUP_RECORD_COLUMNS_BASE =
 // esta consulta cae de vuelta a las columnas base para no romper el resto del
 // panel de jefe de equipo (lista de tareas, historial, etc.).
 async function selectGroupLeaderRecordRows(applyFilters) {
-  let query = supabase.from("registros_tareas_jefe_equipo").select(GROUP_RECORD_COLUMNS_WITH_EXTRAS);
+  let query = supabase.from("registros_tareas_jefe_equipo").select(GROUP_RECORD_COLUMNS_CURRENT);
   query = applyFilters(query);
   let result = await query;
   if (["42703", "PGRST204"].includes(result.error?.code)) {
-    let fallbackQuery = supabase.from("registros_tareas_jefe_equipo").select(GROUP_RECORD_COLUMNS_BASE);
+    let fallbackQuery = supabase.from("registros_tareas_jefe_equipo").select(GROUP_RECORD_COLUMNS_WITH_EXTRAS);
     fallbackQuery = applyFilters(fallbackQuery);
     result = await fallbackQuery;
     if (["42703", "PGRST204"].includes(result.error?.code)) {
-      let legacyQuery = supabase
-        .from("registros_tareas_jefe_equipo")
-        .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at");
-      legacyQuery = applyFilters(legacyQuery);
-      result = await legacyQuery;
+      let baseQuery = supabase.from("registros_tareas_jefe_equipo").select(GROUP_RECORD_COLUMNS_BASE);
+      baseQuery = applyFilters(baseQuery);
+      result = await baseQuery;
+      if (["42703", "PGRST204"].includes(result.error?.code)) {
+        let legacyQuery = supabase
+          .from("registros_tareas_jefe_equipo")
+          .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at");
+        legacyQuery = applyFilters(legacyQuery);
+        result = await legacyQuery;
+      }
     }
     if (!result.error) {
-      result.data = (result.data || []).map((row) => ({ ...row, marca_id: row.marca_id ?? null, tienda_id: row.tienda_id ?? null, puntaje: row.puntaje ?? null }));
+      result.historyMigrationRequired = true;
+      result.data = (result.data || []).map((row) => ({
+        ...row,
+        marca_id: row.marca_id ?? null,
+        tienda_id: row.tienda_id ?? null,
+        puntaje: row.puntaje ?? null,
+        hora_inicio: null,
+        hora_fin: null,
+        updated_at: row.created_at || null,
+        revision: null
+      }));
     }
   }
   return result;
@@ -2446,7 +2494,7 @@ async function loadGroupLeaderData() {
     supabase.from(tableName).select("*").order("id", { ascending: true }),
     selectGroupLeaderRecordRows((query) => query.order("created_at", { ascending: false })),
     supabase.from("marcas").select("*").order("nombre", { ascending: true }),
-    supabase.from("tiendas").select("id,nombre")
+    supabase.from("tiendas").select("id,nombre,activo")
   ]);
 
   if (usersResult.error) throw usersResult.error;
@@ -2456,7 +2504,8 @@ async function loadGroupLeaderData() {
   if (storesResult.error) throw storesResult.error;
 
   const users = usersResult.data || [];
-  const tasks = (tasksResult.data || []).filter((task) => isActive(task.activo) && isGroupLeaderTimeTask(task));
+  const recordTasks = (tasksResult.data || []).filter((task) => isGroupLeaderTimeTask(task));
+  const tasks = recordTasks.filter((task) => isActive(task.activo));
   const workers = users.filter((user) => normalizeRole(user.rol) === "operante" && isActive(user.activo));
   const leaders = users.filter((user) => ["jefe de equipo", "jefe de grupo"].includes(normalizeRole(user.rol)) && isActive(user.activo));
   const records = enrichGroupRecords(
@@ -2472,12 +2521,12 @@ async function loadGroupLeaderData() {
   );
   const stores = (storesResult.data || []).filter((store) => isActive(store.activo));
   let activities = [];
-  let operationsMigrationRequired = false;
+  let legacyActivitiesUnavailable = false;
   try {
     activities = await selectLiveGroupLeaderActivities();
   } catch (error) {
     if (!operationsSchemaMissing(error)) throw error;
-    operationsMigrationRequired = true;
+    legacyActivitiesUnavailable = true;
   }
 
   const liveActivityByRecordId = new Map(
@@ -2489,8 +2538,8 @@ async function loadGroupLeaderData() {
     const activity = liveActivityByRecordId.get(Number(record.id));
     return {
       ...record,
-      hora_inicio: activity?.hora_inicio || null,
-      hora_fin: activity?.hora_fin || null,
+      hora_inicio: record.hora_inicio || activity?.hora_inicio || null,
+      hora_fin: record.hora_fin || activity?.hora_fin || null,
       actividad_seguimiento_id: activity?.id || null
     };
   });
@@ -2498,10 +2547,13 @@ async function loadGroupLeaderData() {
   return {
     workers,
     tasks,
+    recordTasks,
     leaders,
     records: recordsWithTimes,
     activities,
-    operationsMigrationRequired,
+    operationsMigrationRequired: false,
+    legacyActivitiesUnavailable,
+    historyMigrationRequired: Boolean(recordsResult.historyMigrationRequired),
     brands: (brandsResult.data || []).filter((brand) => isActive(brand.activo)),
     stores
   };
@@ -2522,35 +2574,68 @@ async function handleWorkerLiveProgress(request, response) {
     const session = requireSessionRole(request, response, ["operante"]);
     if (!session) return;
 
-    let activities = [];
-    try {
-      activities = await selectLiveGroupLeaderActivities();
-    } catch (error) {
-      if (!operationsSchemaMissing(error)) throw error;
-      sendJson(response, 200, {
-        generatedAt: new Date().toISOString(),
-        operationsMigrationRequired: true,
-        activities: []
-      });
-      return;
-    }
-
-    const workerActivities = activities
+    const context = await loadGroupLeaderData();
+    const directRecords = context.records
+      .filter((record) => Number(record.trabajador_id) === Number(session.id))
+      .map((record) => ({
+        ...record,
+        id: `registro-${record.id}`,
+        record_id: Number(record.id),
+        registro_tarea_id: Number(record.id),
+        origen: "historial_jefe_equipo",
+        estado: Number(record.revision || 1) > 1 ? "ACTUALIZADA" : "FINALIZADA",
+        horaInicio: record.hora_inicio || null,
+        horaFin: record.hora_fin || null,
+        tiempoMinutos: nullableNumber(record.tiempo_minutos),
+        updatedAt: record.updated_at || record.created_at || null,
+        codigo_guia: record.codigo_guia || record.numero_guia || null,
+        history: [{
+          tipo: record.revision > 1 ? "ACTUALIZACION" : "REGISTRO",
+          cantidad: nullableNumber(record.cantidad),
+          puntaje: nullableNumber(record.puntaje),
+          created_at: record.updated_at || record.created_at || null
+        }]
+      }));
+    const directRecordIds = new Set(directRecords.map((record) => Number(record.record_id)));
+    const legacyActivities = (context.activities || [])
       .filter((activity) => Number(activity.trabajador_id) === Number(session.id))
-      .sort((a, b) => new Date(b.updated_at || b.hora_inicio || 0) - new Date(a.updated_at || a.hora_inicio || 0));
+      .filter((activity) => !activity.registro_tarea_id || !directRecordIds.has(Number(activity.registro_tarea_id)))
+      .map((activity) => ({
+        ...activity,
+        origen: "actividad_legacy",
+        horaInicio: activity.hora_inicio || null,
+        horaFin: activity.hora_fin || null,
+        tiempoMinutos: activity.hora_fin
+          ? Math.max(1, Math.round((new Date(activity.hora_fin) - new Date(activity.hora_inicio)) / 60000))
+          : null,
+        updatedAt: activity.updated_at || activity.created_at || null
+      }));
+    const workerActivities = [...directRecords, ...legacyActivities]
+      .sort((a, b) => new Date(b.updated_at || b.updatedAt || b.hora_inicio || 0) - new Date(a.updated_at || a.updatedAt || a.hora_inicio || 0))
+      .slice(0, 50);
 
     response.setHeader("cache-control", "no-store, no-cache, must-revalidate");
     sendJson(response, 200, {
       generatedAt: new Date().toISOString(),
-      operationsMigrationRequired: false,
+      operationsMigrationRequired: Boolean(context.operationsMigrationRequired),
+      historyMigrationRequired: Boolean(context.historyMigrationRequired),
       activities: workerActivities
     });
   } catch (error) {
+    if (operationsSchemaMissing(error)) {
+      sendJson(response, 200, {
+        generatedAt: new Date().toISOString(),
+        operationsMigrationRequired: true,
+        historyMigrationRequired: true,
+        activities: []
+      });
+      return;
+    }
     sendJson(response, 500, { error: error.message || "No se pudo cargar el progreso en vivo." });
   }
 }
 
-async function handleCreateGroupLeaderRecord(request, response) {
+async function handleCreateGroupLeaderRecordLegacy(request, response) {
   try {
     const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
     if (!session) return;
@@ -2715,6 +2800,281 @@ async function handleCreateGroupLeaderRecord(request, response) {
     sendJson(response, 201, { record });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo guardar el registro." });
+  }
+}
+
+function historyRecordMigrationMissing(error) {
+  return ["42703", "42883", "PGRST202", "PGRST203", "PGRST204"].includes(error?.code) ||
+    /hora_inicio|hora_fin|revision|updated_at/i.test(String(error?.message || ""));
+}
+
+function sendHistoryRecordError(response, error, fallback) {
+  if (historyRecordMigrationMissing(error)) {
+    sendJson(response, 503, {
+      code: "GROUP_HISTORY_MIGRATION_REQUIRED",
+      error: "Falta ejecutar sql/027_historial_jefe_equipo_editable.sql en Supabase."
+    });
+    return;
+  }
+  if (error?.code === "23P01") {
+    sendJson(response, 409, { error: "El operante ya tiene otra tarea dentro de ese horario. Corrige el intervalo y vuelve a guardar." });
+    return;
+  }
+  if (error?.statusCode) {
+    sendJson(response, error.statusCode, { error: error.message || fallback });
+    return;
+  }
+  handleOperationsError(response, error, fallback);
+}
+
+function invalidGroupRecord(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function limaDateForInstant(value) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: ATTENDANCE_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(value);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+export function groupLeaderRecordTiming(horaInicio, horaFin, { now = Date.now() } = {}) {
+  const start = new Date(horaInicio || "");
+  const finish = new Date(horaFin || "");
+  if (Number.isNaN(start.getTime()) || Number.isNaN(finish.getTime())) {
+    throw invalidGroupRecord("Selecciona una hora de inicio y una hora fin validas.");
+  }
+  if (finish <= start) {
+    throw invalidGroupRecord("La hora fin debe ser posterior a la hora de inicio.");
+  }
+  if (finish.getTime() > Number(now) + 60000) {
+    throw invalidGroupRecord("La hora fin no puede estar en el futuro.");
+  }
+  const elapsed = finish.getTime() - start.getTime();
+  if (elapsed > 24 * 60 * 60 * 1000) {
+    throw invalidGroupRecord("Una actividad no puede superar 24 horas. Revisa las fechas y horas.");
+  }
+  return {
+    hora_inicio: start.toISOString(),
+    hora_fin: finish.toISOString(),
+    fecha_registro: limaDateForInstant(start),
+    tiempo_minutos: Math.max(1, Math.round(elapsed / 60000))
+  };
+}
+
+async function validateGroupRecordMetadata(body, task, current = null) {
+  const allowsBrand = isEtiquetadoTask(task);
+  const allowsLote = isEtiquetadoTask(task);
+  const allowsGuide = isGuideBreakdownTask(task);
+  const requiresStore = taskUsesStore(task);
+  const marcaId = nullableNumber(body.marca_id);
+  const tiendaId = nullableNumber(body.tienda_id);
+  const lote = String(body.lote || "").trim().toUpperCase() || null;
+  const numeroGuia = String(body.codigo_guia ?? body.numero_guia ?? "").trim() || null;
+  const observacion = String(body.detalle ?? body.observacion ?? "").trim() || null;
+
+  if (allowsBrand && !marcaId) throw invalidGroupRecord(`Selecciona una marca para ${taskTitle(task)}.`);
+  if (!allowsBrand && marcaId) throw invalidGroupRecord("La marca solo esta disponible para la tarea Etiquetado.");
+  if (!allowsLote && lote) throw invalidGroupRecord("El lote solo esta disponible para la tarea Etiquetado.");
+  if (!allowsGuide && numeroGuia) throw invalidGroupRecord("El numero de guia no esta disponible para esta tarea.");
+  if (requiresStore && !tiendaId) throw invalidGroupRecord(`Selecciona una tienda para ${taskTitle(task)}.`);
+  if (!requiresStore && tiendaId) throw invalidGroupRecord("La tienda no esta disponible para esta tarea.");
+  if (lote && lote.length > 100) throw invalidGroupRecord("El codigo de lote no puede superar 100 caracteres.");
+  if (numeroGuia && numeroGuia.length > 150) throw invalidGroupRecord("El numero de guia no puede superar 150 caracteres.");
+  if (observacion && observacion.length > 1000) throw invalidGroupRecord("El detalle no puede superar 1,000 caracteres.");
+
+  if (marcaId && Number(marcaId) !== Number(current?.marca_id || 0)) {
+    if (!Number.isInteger(marcaId) || marcaId <= 0) throw invalidGroupRecord("Selecciona una marca valida.");
+    const brandResult = await supabase.from("marcas").select("*").eq("id", marcaId).maybeSingle();
+    if (brandResult.error) throw brandResult.error;
+    if (!brandResult.data || !isActive(brandResult.data.activo)) throw invalidGroupRecord("Selecciona una marca activa y valida.");
+  }
+  if (tiendaId && Number(tiendaId) !== Number(current?.tienda_id || 0)) {
+    if (!Number.isInteger(tiendaId) || tiendaId <= 0) throw invalidGroupRecord("Selecciona una tienda valida.");
+    const storeResult = await supabase.from("tiendas").select("id,activo").eq("id", tiendaId).maybeSingle();
+    if (storeResult.error) throw storeResult.error;
+    if (!storeResult.data || !isActive(storeResult.data.activo)) throw invalidGroupRecord("Selecciona una tienda activa y valida.");
+  }
+
+  return { marca_id: marcaId, tienda_id: tiendaId, lote, numero_guia: numeroGuia, observacion };
+}
+
+async function ensureGroupRecordDoesNotOverlap(workerId, timing, excludeRecordId = null) {
+  let query = supabase
+    .from("registros_tareas_jefe_equipo")
+    .select("id,hora_inicio,hora_fin")
+    .eq("trabajador_id", workerId)
+    .lt("hora_inicio", timing.hora_fin)
+    .gt("hora_fin", timing.hora_inicio)
+    .limit(1);
+  if (excludeRecordId) query = query.neq("id", excludeRecordId);
+  const result = await query;
+  if (result.error) throw result.error;
+  if (result.data?.length) {
+    throw invalidGroupRecord(
+      `El operante ya tiene el registro #${result.data[0].id} dentro de ese horario. Corrige el intervalo para evitar tareas simultaneas.`,
+      409
+    );
+  }
+}
+
+async function validateGroupRecordBase(body, { current = null, validateWorker = true } = {}) {
+  const taskId = Number(current?.tarea_id ?? body.tarea_id);
+  const workerId = Number(current?.trabajador_id ?? body.trabajador_id);
+  if (!Number.isInteger(taskId) || taskId <= 0 || !Number.isInteger(workerId) || workerId <= 0) {
+    throw invalidGroupRecord("Operante y tarea son obligatorios.");
+  }
+  if (current && body.tarea_id !== undefined && Number(body.tarea_id) !== taskId) {
+    throw invalidGroupRecord("La tarea de un registro historico no se puede reemplazar.");
+  }
+  if (current && body.trabajador_id !== undefined && Number(body.trabajador_id) !== workerId) {
+    throw invalidGroupRecord("El operante de un registro historico no se puede reemplazar.");
+  }
+  const task = await taskWithScoringRules(taskId);
+  if (!task || !isGroupLeaderTimeTask(task)) throw invalidGroupRecord("Selecciona una tarea por tiempo valida.");
+  if (!current && !isActive(task.activo)) throw invalidGroupRecord("La tarea seleccionada no esta activa.");
+  if (validateWorker) {
+    const workerResult = await supabase.from("usuarios").select("id,rol,activo").eq("id", workerId).maybeSingle();
+    if (workerResult.error) throw workerResult.error;
+    if (!workerResult.data || normalizeRole(workerResult.data.rol) !== "operante" || !isActive(workerResult.data.activo)) {
+      throw invalidGroupRecord("Selecciona un operante activo.");
+    }
+  }
+  const quantity = Number(body.cantidad);
+  if (!Number.isInteger(quantity) || quantity <= 0 || quantity > MAX_SCORE_QUANTITY) {
+    throw invalidGroupRecord(`La cantidad debe ser un numero entero entre 1 y ${MAX_SCORE_QUANTITY.toLocaleString("es-PE")}.`);
+  }
+  const timing = groupLeaderRecordTiming(body.hora_inicio, body.hora_fin);
+  const metadata = await validateGroupRecordMetadata(body, task, current);
+  const quantityRules = (task.reglas_puntaje || []).filter(
+    (rule) => normalizeRole(rule.tipo_regla) === "cantidad"
+  );
+  if (quantityRules.length) {
+    const matchingRule = quantityRules.find((rule) => {
+      const from = Number(rule.desde ?? rule.cantidad_desde ?? 0);
+      const rawTo = rule.hasta ?? rule.cantidad_hasta;
+      const to = rawTo === null || rawTo === undefined || rawTo === "" ? null : Number(rawTo);
+      return quantity >= from && (to === null || quantity <= to);
+    });
+    if (!matchingRule) {
+      throw invalidGroupRecord(
+        "La cantidad no esta cubierta por las reglas de puntaje de esta tarea. Corrige los rangos antes de registrar.",
+        422
+      );
+    }
+  }
+  const points = calculatePoints(task, quantity, timing.tiempo_minutos, true);
+  await ensureGroupRecordDoesNotOverlap(workerId, timing, current?.id || null);
+  return {
+    task,
+    workerId,
+    taskId,
+    payload: {
+      trabajador_id: workerId,
+      tarea_id: taskId,
+      cantidad: quantity,
+      ...timing,
+      ...metadata,
+      puntaje: points
+    }
+  };
+}
+
+async function handleCreateGroupLeaderRecord(request, response) {
+  try {
+    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    if (!session) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const { payload } = await validateGroupRecordBase(body);
+    let result = await supabase
+      .from("registros_tareas_jefe_equipo")
+      .insert({ ...payload, encargado_id: Number(session.id) })
+      .select(GROUP_RECORD_COLUMNS_CURRENT)
+      .single();
+    if (isPrimaryKeySequenceConflict(result.error)) {
+      result = await supabase
+        .from("registros_tareas_jefe_equipo")
+        .insert({ ...payload, encargado_id: Number(session.id), id: await nextTableId("registros_tareas_jefe_equipo") })
+        .select(GROUP_RECORD_COLUMNS_CURRENT)
+        .single();
+    }
+    if (result.error) throw result.error;
+    const data = await loadGroupLeaderData();
+    const record = data.records.find((item) => Number(item.id) === Number(result.data.id)) || result.data;
+    sendJson(response, 201, { record });
+  } catch (error) {
+    sendHistoryRecordError(response, error, "No se pudo guardar el registro por tiempo.");
+  }
+}
+
+async function handleUpdateGroupLeaderRecord(request, response, recordId) {
+  try {
+    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    if (!session) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const currentResult = await supabase
+      .from("registros_tareas_jefe_equipo")
+      .select(GROUP_RECORD_COLUMNS_CURRENT)
+      .eq("id", recordId)
+      .maybeSingle();
+    if (currentResult.error) throw currentResult.error;
+    const current = currentResult.data;
+    if (!current) throw invalidGroupRecord("Registro no encontrado.", 404);
+    if (Number(current.encargado_id) !== Number(session.id)) {
+      throw invalidGroupRecord("Solo el jefe que creo el registro puede editarlo.", 403);
+    }
+    const expectedRevision = Number(body.revision);
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 1) {
+      throw invalidGroupRecord("Actualiza el historial antes de editar esta fila: falta su revision.", 409);
+    }
+    if (expectedRevision !== Number(current.revision)) {
+      throw invalidGroupRecord("La fila fue modificada por otra sesion. Actualiza el historial antes de guardar.", 409);
+    }
+    const merged = {
+      ...current,
+      ...body,
+      tarea_id: current.tarea_id,
+      trabajador_id: current.trabajador_id,
+      codigo_guia: body.codigo_guia ?? body.numero_guia ?? current.numero_guia,
+      detalle: body.detalle ?? body.observacion ?? current.observacion
+    };
+    const { payload } = await validateGroupRecordBase(merged, { current, validateWorker: false });
+    const updatePayload = {
+      cantidad: payload.cantidad,
+      tiempo_minutos: payload.tiempo_minutos,
+      fecha_registro: payload.fecha_registro,
+      hora_inicio: payload.hora_inicio,
+      hora_fin: payload.hora_fin,
+      numero_guia: payload.numero_guia,
+      lote: payload.lote,
+      marca_id: payload.marca_id,
+      tienda_id: payload.tienda_id,
+      observacion: payload.observacion,
+      puntaje: payload.puntaje
+    };
+    const updateResult = await supabase
+      .from("registros_tareas_jefe_equipo")
+      .update(updatePayload)
+      .eq("id", recordId)
+      .eq("encargado_id", Number(session.id))
+      .eq("revision", expectedRevision)
+      .select(GROUP_RECORD_COLUMNS_CURRENT)
+      .maybeSingle();
+    if (updateResult.error) throw updateResult.error;
+    if (!updateResult.data) {
+      throw invalidGroupRecord("La fila fue modificada por otra sesion. Actualiza el historial antes de guardar.", 409);
+    }
+    const data = await loadGroupLeaderData();
+    const record = data.records.find((item) => Number(item.id) === Number(recordId)) || updateResult.data;
+    sendJson(response, 200, { record });
+  } catch (error) {
+    sendHistoryRecordError(response, error, "No se pudo actualizar el registro por tiempo.");
   }
 }
 
@@ -3266,11 +3626,12 @@ export async function handleRequest(request, response, { serveFiles = true } = {
   const activityReportSendMatch = apiPath.match(/^\/api\/activity-report\/settings\/(\d+)\/send\/?$/);
   const activityReportPreviewMatch = apiPath.match(/^\/api\/activity-report\/settings\/(\d+)\/preview\/?$/);
   const groupLeaderActivityMatch = apiPath.match(/^\/api\/group-leader\/activities\/(\d+)\/?$/);
+  const groupLeaderRecordMatch = apiPath.match(/^\/api\/group-leader\/records\/(\d+)\/?$/);
 
   if (/^\/api\/health\/?$/.test(apiPath) && request.method === "GET") {
     sendJson(response, 200, {
       ok: true,
-      apiVersion: 9,
+      apiVersion: 10,
       features: [
         "attendance-report",
         "attendance-report-schedules",
@@ -3280,7 +3641,8 @@ export async function handleRequest(request, response, { serveFiles = true } = {
         "live-group-activities",
         "live-footwear-dashboard",
         "worker-live-progress",
-        "group-history-times"
+        "group-history-times",
+        "editable-group-history"
       ]
     });
     return;
@@ -3523,8 +3885,13 @@ export async function handleRequest(request, response, { serveFiles = true } = {
     return;
   }
 
-  if (request.url?.startsWith("/api/group-leader/records") && request.method === "POST") {
+  if (/^\/api\/group-leader\/records\/?$/.test(apiPath) && request.method === "POST") {
     await handleCreateGroupLeaderRecord(request, response);
+    return;
+  }
+
+  if (groupLeaderRecordMatch && request.method === "PUT") {
+    await handleUpdateGroupLeaderRecord(request, response, Number(groupLeaderRecordMatch[1]));
     return;
   }
 

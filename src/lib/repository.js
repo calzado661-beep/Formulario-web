@@ -105,6 +105,7 @@ export async function loadWorkerLiveProgress({ signal } = {}) {
   return {
     generatedAt: result?.generatedAt || null,
     operationsMigrationRequired: Boolean(result?.operationsMigrationRequired),
+    historyMigrationRequired: Boolean(result?.historyMigrationRequired),
     activities: result?.activities || []
   };
 }
@@ -180,6 +181,9 @@ function isActiveValue(value) {
 
 export function friendlyError(error) {
   const message = errorMessage(error);
+  if (error?.code === "GROUP_HISTORY_MIGRATION_REQUIRED" || /sql\/027_historial_jefe_equipo_editable/i.test(message)) {
+    return "Falta ejecutar la migracion sql/027_historial_jefe_equipo_editable.sql en Supabase.";
+  }
   if (error?.code === "OPERATIONS_MIGRATION_REQUIRED") {
     return "Falta ejecutar la migracion sql/026_asistencia_retiro_y_actividades_en_curso.sql en Supabase.";
   }
@@ -967,7 +971,10 @@ function normalizeGroupLeaderLog(row) {
     encargado_email: row.encargado_email || row.encargado?.email,
     trabajador_nombre: row.trabajador_nombre || row.trabajador?.nombre,
     trabajador_email: row.trabajador_email || row.trabajador?.email,
-    tarea_nombre: row.tarea_nombre || row.tarea?.titulo || row.tarea?.nombre
+    tarea_nombre: row.tarea_nombre || row.tarea?.titulo || row.tarea?.nombre,
+    hora_inicio: row.hora_inicio || row.horaInicio || null,
+    hora_fin: row.hora_fin || row.horaFin || null,
+    revision: Number(row.revision || 0) || null
   };
 }
 
@@ -975,24 +982,18 @@ export async function createGroupLeaderRecord(payload) {
   const apiResult = await requestLocalApi("/api/group-leader/records", {
     method: "POST",
     body: JSON.stringify(payload)
-  });
-  if (apiResult?.record) return apiResult.record;
+  }, { requiredBackend: true });
+  if (!apiResult?.record) throw new Error("No se pudo guardar el registro por tiempo.");
+  return normalizeGroupLeaderLog(apiResult.record);
+}
 
-  const result = await db().from("registros_tareas_jefe_equipo").insert({
-    encargado_id: payload.encargado_id,
-    trabajador_id: payload.trabajador_id,
-    tarea_id: payload.tarea_id,
-    fecha_registro: payload.fecha_registro,
-    cantidad: payload.cantidad,
-    tiempo_minutos: payload.tiempo_minutos,
-    numero_guia: payload.codigo_guia,
-    lote: payload.lote,
-    marca_id: payload.marca_id ?? null,
-    tienda_id: payload.tienda_id ?? null,
-    observacion: payload.detalle
-  });
-  if (result.error) throw result.error;
-  return null;
+export async function updateGroupLeaderRecord(recordId, payload) {
+  const apiResult = await requestLocalApi(`/api/group-leader/records/${encodeURIComponent(recordId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  }, { requiredBackend: true });
+  if (!apiResult?.record) throw new Error("No se pudo actualizar el registro por tiempo.");
+  return normalizeGroupLeaderLog(apiResult.record);
 }
 
 export async function startGroupLeaderActivity(payload) {
@@ -1032,6 +1033,7 @@ export async function loadGroupLeaderContext() {
       leaders: apiContext.leaders || [],
       activities: apiContext.activities || [],
       operationsMigrationRequired: Boolean(apiContext.operationsMigrationRequired),
+      historyMigrationRequired: Boolean(apiContext.historyMigrationRequired),
       records: (apiContext.records || []).map(normalizeGroupLeaderLog)
     };
   }
@@ -1043,7 +1045,7 @@ export async function loadGroupLeaderContext() {
     listTiendas().then((stores) => stores.filter((store) => String(store.activo ?? true) !== "false")),
     listGroupLeaderRecords()
   ]);
-  return { workers, tasks, brands, stores, leaders: [], activities: [], records };
+  return { workers, tasks, brands, stores, leaders: [], activities: [], operationsMigrationRequired: false, historyMigrationRequired: false, records };
 }
 
 export async function listGroupLeaderRecords(encargadoId = null) {
