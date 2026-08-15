@@ -285,7 +285,7 @@
   top: 0;
   z-index: 15;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: clamp(0.75rem, 1vw, 1rem);
   padding-bottom: clamp(0.75rem, 1vw, 1rem);
@@ -323,7 +323,7 @@
 
 .pbi-filter-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.8rem;
   min-width: 0;
 }
@@ -3544,7 +3544,7 @@ button.pbi-legend-item:focus-visible,
   }
 
   .pbi-filter-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .pbi-card {
@@ -3606,21 +3606,13 @@ button.pbi-legend-item:focus-visible,
     grid-column: 1 / -1;
   }
 
-  .pbi-sidebar > .pbi-filter-grid {
-    grid-column: span 8;
-  }
-
-  .pbi-sidebar > .pbi-filter--year {
-    grid-column: span 4;
-  }
-
   .pbi-sidebar > .pbi-filter--months,
   .pbi-sidebar > .pbi-filter--tasks {
     grid-column: span 6;
   }
 
   .pbi-filter-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .pbi-kpi-grid--activities,

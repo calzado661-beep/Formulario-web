@@ -1978,25 +1978,18 @@ export default function FootwearDashboard() {
             <div className="pbi-filter-grid">
               <MultiSlicer id="workers" label="Trabajadores" options={workerOptions} selected={selectedWorkerIds} onChange={setSelectedWorkerIds} allLabel="Todos" />
               <MultiSlicer id="roles" label="Cargos" options={roleOptions} selected={selectedRoles} onChange={changeRoles} allLabel="Todos" searchable={false} />
-              <MultiSlicer id="brands" label="Marcas" options={brandOptions} selected={selectedBrands} onChange={setSelectedBrands} allLabel="Todas" alignEnd />
+              <MultiSlicer id="brands" label="Marcas" options={brandOptions} selected={selectedBrands} onChange={setSelectedBrands} allLabel="Todas" />
+              <MultiSlicer
+                id="years"
+                label="Año"
+                options={dashboardYears.map((year) => ({ value: year, label: String(year) }))}
+                selected={selectedYears}
+                onChange={setSelectedYears}
+                allLabel="Todos"
+                searchable={false}
+                alignEnd
+              />
             </div>
-
-            <fieldset className="pbi-filter pbi-filter--year">
-              <legend className="pbi-filter-label">Año</legend>
-              <div className="pbi-period" role="group" aria-label="Seleccionar uno o varios años" data-testid="slicer-years">
-                {dashboardYears.map((item) => (
-                  <button
-                    className={`pbi-period-btn${selectedYears.includes(item) ? " pbi-period-btn--active" : ""}`}
-                    type="button"
-                    key={item}
-                    onClick={() => setSelectedYears((current) => toggleArrayValue(current, item))}
-                    aria-pressed={selectedYears.includes(item)}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-            </fieldset>
           </div>
 
           <aside className="pbi-sidebar" aria-label="Filtros del dashboard">
