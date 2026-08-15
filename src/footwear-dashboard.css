@@ -307,10 +307,12 @@
 
 .pbi-sidebar > .pbi-filter-grid {
   grid-column: span 5;
+  align-self: start;
 }
 
 .pbi-sidebar > .pbi-filter--year {
   grid-column: span 3;
+  align-self: start;
 }
 
 .pbi-sidebar > .pbi-filter--months,
