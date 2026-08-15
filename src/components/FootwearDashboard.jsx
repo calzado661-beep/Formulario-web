@@ -1924,7 +1924,6 @@ export default function FootwearDashboard() {
       aria-label="Dashboard administrativo de calzado"
     >
       <div className="pbi-dashboard">
-        <div className="pbi-sticky-top">
         <div className="pbi-topbar">
           <div className="pbi-topbar-copy">
             <span className="pbi-eyebrow">Control operativo</span>
@@ -1974,11 +1973,8 @@ export default function FootwearDashboard() {
           </div>
         ) : null}
 
-          <aside className="pbi-sidebar" aria-label="Filtros del dashboard">
-            <div className="pbi-kpi-grid pbi-kpi-grid--personnel">
-              {personnelKpis.map((item) => <PersonnelKpi key={item.label} {...item} />)}
-            </div>
-
+        <main className={`pbi-main${!dashboardData ? " is-data-loading" : ""}`} aria-busy={!dashboardData}>
+          <div className="pbi-sticky-filters" aria-label="Filtros principales">
             <div className="pbi-filter-grid">
               <MultiSlicer id="workers" label="Trabajadores" options={workerOptions} selected={selectedWorkerIds} onChange={setSelectedWorkerIds} allLabel="Todos" />
               <MultiSlicer id="roles" label="Cargos" options={roleOptions} selected={selectedRoles} onChange={changeRoles} allLabel="Todos" searchable={false} />
@@ -2001,6 +1997,12 @@ export default function FootwearDashboard() {
                 ))}
               </div>
             </fieldset>
+          </div>
+
+          <aside className="pbi-sidebar" aria-label="Filtros del dashboard">
+            <div className="pbi-kpi-grid pbi-kpi-grid--personnel">
+              {personnelKpis.map((item) => <PersonnelKpi key={item.label} {...item} />)}
+            </div>
 
             <DateHierarchySlicer selected={dateParts} onChange={setDateParts} years={selectedYears.length ? selectedYears : dashboardYears} dateDaysByYear={dateDaysByYear} />
 
@@ -2059,9 +2061,7 @@ export default function FootwearDashboard() {
               </div>
             ) : null}
           </aside>
-        </div>
 
-        <main className={`pbi-main${!dashboardData ? " is-data-loading" : ""}`} aria-busy={!dashboardData}>
           <div className="pbi-report">
             <section className="pbi-kpi-grid pbi-kpi-grid--activities" aria-label="Promedios de producción">
               {filteredActivityKpis.map((item) => <ActivityKpi key={item.label} {...item} />)}
