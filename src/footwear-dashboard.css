@@ -271,13 +271,25 @@
   line-height: 1.35;
 }
 
+.pbi-sticky-top {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  display: grid;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.14) 1px, transparent 1px),
+    var(--pbi-canvas);
+  background-size: 34px 34px;
+}
+
 .pbi-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: clamp(1rem, 1.4vw, 1.6rem);
   min-width: 0;
-  padding: clamp(1rem, 1.5vw, 1.75rem);
+  padding: 0 clamp(1rem, 1.5vw, 1.75rem) clamp(1rem, 1.5vw, 1.75rem);
 }
 
 .pbi-sidebar {
@@ -288,6 +300,7 @@
   align-items: stretch;
   min-width: 0;
   gap: clamp(0.75rem, 1vw, 1rem);
+  margin: clamp(1rem, 1.5vw, 1.75rem) clamp(1rem, 1.5vw, 1.75rem) clamp(1rem, 1.4vw, 1.6rem);
   padding: clamp(0.85rem, 1.1vw, 1.2rem);
   border: 1px solid rgba(9, 71, 128, 0.18);
   border-radius: calc(var(--pbi-radius) + 4px);
