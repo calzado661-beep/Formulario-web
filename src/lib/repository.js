@@ -383,9 +383,10 @@ export async function getTasksForUser(user) {
     return tasks;
   }
 
-  const roleTasks = role === "operante" || role === "trabajador"
-    ? tasks
-    : tasks.filter((task) => !isGroupLeaderTimeTask(task));
+  // Las tareas por tiempo tambien se registran como actividad normal: ahi no se
+  // pide ningun dato de tiempo, solo la cantidad y los campos de la tarea. El
+  // tiempo se carga aparte, en el registro del jefe de equipo.
+  const roleTasks = tasks;
 
   const assignedTasks = roleTasks.filter((task) => {
     const idMatches = ["asignado_a", "trabajador_id", "usuario_id"].some(
@@ -994,6 +995,15 @@ export async function updateGroupLeaderRecord(recordId, payload) {
   }, { requiredBackend: true });
   if (!apiResult?.record) throw new Error("No se pudo actualizar el registro por tiempo.");
   return normalizeGroupLeaderLog(apiResult.record);
+}
+
+export async function deleteGroupLeaderRecord(recordId, revision = null) {
+  const apiResult = await requestLocalApi(`/api/group-leader/records/${encodeURIComponent(recordId)}`, {
+    method: "DELETE",
+    body: JSON.stringify(revision === null || revision === undefined ? {} : { revision })
+  }, { requiredBackend: true });
+  if (!apiResult?.deleted) throw new Error("No se pudo eliminar el registro por tiempo.");
+  return Number(apiResult.deleted);
 }
 
 export async function startGroupLeaderActivity(payload) {

@@ -98,14 +98,6 @@ export function getTaskTitle(task) {
   return String(task?.titulo || task?.nombre || "");
 }
 
-const groupLeaderTimeTaskNames = new Set([
-  "etiquetado",
-  "envio nuevo",
-  "visita de tienda",
-  "picking",
-  "embalado y rotulado de guia"
-]);
-
 const guideNumberTaskNames = new Set([
   "revision de guia devolucion",
   "revision de guia despacho",
@@ -116,8 +108,35 @@ function normalizedTaskName(task) {
   return normalizeText(typeof task === "string" ? task : getTaskTitle(task));
 }
 
+const TRUTHY_FLAGS = new Set(["true", "1", "si", "sí", "yes", "y", "t"]);
+
+// Supabase puede devolver los booleanos como texto segun el cliente, asi que
+// se normalizan antes de decidir.
+export function taskFlagEnabled(value) {
+  if (typeof value === "boolean") return value;
+  if (value === null || value === undefined) return false;
+  return TRUTHY_FLAGS.has(String(value).trim().toLowerCase());
+}
+
+// Las banderas de la tabla `tarea` son la unica fuente de verdad sobre que
+// campos pide cada tarea. Se configuran desde Supabase, nunca desde el codigo.
+export function getTaskFieldFlags(task) {
+  return {
+    marca: taskFlagEnabled(task?.requiere_marca),
+    lote: taskFlagEnabled(task?.requiere_lote),
+    guia: taskFlagEnabled(task?.requiere_numero_guia),
+    hangtag: taskFlagEnabled(task?.requiere_hangtag),
+    tienda: taskFlagEnabled(task?.requiere_tienda),
+    // El tiempo solo lo registra el jefe de equipo: en el registro del
+    // operante este campo nunca se muestra.
+    tiempo: taskFlagEnabled(task?.requiere_tiempo)
+  };
+}
+
+// Una tarea pertenece al registro por tiempo del jefe de equipo cuando su
+// bandera `requiere_tiempo` esta activa.
 export function isGroupLeaderTimeTask(task) {
-  return groupLeaderTimeTaskNames.has(normalizeText(getTaskTitle(task)));
+  return taskFlagEnabled(task?.requiere_tiempo);
 }
 
 export function isPairUnit(value) {
@@ -125,29 +144,15 @@ export function isPairUnit(value) {
   return words.includes("par") || words.includes("pares");
 }
 
-export function taskUsesBrandsByDefault(task) {
+// Internas: solo las usan los resolutores de modo de captura de mas abajo, que
+// siguen dependiendo del nombre de la tarea. La visibilidad de los campos ya
+// no pasa por aqui.
+function taskUsesLote(task) {
   return normalizedTaskName(task) === "etiquetado";
 }
 
-export function taskUsesLote(task) {
-  return normalizedTaskName(task) === "etiquetado";
-}
-
-export function taskUsesGuideBreakdown(task) {
+function taskUsesGuideBreakdown(task) {
   return guideNumberTaskNames.has(normalizedTaskName(task));
-}
-
-export function taskUsesStore(task) {
-  const title = normalizeText(getTaskTitle(task));
-  const storeTaskNames = [
-    "pedido mayorista",
-    "visita de tienda",
-    "picking",
-    "apoyo tienda",
-    "apoyo a tienda"
-  ];
-  return title.startsWith("revision de guia") ||
-    storeTaskNames.some((taskName) => title === taskName || title.startsWith(`${taskName} `));
 }
 
 export function getActivityCaptureMode(taskName) {

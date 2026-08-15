@@ -17,16 +17,13 @@ import {
   displayShiftFromQuantity,
   FULL_SHIFT,
   getActivityCaptureMode,
+  getTaskFieldFlags,
   getTaskTitle,
   isGroupLeaderTimeTask,
   isFullShift,
   NO_TASK_OPTION,
   normalizeMeasurementType,
-  SIMPLE_SHIFT,
-  taskUsesBrandsByDefault,
-  taskUsesGuideBreakdown,
-  taskUsesLote,
-  taskUsesStore
+  SIMPLE_SHIFT
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
 import {
@@ -45,12 +42,41 @@ import {
 import { BrandDistribution, brandTotal, emptyBrandShare } from "./BrandDistribution";
 import { emptyGuideShare, GuideDistribution, guideTotal } from "./GuideDistribution";
 
+export const HANGTAG_OPTIONS = [
+  { value: "", label: "Selecciona" },
+  { value: "CON_HANGTAG", label: "Con hangtag" },
+  { value: "SIN_HANGTAG", label: "Sin hangtag" }
+];
+
+function recordCaptureType(task) {
+  const dbType = normalizeMeasurementType(task?.tipo_medicion);
+  const [fallbackType] = getActivityCaptureMode(getTaskTitle(task));
+  return isGroupLeaderTimeTask(task)
+    ? "tiempo"
+    : task?.tipo_medicion ? dbType : normalizeMeasurementType(fallbackType);
+}
+
+// Todas las banderas de la tarea se respetan tal cual. Lo unico que cambia
+// segun el tipo de tarea es COMO se captura marca y guia: repartiendo la
+// cantidad total cuando la tarea se mide por cantidad, o como un solo valor
+// cuando se registra por turno o por cumplimiento.
+function recordFieldFlags(task) {
+  return getTaskFieldFlags(task);
+}
+
+function taskSplitsQuantity(task) {
+  return ["cantidad", "tiempo"].includes(recordCaptureType(task));
+}
+
 function emptyRecord() {
   return {
     taskKey: "",
     cantidad: "",
     usaMarcas: false,
+    marcaId: "",
+    numeroGuia: "",
     lote: "",
+    tipoEtiquetado: "",
     tiendaId: "",
     usaGuias: false,
     guias: [emptyGuideShare()],
@@ -117,8 +143,8 @@ function RegisterActivity({ user }) {
           ? {
               ...emptyRecord(),
               taskKey,
-              usaMarcas: taskUsesBrandsByDefault(task),
-              usaGuias: taskUsesGuideBreakdown(task)
+              usaMarcas: recordFieldFlags(task).marca && taskSplitsQuantity(task),
+              usaGuias: recordFieldFlags(task).guia && taskSplitsQuantity(task)
             }
           : record
       )
@@ -150,19 +176,23 @@ function RegisterActivity({ user }) {
   function recordPayloadShape(record) {
     const task = selectedTaskFor(record);
     const title = getTaskTitle(task);
-    const dbType = normalizeMeasurementType(task?.tipo_medicion);
-    const [fallbackType, fallbackUnit] = getActivityCaptureMode(title);
-    const type = isGroupLeaderTimeTask(task) ? "tiempo" : task?.tipo_medicion ? dbType : normalizeMeasurementType(fallbackType);
+    const [, fallbackUnit] = getActivityCaptureMode(title);
+    const type = recordCaptureType(task);
     const unit = task?.unidad_medida || task?.unidad_base || task?.unidad || fallbackUnit;
-    const marcas = taskUsesBrandsByDefault(task) && record.usaMarcas
+    const flags = recordFieldFlags(task);
+    const splitsQuantity = taskSplitsQuantity(task);
+    const marcas = flags.marca && splitsQuantity && record.usaMarcas
       ? record.marcas.map((item) => ({ marca_id: Number(item.marca_id), cantidad: Number(item.cantidad) }))
       : [];
-    const guias = taskUsesGuideBreakdown(task) && record.usaGuias
+    const guias = flags.guia && splitsQuantity && record.usaGuias
       ? record.guias.map((item) => ({ numero_guia: String(item.numero_guia || "").trim(), cantidad: Number(item.cantidad) }))
       : [];
-    const usesStore = taskUsesStore(task);
-    const tiendaId = usesStore && record.tiendaId ? Number(record.tiendaId) : null;
-    const lote = taskUsesLote(task) ? String(record.lote || "").trim().toUpperCase() || null : null;
+    // Sin cantidad que repartir se guarda un unico valor por registro.
+    const marcaId = flags.marca && !splitsQuantity && record.marcaId ? Number(record.marcaId) : null;
+    const numeroGuia = flags.guia && !splitsQuantity ? String(record.numeroGuia || "").trim() || null : null;
+    const tiendaId = flags.tienda && record.tiendaId ? Number(record.tiendaId) : null;
+    const lote = flags.lote ? String(record.lote || "").trim().toUpperCase() || null : null;
+    const tipoEtiquetado = flags.hangtag ? record.tipoEtiquetado || null : null;
 
     let cantidad = null;
     let cantidadPuntaje = null;
@@ -170,12 +200,15 @@ function RegisterActivity({ user }) {
     let cumplimiento = record.cumplimiento;
     let turno = null;
 
+    // Con marcas o guias la cantidad total es la suma de sus filas: no se pide
+    // aparte para no tener que cuadrar dos numeros a mano.
+    const splitTotal = marcas.length ? brandTotal(marcas) : guias.length ? guideTotal(guias) : null;
     if (type === "cantidad") {
-      cantidad = guias.length ? guideTotal(guias) : record.cantidad === "" ? null : Number(record.cantidad);
+      cantidad = splitTotal ?? (record.cantidad === "" ? null : Number(record.cantidad));
       cumplimiento = true;
     }
     if (type === "tiempo") {
-      cantidad = guias.length ? guideTotal(guias) : record.cantidad === "" ? null : Number(record.cantidad);
+      cantidad = splitTotal ?? (record.cantidad === "" ? null : Number(record.cantidad));
       tiempoMinutos = null;
       cumplimiento = true;
     }
@@ -200,9 +233,14 @@ function RegisterActivity({ user }) {
       turno,
       marcas,
       guias,
-      usesStore,
+      flags,
+      splitsQuantity,
+      marcaId,
+      numeroGuia,
+      usesStore: flags.tienda,
       tiendaId,
-      lote
+      lote,
+      tipoEtiquetado
     };
   }
 
@@ -229,24 +267,21 @@ function RegisterActivity({ user }) {
           return `No puedes repetir un número de guía en ${shape.title}.`;
         }
       }
-      if (taskUsesBrandsByDefault(shape.task) && record.usaMarcas) {
-        const total = Number(record.cantidad || 0);
-        const distributed = brandTotal(record.marcas);
-        if (total <= 0) return `Ingresa primero la cantidad total para ${shape.title}.`;
+      if (shape.flags.hangtag && !shape.tipoEtiquetado) {
+        return `Indica si ${shape.title} va con hangtag o sin hangtag.`;
+      }
+      if (shape.flags.marca && shape.splitsQuantity && record.usaMarcas) {
         if (!record.marcas.length || record.marcas.some((item) => !item.marca_id || Number(item.cantidad) <= 0)) {
           return `Completa cada marca y su cantidad para ${shape.title}.`;
         }
         if (new Set(record.marcas.map((item) => String(item.marca_id))).size !== record.marcas.length) {
           return `No puedes repetir una marca en ${shape.title}.`;
         }
-        if (distributed !== total) {
-          return `La distribución por marcas de ${shape.title} debe sumar exactamente ${total}. Actualmente suma ${distributed}.`;
-        }
       }
-      if (shape.type === "cantidad" && !record.usaMarcas && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) < 0)) {
+      if (shape.type === "cantidad" && !shape.marcas.length && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) < 0)) {
         return `Ingresa una cantidad valida para ${shape.title}.`;
       }
-      if (shape.type === "tiempo" && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) <= 0)) {
+      if (shape.type === "tiempo" && !shape.marcas.length && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) <= 0)) {
         return `Ingresa la cantidad realizada para ${shape.title}.`;
       }
     }
@@ -315,6 +350,9 @@ function RegisterActivity({ user }) {
             turno: shape.turno,
             tienda_id: shape.tiendaId,
             lote: shape.lote,
+            tipo_etiquetado: shape.tipoEtiquetado,
+            marca_id: shape.marcaId,
+            numero_guia: shape.numeroGuia,
             puntaje: points,
             marcas: shape.marcas,
             guias: shape.guias
@@ -452,17 +490,17 @@ function RegisterActivity({ user }) {
 
 function DynamicRecordFields({ record, task, brands, stores, onChange }) {
   const title = getTaskTitle(task);
-  const dbType = normalizeMeasurementType(task?.tipo_medicion);
-  const [fallbackType, fallbackUnit] = getActivityCaptureMode(title);
-  const type = isGroupLeaderTimeTask(task) ? "tiempo" : task?.tipo_medicion ? dbType : normalizeMeasurementType(fallbackType);
+  const [, fallbackUnit] = getActivityCaptureMode(title);
+  const type = recordCaptureType(task);
   const unit = task?.unidad_medida || task?.unidad_base || task?.unidad || fallbackUnit || "unidades";
-  const usesGuideBreakdown = taskUsesGuideBreakdown(task);
-  const usesStore = taskUsesStore(task);
+  const flags = recordFieldFlags(task);
+  const usesGuideBreakdown = flags.guia;
+  const usesStore = flags.tienda;
 
   if (type === "cantidad") {
     return (
       <div className="form-grid">
-        {!usesGuideBreakdown || !record.usaGuias ? (
+        {(usesGuideBreakdown && record.usaGuias) || (flags.marca && record.usaMarcas) ? null : (
           <TextInput
             label={`Cantidad (${unit})`}
             type="number"
@@ -470,10 +508,11 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
             value={record.cantidad}
             onChange={(cantidad) => onChange({ cantidad })}
           />
-        ) : null}
-        {taskUsesBrandsByDefault(task) ? <BrandFields record={record} brands={brands} onChange={onChange} /> : null}
+        )}
+        {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
+        {flags.marca ? <BrandFields record={record} brands={brands} onChange={onChange} /> : null}
         {usesGuideBreakdown ? <GuideFields record={record} onChange={onChange} /> : null}
-        {taskUsesLote(task) ? <LoteField record={record} onChange={onChange} /> : null}
+        {flags.lote ? <LoteField record={record} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
@@ -483,7 +522,7 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
   if (type === "tiempo") {
     return (
       <div className="form-grid">
-        {!usesGuideBreakdown || !record.usaGuias ? (
+        {(usesGuideBreakdown && record.usaGuias) || (flags.marca && record.usaMarcas) ? null : (
           <TextInput
             label="Cantidad realizada"
             type="number"
@@ -492,10 +531,11 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
             value={record.cantidad}
             onChange={(cantidad) => onChange({ cantidad })}
           />
-        ) : null}
-        {taskUsesBrandsByDefault(task) ? <BrandFields record={record} brands={brands} onChange={onChange} /> : null}
+        )}
+        {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
+        {flags.marca ? <BrandFields record={record} brands={brands} onChange={onChange} /> : null}
         {usesGuideBreakdown ? <GuideFields record={record} onChange={onChange} /> : null}
-        {taskUsesLote(task) ? <LoteField record={record} onChange={onChange} /> : null}
+        {flags.lote ? <LoteField record={record} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
@@ -511,6 +551,10 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
           disabled
           hint="Esta tarea siempre se registra como cumplida."
         />
+        {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
+        {flags.marca ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
+        {flags.guia ? <SingleGuideField record={record} onChange={onChange} /> : null}
+        {flags.lote ? <LoteField record={record} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
         <Alert>Esta tarea usa el puntaje fijo definido por administracion.</Alert>
@@ -526,6 +570,10 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
         onChange={(turno) => onChange({ turno })}
         options={[SIMPLE_SHIFT, FULL_SHIFT]}
       />
+      {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
+      {flags.marca ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
+      {flags.guia ? <SingleGuideField record={record} onChange={onChange} /> : null}
+      {flags.lote ? <LoteField record={record} onChange={onChange} /> : null}
       <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
       <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       <Alert>
@@ -584,6 +632,44 @@ function LoteField({ record, onChange }) {
   );
 }
 
+// Version de un solo valor de marca y guia, para las tareas que no tienen una
+// cantidad total que repartir.
+function SingleBrandField({ record, brands, onChange }) {
+  return (
+    <SelectInput
+      label="Marca"
+      value={record.marcaId}
+      onChange={(marcaId) => onChange({ marcaId })}
+      options={[
+        { value: "", label: "Selecciona una marca" },
+        ...brands.map((brand) => ({ value: String(brand.id), label: brand.nombre }))
+      ]}
+    />
+  );
+}
+
+function SingleGuideField({ record, onChange }) {
+  return (
+    <TextInput
+      label="Número de guía"
+      value={record.numeroGuia}
+      onChange={(numeroGuia) => onChange({ numeroGuia })}
+      placeholder="Ej. GUIA-001"
+    />
+  );
+}
+
+function HangtagField({ record, onChange }) {
+  return (
+    <SelectInput
+      label="Hangtag"
+      value={record.tipoEtiquetado}
+      onChange={(tipoEtiquetado) => onChange({ tipoEtiquetado })}
+      options={HANGTAG_OPTIONS}
+    />
+  );
+}
+
 function BrandFields({ record, brands, onChange }) {
   return (
     <>
@@ -597,13 +683,12 @@ function BrandFields({ record, brands, onChange }) {
             marcas: record.marcas?.length ? record.marcas : [emptyBrandShare()]
           })
         }
-        hint="Actívalo para repartir la cantidad entre las marcas existentes."
+        hint="Actívalo para cargar la cantidad de cada marca por separado."
       />
       {record.usaMarcas ? (
         <BrandDistribution
           brands={brands}
           items={record.marcas}
-          expectedTotal={record.cantidad}
           onChange={(marcas) => onChange({ marcas })}
         />
       ) : null}

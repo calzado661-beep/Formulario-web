@@ -2303,20 +2303,12 @@ tbody tr:hover {
   background: #12231e;
 }
 
+/* La columna de acciones acompana al resto: si se fija a la derecha, el boton
+   queda flotando sobre los campos al desplazar la tabla. */
 .editable-history-table th:last-child,
 .editable-history-table td:last-child {
-  position: sticky;
-  right: 0;
-  z-index: 2;
   min-width: 122px;
   border-right: 0;
-  background: #0e1b17;
-  box-shadow: -8px 0 16px rgba(0, 0, 0, 0.18);
-}
-
-.editable-history-table th:last-child {
-  z-index: 4;
-  background: #12231e;
 }
 
 .editable-history-table tr:last-child td {
@@ -2335,6 +2327,61 @@ tbody tr:hover {
   font-variant-numeric: tabular-nums;
 }
 
+.table-pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.7rem;
+}
+
+.table-pager-info {
+  color: var(--muted-2);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.table-pager-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.table-pager-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.table-pager-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+
+.table-pager-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.table-pager-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.history-updated-cell {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--muted-2);
+}
+
 .history-detail-cell {
   max-width: 210px;
   overflow: hidden;
@@ -2346,8 +2393,7 @@ tbody tr:hover {
   border-bottom-color: rgba(244, 183, 94, 0.34);
 }
 
-.history-editing-row td:first-child,
-.history-editing-row td:last-child {
+.history-editing-row td:first-child {
   background: #241f14;
 }
 
@@ -2398,7 +2444,8 @@ tbody tr:hover {
 
 .history-edit-button,
 .history-save-button,
-.history-cancel-button {
+.history-cancel-button,
+.history-delete-button {
   min-height: 32px;
   padding: 0.38rem 0.62rem;
   border: 1px solid var(--border-strong);
@@ -2423,22 +2470,32 @@ tbody tr:hover {
   color: var(--muted);
 }
 
+/* Accion destructiva: se distingue del resto y pide confirmar en la misma fila. */
+.history-delete-button {
+  border-color: rgba(220, 116, 96, 0.45);
+  background: rgba(220, 116, 96, 0.12);
+  color: #e79c86;
+}
+
 .history-edit-button:hover,
 .history-save-button:hover,
-.history-cancel-button:hover {
+.history-cancel-button:hover,
+.history-delete-button:hover {
   filter: brightness(1.18);
 }
 
 .history-edit-button:focus-visible,
 .history-save-button:focus-visible,
-.history-cancel-button:focus-visible {
+.history-cancel-button:focus-visible,
+.history-delete-button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
 .history-edit-button:disabled,
 .history-save-button:disabled,
-.history-cancel-button:disabled {
+.history-cancel-button:disabled,
+.history-delete-button:disabled {
   cursor: wait;
   opacity: 0.6;
 }
@@ -2458,9 +2515,13 @@ tbody tr:hover {
   border-bottom-color: rgba(244, 183, 94, 0.34);
 }
 
-.history-pending-row td:first-child,
-.history-pending-row td:last-child {
+.history-pending-row td:first-child {
   background: #241f14;
+}
+
+/* Registro guardado solo con su inicio: espera cantidad y cierre. */
+.history-pending-record td {
+  background: rgba(244, 183, 94, 0.05);
 }
 
 .history-pending-badge {

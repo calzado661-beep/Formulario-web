@@ -51,9 +51,7 @@ import {
   normalizeRole,
   normalizeText,
   quantityRangesFromRules,
-  taskUsesBrandsByDefault,
-  taskUsesGuideBreakdown,
-  taskUsesLote,
+  getTaskFieldFlags,
   validateQuantityRanges
 } from "../lib/scoring";
 import { validateAttendanceEdit } from "../lib/operations";
@@ -586,6 +584,8 @@ function defaultTaskForm() {
     requiere_tiempo: false,
     requiere_lote: false,
     requiere_numero_guia: false,
+    requiere_hangtag: false,
+    requiere_tienda: false,
     ranges: emptyQuantityRanges(),
     puntaje_fijo: 1,
     puntaje_turno_simple: 1,
@@ -593,9 +593,23 @@ function defaultTaskForm() {
   };
 }
 
+// Lee las banderas guardadas en Supabase para precargar el formulario.
+function getTaskFieldFlagsForm(task) {
+  const flags = getTaskFieldFlags(task);
+  return {
+    requiere_marca: flags.marca,
+    requiere_tiempo: flags.tiempo,
+    requiere_lote: flags.lote,
+    requiere_numero_guia: flags.guia,
+    requiere_hangtag: flags.hangtag,
+    requiere_tienda: flags.tienda
+  };
+}
+
 function taskPayloadFromForm(form) {
   const tipo = normalizeMeasurementType(form.tipo_medicion);
-  const task = { titulo: form.titulo };
+  // Las banderas se guardan tal como las marca el formulario: son la fuente de
+  // verdad de que campos pide la tarea y no se deducen del nombre.
   return {
     nombre: form.titulo.trim(),
     titulo: form.titulo.trim(),
@@ -604,10 +618,12 @@ function taskPayloadFromForm(form) {
     tipo_medicion: tipo,
     unidad_medida: form.unidad_base.trim() || "Ninguna",
     unidad_base: form.unidad_base.trim() || null,
-    requiere_marca: taskUsesBrandsByDefault(task),
+    requiere_marca: Boolean(form.requiere_marca),
     requiere_tiempo: Boolean(form.requiere_tiempo || tipo === "tiempo"),
-    requiere_lote: taskUsesLote(task),
-    requiere_numero_guia: taskUsesGuideBreakdown(task)
+    requiere_lote: Boolean(form.requiere_lote),
+    requiere_numero_guia: Boolean(form.requiere_numero_guia),
+    requiere_hangtag: Boolean(form.requiere_hangtag),
+    requiere_tienda: Boolean(form.requiere_tienda)
   };
 }
 
@@ -767,10 +783,7 @@ function TaskScoringSection() {
       tipo_tarea: selectedTask.tipo_tarea || "General",
       tipo_medicion: normalizeMeasurementType(selectedTask.tipo_medicion),
       unidad_base: selectedTask.unidad_medida || selectedTask.unidad_base || selectedTask.unidad || "Ninguna",
-      requiere_marca: taskUsesBrandsByDefault(selectedTask),
-      requiere_tiempo: Boolean(selectedTask.requiere_tiempo),
-      requiere_lote: taskUsesLote(selectedTask),
-      requiere_numero_guia: taskUsesGuideBreakdown(selectedTask),
+      ...getTaskFieldFlagsForm(selectedTask),
       ranges: quantityRangesFromRules(rules),
       puntaje_fijo: Number(selectedTask.puntaje_fijo || selectedTask.puntaje || 1),
       puntaje_turno_simple: Number(selectedTask.puntaje_turno_simple || selectedTask.puntos_turno_simple || 1),
@@ -922,11 +935,6 @@ function TaskScoringSection() {
 }
 
 function TaskForm({ form, setForm, onSubmit, saving, submitLabel }) {
-  const contextualTask = { titulo: form.titulo };
-  const allowsBrands = taskUsesBrandsByDefault(contextualTask);
-  const allowsLote = taskUsesLote(contextualTask);
-  const allowsGuideNumber = taskUsesGuideBreakdown(contextualTask);
-
   return (
     <form className="stack" onSubmit={onSubmit} noValidate>
       <div className="form-grid">
@@ -952,25 +960,35 @@ function TaskForm({ form, setForm, onSubmit, saving, submitLabel }) {
         <CheckboxInput label="Tarea activa" checked={form.activo} onChange={(activo) => setForm({ ...form, activo })} />
         <CheckboxInput
           label="Requiere marca"
-          checked={allowsBrands}
-          disabled
-          onChange={() => {}}
-          hint="Se activa automaticamente solo para Etiquetado."
+          checked={form.requiere_marca}
+          onChange={(requiere_marca) => setForm({ ...form, requiere_marca })}
         />
-        <CheckboxInput label="Requiere tiempo" checked={form.requiere_tiempo} onChange={(requiere_tiempo) => setForm({ ...form, requiere_tiempo })} />
+        <CheckboxInput
+          label="Requiere tiempo"
+          checked={form.requiere_tiempo}
+          onChange={(requiere_tiempo) => setForm({ ...form, requiere_tiempo })}
+          hint="Solo el jefe de equipo registra el tiempo de estas tareas."
+        />
         <CheckboxInput
           label="Requiere lote"
-          checked={allowsLote}
-          disabled
-          onChange={() => {}}
-          hint="Se activa automaticamente solo para Etiquetado."
+          checked={form.requiere_lote}
+          onChange={(requiere_lote) => setForm({ ...form, requiere_lote })}
         />
         <CheckboxInput
           label="Requiere numero de guia"
-          checked={allowsGuideNumber}
-          disabled
-          onChange={() => {}}
-          hint="Se activa automaticamente segun el nombre de la tarea."
+          checked={form.requiere_numero_guia}
+          onChange={(requiere_numero_guia) => setForm({ ...form, requiere_numero_guia })}
+        />
+        <CheckboxInput
+          label="Requiere hangtag"
+          checked={form.requiere_hangtag}
+          onChange={(requiere_hangtag) => setForm({ ...form, requiere_hangtag })}
+          hint="Muestra el selector con hangtag / sin hangtag."
+        />
+        <CheckboxInput
+          label="Requiere tienda"
+          checked={form.requiere_tienda}
+          onChange={(requiere_tienda) => setForm({ ...form, requiere_tienda })}
         />
       </div>
       <ScoreFields form={form} setForm={setForm} />

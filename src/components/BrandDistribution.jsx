@@ -9,11 +9,9 @@ export function brandTotal(items) {
   return (items || []).reduce((total, item) => total + Number(item.cantidad || 0), 0);
 }
 
-export function BrandDistribution({ brands, items, expectedTotal, onChange }) {
+export function BrandDistribution({ brands, items, onChange }) {
   const shares = items?.length ? items : [emptyBrandShare()];
-  const distributed = brandTotal(shares);
-  const target = Number(expectedTotal || 0);
-  const remaining = target - distributed;
+  const total = brandTotal(shares);
 
   function update(index, changes) {
     onChange(shares.map((item, itemIndex) => (itemIndex === index ? { ...item, ...changes } : item)));
@@ -28,8 +26,8 @@ export function BrandDistribution({ brands, items, expectedTotal, onChange }) {
     <div className="form-span brand-distribution">
       <div className="brand-distribution-header">
         <div>
-          <strong>Distribución por marcas</strong>
-          <span>Distribuye entre las marcas la cantidad total ingresada en la tarea.</span>
+          <strong>Cantidad por marca</strong>
+          <span>Agrega cada marca con su cantidad. El puntaje se calcula sobre el total.</span>
         </div>
         <Button variant="secondary" icon={Plus} onClick={() => onChange([...shares, emptyBrandShare()])}>
           Añadir marca
@@ -68,9 +66,8 @@ export function BrandDistribution({ brands, items, expectedTotal, onChange }) {
         );
       })}
 
-      <div className={`brand-total ${target > 0 && remaining === 0 ? "complete" : "pending"}`}>
-        Distribuido: <strong>{distributed}</strong> de <strong>{target}</strong>
-        {target > 0 && remaining !== 0 ? <span> · Diferencia: {remaining}</span> : null}
+      <div className={`brand-total ${total > 0 ? "complete" : "pending"}`}>
+        Cantidad total: <strong>{total}</strong>
       </div>
     </div>
   );

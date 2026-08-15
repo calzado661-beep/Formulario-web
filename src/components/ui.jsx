@@ -1,11 +1,67 @@
+import { useEffect, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Loader2,
   Save,
   Trash2
 } from "lucide-react";
+
+export const DEFAULT_PAGE_SIZE = 10;
+
+// Divide una lista en paginas y devuelve solo la visible. Mantiene la pagina
+// dentro de rango cuando la lista se acorta por un filtro o una recarga.
+export function usePagination(totalRows, pageSize = DEFAULT_PAGE_SIZE) {
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const currentPage = Math.min(page, totalPages - 1);
+
+  useEffect(() => {
+    if (page > totalPages - 1) setPage(totalPages - 1);
+  }, [page, totalPages]);
+
+  return {
+    page: currentPage,
+    totalPages,
+    setPage,
+    start: currentPage * pageSize,
+    end: currentPage * pageSize + pageSize
+  };
+}
+
+export function TablePager({ page, totalPages, totalRows, onChange }) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="table-pager">
+      <span className="table-pager-info">
+        {totalRows} registro{totalRows === 1 ? "" : "s"} · pagina {page + 1} de {totalPages}
+      </span>
+      <div className="table-pager-actions">
+        <button
+          type="button"
+          className="table-pager-button"
+          disabled={page === 0}
+          onClick={() => onChange(page - 1)}
+          aria-label="Pagina anterior"
+        >
+          <ChevronLeft />
+        </button>
+        <button
+          type="button"
+          className="table-pager-button"
+          disabled={page >= totalPages - 1}
+          onClick={() => onChange(page + 1)}
+          aria-label="Pagina siguiente"
+        >
+          <ChevronRight />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function Button({
   children,
@@ -149,14 +205,24 @@ export function Alert({ type = "info", children }) {
   );
 }
 
-export function DataTable({ rows, columns, empty = "Sin registros", compact = false, onRowClick }) {
+export function DataTable({
+  rows,
+  columns,
+  empty = "Sin registros",
+  compact = false,
+  onRowClick,
+  pageSize = DEFAULT_PAGE_SIZE
+}) {
   const normalizedRows = rows || [];
   const normalizedColumns =
     columns || Array.from(new Set(normalizedRows.flatMap((row) => Object.keys(row || {}))));
+  const { page, totalPages, setPage, start, end } = usePagination(normalizedRows.length, pageSize);
+  const visibleRows = pageSize > 0 ? normalizedRows.slice(start, end) : normalizedRows;
 
   if (!normalizedRows.length) return <div className="empty-state">{empty}</div>;
 
   return (
+    <>
     <div className={`table-wrap ${compact ? "compact" : ""}`}>
       <table>
         <thead>
@@ -167,9 +233,9 @@ export function DataTable({ rows, columns, empty = "Sin registros", compact = fa
           </tr>
         </thead>
         <tbody>
-          {normalizedRows.map((row, rowIndex) => (
+          {visibleRows.map((row, rowIndex) => (
             <tr
-              key={row.id ?? rowIndex}
+              key={row.id ?? `${start}-${rowIndex}`}
               className={onRowClick ? "table-row-action" : ""}
               role={onRowClick ? "button" : undefined}
               tabIndex={onRowClick ? 0 : undefined}
@@ -189,6 +255,8 @@ export function DataTable({ rows, columns, empty = "Sin registros", compact = fa
         </tbody>
       </table>
     </div>
+    <TablePager page={page} totalPages={totalPages} totalRows={normalizedRows.length} onChange={setPage} />
+    </>
   );
 }
 

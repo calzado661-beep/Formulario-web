@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
-import { applyScoringRules, calculatePoints } from "./src/lib/scoring.js";
+import { applyScoringRules, calculatePoints, getTaskFieldFlags } from "./src/lib/scoring.js";
 import { buildDashboardPayroll } from "./src/lib/dashboardMetrics.js";
 import {
   gmailConfiguration,
@@ -222,6 +222,13 @@ function isActive(value) {
   return !["false", "0", "no"].includes(String(value ?? true).trim().toLowerCase());
 }
 
+const HANGTAG_VALUES = new Set(["CON_HANGTAG", "SIN_HANGTAG"]);
+
+function normalizeHangtag(value) {
+  const raw = String(value ?? "").trim().toUpperCase().replace(/\s+/g, "_");
+  return HANGTAG_VALUES.has(raw) ? raw : null;
+}
+
 function taskTitle(task) {
   return String(task?.nombre || task?.titulo || "");
 }
@@ -316,21 +323,20 @@ function normalizeActivityLog(row) {
 function taskPayloadForDb(body, tableName) {
   const taskName = body.nombre ?? body.titulo;
   const unit = body.unidad_medida ?? body.unidad_base;
-  const automaticFields = {
-    requiere_marca: normalizeTaskName(taskName) === "etiquetado",
-    requiere_lote: normalizeTaskName(taskName) === "etiquetado",
-    requiere_numero_guia: isGuideBreakdownTask({ nombre: taskName })
-  };
+  // Las banderas se guardan tal como llegan del panel: definen que campos pide
+  // la tarea y no se deducen de su nombre.
   const payload = tableName === "tarea"
     ? {
         nombre: taskName,
         activo: body.activo,
         unidad_medida: unit,
         tipo_tarea: body.tipo_tarea,
-        requiere_marca: automaticFields.requiere_marca,
+        requiere_marca: body.requiere_marca,
         requiere_tiempo: body.requiere_tiempo,
-        requiere_lote: automaticFields.requiere_lote,
-        requiere_numero_guia: automaticFields.requiere_numero_guia
+        requiere_lote: body.requiere_lote,
+        requiere_numero_guia: body.requiere_numero_guia,
+        requiere_hangtag: body.requiere_hangtag,
+        requiere_tienda: body.requiere_tienda
       }
     : {
         nombre: taskName,
@@ -342,7 +348,7 @@ function taskPayloadForDb(body, tableName) {
         puntos_turno_simple: body.puntos_turno_simple ?? body.puntaje_turno_simple,
         puntos_turno_completo: body.puntos_turno_completo ?? body.puntaje_turno_completo,
         tipo_tarea: body.tipo_tarea,
-        requiere_marca: automaticFields.requiere_marca
+        requiere_marca: body.requiere_marca
       };
 
   if (payload.activo === undefined && body.estado !== undefined) {
@@ -1027,15 +1033,10 @@ async function handleReadFootwearDashboard(request, response) {
   }
 }
 
+// Una tarea es del registro por tiempo del jefe de equipo segun su bandera en
+// la tabla `tarea`, no por su nombre.
 function isGroupLeaderTimeTask(task) {
-  const timeTasks = new Set([
-    "etiquetado",
-    "envio nuevo",
-    "visita de tienda",
-    "picking",
-    "embalado y rotulado de guia"
-  ]);
-  return timeTasks.has(normalizeTaskName(taskTitle(task)));
+  return getTaskFieldFlags(task).tiempo;
 }
 
 function normalizedBrandItems(value) {
@@ -2287,11 +2288,12 @@ async function handleCreateActivityLog(request, response) {
     const requestedType = normalizeRole(body.tipo_medicion);
     const storesQuantity = !scoringTypes.has("fijo") && !scoringTypes.has("turno") &&
       !["fijo", "turno", "cumplimiento"].includes(requestedType);
-    const isTimeTask = isGroupLeaderTimeTask(taskResult.data);
-    const requiresStore = taskUsesStore(taskResult.data);
-    const allowsBrands = isEtiquetadoTask(taskResult.data);
-    const allowsGuideNumber = isGuideBreakdownTask(taskResult.data);
-    const allowsLote = isEtiquetadoTask(taskResult.data);
+    const taskFields = getTaskFieldFlags(taskResult.data);
+    const isTimeTask = taskFields.tiempo;
+    const requiresStore = taskFields.tienda;
+    const allowsBrands = taskFields.marca;
+    const allowsGuideNumber = taskFields.guia;
+    const allowsLote = taskFields.lote;
     if (isTimeTask && body.tiempo_minutos !== null && body.tiempo_minutos !== undefined && body.tiempo_minutos !== "") {
       sendJson(response, 403, { error: "El operante no puede registrar el tiempo. Debe hacerlo el jefe de equipo." });
       return;
@@ -2299,17 +2301,33 @@ async function handleCreateActivityLog(request, response) {
     const brandItems = normalizedBrandItems(body.marcas);
     const guideItems = normalizedGuideItems(body.guias);
     const singleGuideNumber = String(body.numero_guia || "").trim();
+    // Las tareas sin cantidad que repartir mandan una sola marca en lugar de la
+    // distribucion por marcas.
+    const singleBrandId = nullableNumber(body.marca_id);
     const lote = String(body.lote || "").trim().toUpperCase();
+    const tipoEtiquetado = normalizeHangtag(body.tipo_etiquetado);
+    if (singleBrandId && !allowsBrands) {
+      sendJson(response, 400, { error: `Las marcas no estan disponibles para ${taskTitle(taskResult.data)}.` });
+      return;
+    }
     if (brandItems.length && !allowsBrands) {
-      sendJson(response, 400, { error: "Las marcas solo estan disponibles para la tarea Etiquetado." });
+      sendJson(response, 400, { error: `Las marcas no estan disponibles para ${taskTitle(taskResult.data)}.` });
       return;
     }
     if (lote && !allowsLote) {
-      sendJson(response, 400, { error: "El lote solo esta disponible para la tarea Etiquetado." });
+      sendJson(response, 400, { error: `El lote no esta disponible para ${taskTitle(taskResult.data)}.` });
       return;
     }
     if ((guideItems.length || singleGuideNumber) && !allowsGuideNumber) {
       sendJson(response, 400, { error: "El número de guía no está disponible para esta tarea." });
+      return;
+    }
+    if (taskFields.hangtag && !tipoEtiquetado) {
+      sendJson(response, 400, { error: `Indica si ${taskTitle(taskResult.data)} va con hangtag o sin hangtag.` });
+      return;
+    }
+    if (!taskFields.hangtag && tipoEtiquetado) {
+      sendJson(response, 400, { error: `El hangtag no esta disponible para ${taskTitle(taskResult.data)}.` });
       return;
     }
     if (brandItems.length && guideItems.length) {
@@ -2340,6 +2358,8 @@ async function handleCreateActivityLog(request, response) {
       cumplimiento: body.cumplimiento === undefined ? null : Boolean(body.cumplimiento),
       tienda_id: requiresStore ? nullableNumber(body.tienda_id) : null,
       numero_guia: singleGuideNumber || null,
+      marca_id: singleBrandId,
+      tipo_etiquetado: tipoEtiquetado,
       dato_extra: lote || null,
       observacion: body.observacion || body.detalle ? String(body.observacion || body.detalle).trim() : null,
       puntaje: nullableNumber(body.puntaje) ?? 0
@@ -2363,6 +2383,17 @@ async function handleCreateActivityLog(request, response) {
         .maybeSingle();
       if (storeResult.error || !storeResult.data || !isActive(storeResult.data.activo)) {
         sendJson(response, 400, { error: "Selecciona una tienda activa y valida." });
+        return;
+      }
+    }
+    if (payload.marca_id) {
+      const brandResult = await supabase
+        .from("marcas")
+        .select("id,activo")
+        .eq("id", payload.marca_id)
+        .maybeSingle();
+      if (brandResult.error || !brandResult.data || !isActive(brandResult.data.activo)) {
+        sendJson(response, 400, { error: "Selecciona una marca activa y valida." });
         return;
       }
     }
@@ -2415,7 +2446,7 @@ async function handleCreateActivityLog(request, response) {
 }
 
 const GROUP_RECORD_COLUMNS_CURRENT =
-  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,marca_id,tienda_id,observacion,puntaje,hora_inicio,hora_fin,created_at,updated_at,revision";
+  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,marca_id,tienda_id,tipo_etiquetado,observacion,puntaje,hora_inicio,hora_fin,created_at,updated_at,revision";
 const GROUP_RECORD_COLUMNS_WITH_EXTRAS =
   "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,marca_id,tienda_id,observacion,puntaje,created_at";
 const GROUP_RECORD_COLUMNS_BASE =
@@ -2698,11 +2729,11 @@ async function handleCreateGroupLeaderRecordLegacy(request, response) {
       return;
     }
 
-    // Las mismas tareas por tiempo piden aqui los mismos datos adicionales
-    // que ya le pide el operante para esa tarea (marca en Etiquetado, tienda
-    // en Picking/Visita de tienda).
-    const requiresBrand = isEtiquetadoTask(taskResult.data);
-    const requiresStore = taskUsesStore(taskResult.data);
+    // Los datos adicionales salen de las banderas de la tarea, igual que en el
+    // registro del operante.
+    const legacyFields = getTaskFieldFlags(taskResult.data);
+    const requiresBrand = legacyFields.marca;
+    const requiresStore = legacyFields.tienda;
     const requestedBrandId = nullableNumber(body.marca_id);
     const requestedStoreId = nullableNumber(body.tienda_id);
 
@@ -2808,7 +2839,21 @@ function historyRecordMigrationMissing(error) {
     /hora_inicio|hora_fin|revision|updated_at/i.test(String(error?.message || ""));
 }
 
+function pendingRecordMigrationMissing(error) {
+  return String(error?.code) === "23514" &&
+    /registros_tareas_jefe_equipo_horas_validas/i.test(
+      `${error?.message || ""} ${error?.details || ""}`
+    );
+}
+
 function sendHistoryRecordError(response, error, fallback) {
+  if (pendingRecordMigrationMissing(error)) {
+    sendJson(response, 503, {
+      code: "GROUP_PENDING_MIGRATION_REQUIRED",
+      error: "Falta ejecutar sql/028_registro_jefe_equipo_pendiente.sql en Supabase para guardar registros sin cierre."
+    });
+    return;
+  }
   if (historyRecordMigrationMissing(error)) {
     sendJson(response, 503, {
       code: "GROUP_HISTORY_MIGRATION_REQUIRED",
@@ -2844,6 +2889,24 @@ function limaDateForInstant(value) {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+// Registro recien empezado: solo se conoce el inicio. La cantidad, el cierre y
+// el puntaje se completan despues desde el historial.
+export function groupLeaderRecordStartTiming(horaInicio, { now = Date.now() } = {}) {
+  const start = new Date(horaInicio || "");
+  if (Number.isNaN(start.getTime())) {
+    throw invalidGroupRecord("Selecciona una fecha y una hora de inicio validas.");
+  }
+  if (start.getTime() > Number(now) + 60000) {
+    throw invalidGroupRecord("La hora de inicio no puede estar en el futuro.");
+  }
+  return {
+    hora_inicio: start.toISOString(),
+    hora_fin: null,
+    fecha_registro: limaDateForInstant(start),
+    tiempo_minutos: 0
+  };
+}
+
 export function groupLeaderRecordTiming(horaInicio, horaFin, { now = Date.now() } = {}) {
   const start = new Date(horaInicio || "");
   const finish = new Date(horaFin || "");
@@ -2869,22 +2932,22 @@ export function groupLeaderRecordTiming(horaInicio, horaFin, { now = Date.now() 
 }
 
 async function validateGroupRecordMetadata(body, task, current = null) {
-  const allowsBrand = isEtiquetadoTask(task);
-  const allowsLote = isEtiquetadoTask(task);
-  const allowsGuide = isGuideBreakdownTask(task);
-  const requiresStore = taskUsesStore(task);
+  const fields = getTaskFieldFlags(task);
   const marcaId = nullableNumber(body.marca_id);
   const tiendaId = nullableNumber(body.tienda_id);
   const lote = String(body.lote || "").trim().toUpperCase() || null;
   const numeroGuia = String(body.codigo_guia ?? body.numero_guia ?? "").trim() || null;
+  const tipoEtiquetado = normalizeHangtag(body.tipo_etiquetado);
   const observacion = String(body.detalle ?? body.observacion ?? "").trim() || null;
 
-  if (allowsBrand && !marcaId) throw invalidGroupRecord(`Selecciona una marca para ${taskTitle(task)}.`);
-  if (!allowsBrand && marcaId) throw invalidGroupRecord("La marca solo esta disponible para la tarea Etiquetado.");
-  if (!allowsLote && lote) throw invalidGroupRecord("El lote solo esta disponible para la tarea Etiquetado.");
-  if (!allowsGuide && numeroGuia) throw invalidGroupRecord("El numero de guia no esta disponible para esta tarea.");
-  if (requiresStore && !tiendaId) throw invalidGroupRecord(`Selecciona una tienda para ${taskTitle(task)}.`);
-  if (!requiresStore && tiendaId) throw invalidGroupRecord("La tienda no esta disponible para esta tarea.");
+  if (fields.marca && !marcaId) throw invalidGroupRecord(`Selecciona una marca para ${taskTitle(task)}.`);
+  if (!fields.marca && marcaId) throw invalidGroupRecord(`La marca no esta disponible para ${taskTitle(task)}.`);
+  if (!fields.lote && lote) throw invalidGroupRecord(`El lote no esta disponible para ${taskTitle(task)}.`);
+  if (!fields.guia && numeroGuia) throw invalidGroupRecord(`El numero de guia no esta disponible para ${taskTitle(task)}.`);
+  if (fields.hangtag && !tipoEtiquetado) throw invalidGroupRecord(`Indica si ${taskTitle(task)} va con hangtag o sin hangtag.`);
+  if (!fields.hangtag && tipoEtiquetado) throw invalidGroupRecord(`El hangtag no esta disponible para ${taskTitle(task)}.`);
+  if (fields.tienda && !tiendaId) throw invalidGroupRecord(`Selecciona una tienda para ${taskTitle(task)}.`);
+  if (!fields.tienda && tiendaId) throw invalidGroupRecord(`La tienda no esta disponible para ${taskTitle(task)}.`);
   if (lote && lote.length > 100) throw invalidGroupRecord("El codigo de lote no puede superar 100 caracteres.");
   if (numeroGuia && numeroGuia.length > 150) throw invalidGroupRecord("El numero de guia no puede superar 150 caracteres.");
   if (observacion && observacion.length > 1000) throw invalidGroupRecord("El detalle no puede superar 1,000 caracteres.");
@@ -2902,7 +2965,14 @@ async function validateGroupRecordMetadata(body, task, current = null) {
     if (!storeResult.data || !isActive(storeResult.data.activo)) throw invalidGroupRecord("Selecciona una tienda activa y valida.");
   }
 
-  return { marca_id: marcaId, tienda_id: tiendaId, lote, numero_guia: numeroGuia, observacion };
+  return {
+    marca_id: marcaId,
+    tienda_id: tiendaId,
+    lote,
+    numero_guia: numeroGuia,
+    tipo_etiquetado: tipoEtiquetado,
+    observacion
+  };
 }
 
 async function ensureGroupRecordDoesNotOverlap(workerId, timing, excludeRecordId = null) {
@@ -2946,12 +3016,29 @@ async function validateGroupRecordBase(body, { current = null, validateWorker = 
       throw invalidGroupRecord("Selecciona un operante activo.");
     }
   }
+  const metadata = await validateGroupRecordMetadata(body, task, current);
+  // Sin hora de fin el registro queda pendiente: se guarda el inicio y se
+  // cierra mas adelante desde el historial, con la cantidad real.
+  if (!body.hora_fin) {
+    return {
+      task,
+      workerId,
+      taskId,
+      payload: {
+        trabajador_id: workerId,
+        tarea_id: taskId,
+        cantidad: 0,
+        ...groupLeaderRecordStartTiming(body.hora_inicio),
+        ...metadata,
+        puntaje: null
+      }
+    };
+  }
   const quantity = Number(body.cantidad);
   if (!Number.isInteger(quantity) || quantity <= 0 || quantity > MAX_SCORE_QUANTITY) {
     throw invalidGroupRecord(`La cantidad debe ser un numero entero entre 1 y ${MAX_SCORE_QUANTITY.toLocaleString("es-PE")}.`);
   }
   const timing = groupLeaderRecordTiming(body.hora_inicio, body.hora_fin);
-  const metadata = await validateGroupRecordMetadata(body, task, current);
   const quantityRules = (task.reglas_puntaje || []).filter(
     (rule) => normalizeRole(rule.tipo_regla) === "cantidad"
   );
@@ -3055,6 +3142,7 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
       lote: payload.lote,
       marca_id: payload.marca_id,
       tienda_id: payload.tienda_id,
+      tipo_etiquetado: payload.tipo_etiquetado,
       observacion: payload.observacion,
       puntaje: payload.puntaje
     };
@@ -3075,6 +3163,45 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
     sendJson(response, 200, { record });
   } catch (error) {
     sendHistoryRecordError(response, error, "No se pudo actualizar el registro por tiempo.");
+  }
+}
+
+async function handleDeleteGroupLeaderRecord(request, response, recordId) {
+  try {
+    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    if (!session) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const currentResult = await supabase
+      .from("registros_tareas_jefe_equipo")
+      .select("id,encargado_id,revision")
+      .eq("id", recordId)
+      .maybeSingle();
+    if (currentResult.error) throw currentResult.error;
+    const current = currentResult.data;
+    if (!current) throw invalidGroupRecord("Registro no encontrado.", 404);
+    if (Number(current.encargado_id) !== Number(session.id)) {
+      throw invalidGroupRecord("Solo el jefe que creo el registro puede eliminarlo.", 403);
+    }
+    // Si el cliente manda la revision que tenia a la vista, se comprueba para
+    // no borrar una fila que otra sesion acaba de cambiar.
+    if (body.revision !== undefined && body.revision !== null &&
+      Number(body.revision) !== Number(current.revision)) {
+      throw invalidGroupRecord("La fila fue modificada por otra sesion. Actualiza el historial antes de eliminarla.", 409);
+    }
+    // La tarjeta en curso enlazada, si existe, queda desligada por la regla
+    // `on delete set null` de la tabla de actividades.
+    const deleteResult = await supabase
+      .from("registros_tareas_jefe_equipo")
+      .delete()
+      .eq("id", recordId)
+      .eq("encargado_id", Number(session.id))
+      .select("id")
+      .maybeSingle();
+    if (deleteResult.error) throw deleteResult.error;
+    if (!deleteResult.data) throw invalidGroupRecord("El registro ya no existe.", 404);
+    sendJson(response, 200, { deleted: Number(recordId) });
+  } catch (error) {
+    sendHistoryRecordError(response, error, "No se pudo eliminar el registro por tiempo.");
   }
 }
 
@@ -3220,15 +3347,16 @@ async function handleCreateLiveGroupLeaderActivity(request, response) {
       return;
     }
 
-    const requiresStore = taskUsesStore(task);
+    const liveFields = getTaskFieldFlags(task);
+    const requiresStore = liveFields.tienda;
     const tiendaId = nullableNumber(body.tienda_id);
     const guideNumber = String(body.numero_guia || body.codigo_guia || "").trim();
     if (requiresStore && !tiendaId) {
       sendJson(response, 400, { error: `Selecciona una tienda para ${taskTitle(task)}.` });
       return;
     }
-    if (guideNumber && !isGuideBreakdownTask(task)) {
-      sendJson(response, 400, { error: "El numero de guia no esta disponible para esta tarea." });
+    if (guideNumber && !liveFields.guia) {
+      sendJson(response, 400, { error: `El numero de guia no esta disponible para ${taskTitle(task)}.` });
       return;
     }
     if (tiendaId) {
@@ -3308,19 +3436,28 @@ async function handleUpdateLiveGroupLeaderActivity(request, response, activityId
       sendJson(response, 409, { error: "La tarea de esta actividad ya no esta activa o disponible." });
       return;
     }
-    const supportsMetadata = isEtiquetadoTask(task);
+    const fields = getTaskFieldFlags(task);
+    const supportsMetadata = fields.marca || fields.lote;
     const hasBrandField = Object.hasOwn(body, "marca_id");
     const hasLoteField = Object.hasOwn(body, "lote");
     const hasUnexpectedBrand = hasBrandField && body.marca_id !== null && body.marca_id !== "";
     const hasUnexpectedLote = hasLoteField && String(body.lote || "").trim() !== "";
-    if (!supportsMetadata && (hasUnexpectedBrand || hasUnexpectedLote || Boolean(body.actualizar_datos))) {
-      sendJson(response, 400, { error: "Marca y lote solo estan disponibles para la tarea Etiquetado." });
+    if (!fields.marca && hasUnexpectedBrand) {
+      sendJson(response, 400, { error: `La marca no esta disponible para ${taskTitle(task)}.` });
       return;
     }
-    let marcaId = supportsMetadata
+    if (!fields.lote && hasUnexpectedLote) {
+      sendJson(response, 400, { error: `El lote no esta disponible para ${taskTitle(task)}.` });
+      return;
+    }
+    if (!supportsMetadata && Boolean(body.actualizar_datos)) {
+      sendJson(response, 400, { error: `${taskTitle(task)} no tiene datos adicionales que actualizar.` });
+      return;
+    }
+    let marcaId = fields.marca
       ? (hasBrandField ? nullableNumber(body.marca_id) : nullableNumber(current.marca_id))
       : null;
-    const lote = supportsMetadata
+    const lote = fields.lote
       ? (hasLoteField ? String(body.lote || "").trim().toUpperCase() || null : current.lote || null)
       : null;
     if (lote && lote.length > 100) {
@@ -3892,6 +4029,11 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (groupLeaderRecordMatch && request.method === "PUT") {
     await handleUpdateGroupLeaderRecord(request, response, Number(groupLeaderRecordMatch[1]));
+    return;
+  }
+
+  if (groupLeaderRecordMatch && request.method === "DELETE") {
+    await handleDeleteGroupLeaderRecord(request, response, Number(groupLeaderRecordMatch[1]));
     return;
   }
 
