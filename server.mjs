@@ -1612,7 +1612,8 @@ async function handleReadAttendances(request, response) {
   }
 }
 
-const ATTENDANCE_STATES = new Set(["AUSENTE", "PUNTUAL", "TARDANZA"]);
+const ATTENDANCE_STATES = new Set(["AUSENTE", "PUNTUAL", "TARDANZA", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"]);
+const ATTENDANCE_PRESENT_STATES = new Set(["PUNTUAL", "TARDANZA"]);
 const ATTENDANCE_TIME_ZONE = "America/Lima";
 
 function currentAttendanceMinutes() {
@@ -1693,10 +1694,10 @@ async function handleMarkAttendance(request, response) {
       }
     }
     if (!ATTENDANCE_STATES.has(estado)) {
-      sendJson(response, 400, { error: "El estado de asistencia debe ser Ausente, Puntual o Tardanza." });
+      sendJson(response, 400, { error: "El estado de asistencia debe ser Ausente, Puntual, Tardanza, Permiso, Descanso Medico o Suspension." });
       return;
     }
-    const present = estado !== "AUSENTE";
+    const present = ATTENDANCE_PRESENT_STATES.has(estado);
     const hasWithdrawalFields = "retiro_anticipado" in body || "motivo_retiro" in body || "retirado_en" in body;
     const requestedEarlyExit = Boolean(body.retiro_anticipado);
     const earlyExitReason = String(body.motivo_retiro || "").trim();
@@ -1709,7 +1710,7 @@ async function handleMarkAttendance(request, response) {
       return;
     }
     if (requestedEarlyExit && !present) {
-      sendJson(response, 400, { error: "Un trabajador ausente no puede figurar con retiro anticipado." });
+      sendJson(response, 400, { error: "Solo un trabajador presente (Puntual o Tardanza) puede figurar con retiro anticipado." });
       return;
     }
     if (requestedEarlyExit && !earlyExitReason) {

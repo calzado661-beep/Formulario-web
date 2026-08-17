@@ -18,8 +18,11 @@ test("retiro anticipado conserva puntualidad y exige motivo", () => {
   assert.equal(attendanceDisplayState({ estado: "PUNTUAL", retiro_anticipado: true }), "Retiro anticipado");
 });
 
-test("un ausente no puede retirarse anticipadamente", () => {
-  assert.match(validateAttendanceEdit({ estado: "AUSENTE", retiro_anticipado: true, motivo_retiro: "Motivo" }), /ausente/i);
+test("solo un trabajador presente puede retirarse anticipadamente", () => {
+  assert.match(validateAttendanceEdit({ estado: "AUSENTE", retiro_anticipado: true, motivo_retiro: "Motivo" }), /presente/i);
+  assert.match(validateAttendanceEdit({ estado: "PERMISO", retiro_anticipado: true, motivo_retiro: "Motivo" }), /presente/i);
+  assert.equal(attendanceDisplayState({ estado: "DESCANSO_MEDICO" }), "Descanso Médico");
+  assert.equal(attendanceDisplayState({ estado: "SUSPENSION" }), "Suspensión");
 });
 
 test("la cantidad acumulada no puede disminuir", () => {

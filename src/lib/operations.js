@@ -1,14 +1,15 @@
 import { calculatePoints } from "./scoring.js";
 
-export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA"];
+export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"];
+const ATTENDANCE_PRESENT_STATES = ["PUNTUAL", "TARDANZA"];
 
 export function validateAttendanceEdit({ estado, retiro_anticipado, motivo_retiro }) {
   const normalizedState = String(estado || "").trim().toUpperCase();
   if (!ATTENDANCE_STATES.includes(normalizedState)) {
     return "Selecciona un estado de asistencia valido.";
   }
-  if (retiro_anticipado && normalizedState === "AUSENTE") {
-    return "Un trabajador ausente no puede figurar con retiro anticipado.";
+  if (retiro_anticipado && !ATTENDANCE_PRESENT_STATES.includes(normalizedState)) {
+    return "Solo un trabajador presente (Puntual o Tardanza) puede figurar con retiro anticipado.";
   }
   if (retiro_anticipado && !String(motivo_retiro || "").trim()) {
     return "Ingresa el motivo del retiro anticipado.";
@@ -21,6 +22,9 @@ export function attendanceDisplayState(attendance) {
   const state = String(attendance?.estado || "AUSENTE").toUpperCase();
   if (state === "PUNTUAL") return "Puntual";
   if (state === "TARDANZA") return "Tardanza";
+  if (state === "PERMISO") return "Permiso";
+  if (state === "DESCANSO_MEDICO") return "Descanso Médico";
+  if (state === "SUSPENSION") return "Suspensión";
   return "Ausente";
 }
 

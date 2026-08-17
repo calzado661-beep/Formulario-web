@@ -652,7 +652,7 @@ export async function getAttendanceForDate(fecha) {
   return result.data || [];
 }
 
-export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA"];
+export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"];
 
 export async function markAttendance(usuarioId, fecha, presente, horaLimite, changes = {}) {
   const isPresent = Boolean(presente);
