@@ -13,9 +13,14 @@ import { validateQuantityRanges } from "../src/lib/scoring.js";
 import { groupLeaderRecordTiming } from "../server.mjs";
 
 test("retiro anticipado conserva puntualidad y exige motivo", () => {
-  assert.equal(validateAttendanceEdit({ estado: "PUNTUAL", retiro_anticipado: true, motivo_retiro: "" }), "Ingresa el motivo del retiro anticipado.");
-  assert.equal(validateAttendanceEdit({ estado: "TARDANZA", retiro_anticipado: true, motivo_retiro: "Cita medica" }), "");
+  assert.equal(validateAttendanceEdit({ estado: "PUNTUAL", retiro_anticipado: true, tipo_retiro: "personal", motivo_retiro: "" }), "Ingresa el motivo del retiro anticipado.");
+  assert.equal(validateAttendanceEdit({ estado: "TARDANZA", retiro_anticipado: true, tipo_retiro: "personal", motivo_retiro: "Cita medica" }), "");
   assert.equal(attendanceDisplayState({ estado: "PUNTUAL", retiro_anticipado: true }), "Retiro anticipado");
+});
+
+test("el retiro por apoyo exige un tipo de retiro valido", () => {
+  assert.match(validateAttendanceEdit({ estado: "PUNTUAL", retiro_anticipado: true, motivo_retiro: "Apoyo en tienda X" }), /apoyo.*personal/i);
+  assert.equal(validateAttendanceEdit({ estado: "PUNTUAL", retiro_anticipado: true, tipo_retiro: "apoyo", motivo_retiro: "Apoyo en tienda X" }), "");
 });
 
 test("solo un trabajador presente puede retirarse anticipadamente", () => {

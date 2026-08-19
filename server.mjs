@@ -721,16 +721,12 @@ async function selectUserTrainingProfile(userId) {
 
   const courses = coursesResult.data || [];
   const progressByCourse = new Map((progressResult.data || []).map((item) => [item.curso_id, item]));
+  // Las capacitaciones ya no son secuenciales: cualquier curso esta siempre
+  // disponible y se puede cambiar de estado en cualquier orden.
   const trainings = courses.map((course) => {
     const progress = progressByCourse.get(course.id_curso);
     const estado = trainingStateFromProgress(progress);
     const completed = estado === "finalizado";
-    const earlierFinalized = courses
-      .filter((candidate) => Number(candidate.orden) < Number(course.orden))
-      .every((candidate) => trainingStateFromProgress(progressByCourse.get(candidate.id_curso)) === "finalizado");
-    const laterStarted = courses
-      .filter((candidate) => Number(candidate.orden) > Number(course.orden))
-      .some((candidate) => trainingStateFromProgress(progressByCourse.get(candidate.id_curso)) !== "pendiente");
 
     return {
       ...course,
@@ -739,9 +735,9 @@ async function selectUserTrainingProfile(userId) {
       completado: completed,
       completado_en: progress?.completado_en || null,
       completado_por: progress?.completado_por || null,
-      disponible: earlierFinalized,
-      puede_cambiar_estado: !laterStarted,
-      puede_desmarcar: completed && !laterStarted
+      disponible: true,
+      puede_cambiar_estado: true,
+      puede_desmarcar: completed
     };
   });
   const completedCount = trainings.filter((course) => course.completado).length;
@@ -792,13 +788,11 @@ async function handleUpdateUserTraining(request, response, userId, courseId) {
       return;
     }
 
-    const [userResult, courseResult, coursesResult, progressResult] = await Promise.all([
+    const [userResult, courseResult] = await Promise.all([
       supabase.from("usuarios").select("id").eq("id", userId).maybeSingle(),
-      supabase.from("capacitaciones").select("id,id_curso,orden").eq("id_curso", courseId).eq("activo", true).maybeSingle(),
-      supabase.from("capacitaciones").select("id,id_curso,orden").eq("activo", true).order("orden", { ascending: true }),
-      supabase.from("usuario_capacitaciones").select("capacitacion_id,curso_id,estado,completado").eq("usuario_id", userId)
+      supabase.from("capacitaciones").select("id,id_curso,orden").eq("id_curso", courseId).eq("activo", true).maybeSingle()
     ]);
-    const firstError = [userResult.error, courseResult.error, coursesResult.error, progressResult.error].find(Boolean);
+    const firstError = [userResult.error, courseResult.error].find(Boolean);
     if (firstError) throw firstError;
     if (!userResult.data) {
       sendJson(response, 404, { error: "Usuario no encontrado." });
@@ -809,37 +803,8 @@ async function handleUpdateUserTraining(request, response, userId, courseId) {
       return;
     }
 
-    const stateByCourse = new Map(
-      (progressResult.data || []).map((item) => [item.curso_id, trainingStateFromProgress(item)])
-    );
-    const finalizedIds = new Set(
-      [...stateByCourse].filter(([, state]) => state === "finalizado").map(([id]) => id)
-    );
-    const startedIds = new Set(
-      [...stateByCourse].filter(([, state]) => state !== "pendiente").map(([id]) => id)
-    );
-    const currentOrder = Number(courseResult.data.orden);
-    const currentState = stateByCourse.get(courseId) || "pendiente";
-    const stateRank = { pendiente: 0, en_curso: 1, finalizado: 2 };
-    if (requestedState !== "pendiente") {
-      const missingPrevious = (coursesResult.data || []).find(
-        (course) => Number(course.orden) < currentOrder && !finalizedIds.has(course.id_curso)
-      );
-      if (missingPrevious) {
-        sendJson(response, 409, { error: `Debes finalizar ${missingPrevious.id_curso} antes de cambiar el estado de ${courseId}.` });
-        return;
-      }
-    }
-    if (stateRank[requestedState] < stateRank[currentState]) {
-      const startedLater = (coursesResult.data || []).find(
-        (course) => Number(course.orden) > currentOrder && startedIds.has(course.id_curso)
-      );
-      if (startedLater) {
-        sendJson(response, 409, { error: `No puedes retroceder ${courseId} mientras ${startedLater.id_curso} siga en curso o finalizada.` });
-        return;
-      }
-    }
-
+    // Las capacitaciones ya no son secuenciales: se pueden marcar en
+    // cualquier orden, sin exigir que las anteriores esten finalizadas.
     const completed = requestedState === "finalizado";
     const progressPayload = {
       usuario_id: userId,
@@ -864,6 +829,94 @@ async function handleUpdateUserTraining(request, response, userId, courseId) {
         ? "Falta aplicar la migracion sql/015_usuario_capacitacion_id.sql en Supabase."
         : rawMessage;
     sendJson(response, /debes (?:completar|finalizar)|no puedes (?:desmarcar|retroceder)/i.test(message) ? 409 : 500, { error: message });
+  }
+}
+
+async function handleReadTrainingCourses(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const result = await supabase
+      .from("capacitaciones")
+      .select("id,id_curso,orden,nombre_curso,competencias,nro_horas,inversion_curso,activo")
+      .eq("activo", true)
+      .order("orden", { ascending: true });
+    if (result.error) throw result.error;
+    sendJson(response, 200, { courses: result.data || [] });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudieron cargar las capacitaciones." });
+  }
+}
+
+async function handleBulkUpdateTraining(request, response) {
+  try {
+    const session = requireSessionRole(request, response, ["administrador"]);
+    if (!session) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const courseId = String(body.curso_id || "").trim().toUpperCase().replace(/\s+/g, " ");
+    const requestedState = normalizeTrainingState(body.estado);
+    const userIds = Array.from(new Set((Array.isArray(body.usuario_ids) ? body.usuario_ids : [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0)));
+
+    if (!courseId) {
+      sendJson(response, 400, { error: "Selecciona una capacitacion." });
+      return;
+    }
+    if (!requestedState) {
+      sendJson(response, 400, { error: "El estado debe ser pendiente, en_curso o finalizado." });
+      return;
+    }
+    if (!userIds.length) {
+      sendJson(response, 400, { error: "Selecciona al menos un trabajador." });
+      return;
+    }
+
+    const courseResult = await supabase
+      .from("capacitaciones")
+      .select("id,id_curso")
+      .eq("id_curso", courseId)
+      .eq("activo", true)
+      .maybeSingle();
+    if (courseResult.error) throw courseResult.error;
+    if (!courseResult.data) {
+      sendJson(response, 404, { error: "Capacitacion no encontrada." });
+      return;
+    }
+
+    const usersResult = await supabase.from("usuarios").select("id").in("id", userIds);
+    if (usersResult.error) throw usersResult.error;
+    const validUserIds = new Set((usersResult.data || []).map((item) => Number(item.id)));
+    const skipped = userIds.filter((id) => !validUserIds.has(id));
+
+    const completed = requestedState === "finalizado";
+    const nowIso = new Date().toISOString();
+    const rows = [...validUserIds].map((usuarioId) => ({
+      usuario_id: usuarioId,
+      capacitacion_id: Number(courseResult.data.id),
+      curso_id: courseId,
+      estado: requestedState,
+      completado: completed,
+      completado_en: completed ? nowIso : null,
+      completado_por: completed ? Number(session.id) : null
+    }));
+
+    if (rows.length) {
+      const result = await supabase.from("usuario_capacitaciones").upsert(rows, { onConflict: "usuario_id,curso_id" });
+      if (result.error) throw result.error;
+    }
+
+    sendJson(response, 200, {
+      updated: rows.length,
+      skipped,
+      curso_id: courseId,
+      estado: requestedState
+    });
+  } catch (error) {
+    const rawMessage = error.message || "No se pudo actualizar la capacitacion en lote.";
+    const message = /\bestado\b/i.test(rawMessage)
+      ? "Falta aplicar la migracion sql/016_estado_capacitaciones.sql en Supabase."
+      : rawMessage;
+    sendJson(response, 500, { error: message });
   }
 }
 
@@ -1671,6 +1724,7 @@ async function handleReadAttendances(request, response) {
 
 const ATTENDANCE_STATES = new Set(["AUSENTE", "PUNTUAL", "TARDANZA", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"]);
 const ATTENDANCE_PRESENT_STATES = new Set(["PUNTUAL", "TARDANZA"]);
+const ATTENDANCE_RETIRO_TYPES = new Set(["personal", "apoyo"]);
 const ATTENDANCE_TIME_ZONE = "America/Lima";
 
 function currentAttendanceMinutes() {
@@ -1758,6 +1812,12 @@ async function handleMarkAttendance(request, response) {
     const hasWithdrawalFields = "retiro_anticipado" in body || "motivo_retiro" in body || "retirado_en" in body;
     const requestedEarlyExit = Boolean(body.retiro_anticipado);
     const earlyExitReason = String(body.motivo_retiro || "").trim();
+    // "personal" por defecto para no romper clientes viejos que no mandan
+    // tipo_retiro; "apoyo" es cuando lo llaman a apoyar a otra area/tienda
+    // durante su turno normal.
+    const requestedRetiroType = ATTENDANCE_RETIRO_TYPES.has(String(body.tipo_retiro || "").trim().toLowerCase())
+      ? String(body.tipo_retiro).trim().toLowerCase()
+      : "personal";
     if (hasWithdrawalFields && date !== currentLimaDate()) {
       sendJson(response, 409, { error: "El retiro anticipado solo puede editarse para la asistencia del dia de hoy." });
       return;
@@ -1776,7 +1836,7 @@ async function handleMarkAttendance(request, response) {
     }
     const existingResult = await supabase
       .from("asistencias")
-      .select(hasWithdrawalFields ? "id,created_at,retiro_anticipado,motivo_retiro,retirado_en" : "id,created_at")
+      .select(hasWithdrawalFields ? "id,created_at,retiro_anticipado,motivo_retiro,retirado_en,tipo_retiro" : "id,created_at")
       .eq("usuario_id", userId)
       .eq("fecha", date)
       .maybeSingle();
@@ -1795,6 +1855,7 @@ async function handleMarkAttendance(request, response) {
     if (hasWithdrawalFields) {
       payload.retiro_anticipado = requestedEarlyExit && present;
       payload.motivo_retiro = requestedEarlyExit && present ? earlyExitReason : null;
+      payload.tipo_retiro = requestedEarlyExit && present ? requestedRetiroType : null;
       payload.retirado_en = requestedEarlyExit && present
         ? (existingResult.data?.retiro_anticipado ? existingResult.data.retirado_en : new Date().toISOString())
         : null;
@@ -1804,6 +1865,7 @@ async function handleMarkAttendance(request, response) {
       // para no dejar AUSENTE + retiro_anticipado, combinacion invalida en SQL.
       payload.retiro_anticipado = false;
       payload.motivo_retiro = null;
+      payload.tipo_retiro = null;
       payload.retirado_en = null;
       payload.updated_at = new Date().toISOString();
     }
@@ -3867,6 +3929,16 @@ export async function handleRequest(request, response, { serveFiles = true } = {
       Number(trainingCourseMatch[1]),
       trainingCourseMatch[2].toUpperCase().replace(/\s+/g, " ")
     );
+    return;
+  }
+
+  if (/^\/api\/trainings\/courses\/?$/.test(apiPath) && request.method === "GET") {
+    await handleReadTrainingCourses(request, response);
+    return;
+  }
+
+  if (/^\/api\/trainings\/bulk\/?$/.test(apiPath) && request.method === "PUT") {
+    await handleBulkUpdateTraining(request, response);
     return;
   }
 

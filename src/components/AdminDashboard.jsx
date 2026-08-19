@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ClipboardCheck, Clock3, Eye, EyeOff, GraduationCap, LockKeyhole, Mail, Pencil, Plus, RefreshCcw, Save, Search, Send, Trash2, UsersRound, X } from "lucide-react";
 import {
+  bulkSetTrainingStatus,
   createActivityReportSettings,
   createAmonestacion,
   createAttendanceReportSettings,
@@ -25,6 +26,7 @@ import {
   listPenalizaciones,
   listTasks,
   listTiendas,
+  listTrainingCourses,
   listWorkers,
   markAttendance,
   PENALTY_KEYS,
@@ -377,7 +379,8 @@ function UsersPanel() {
       </Panel>
 
       <Panel actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
-        <Tabs tabs={["Crear", "Editar", "Eliminar"]} active={tab} onChange={setTab} />
+        <Tabs tabs={["Crear", "Editar", "Eliminar", "Capacitaciones"]} active={tab} onChange={setTab} />
+        {tab === "Capacitaciones" ? <BulkTrainingPanel users={users} /> : null}
         <StatusAlert status={status} />
 
         {tab === "Crear" ? (
@@ -416,7 +419,7 @@ function UsersPanel() {
           </form>
         ) : null}
 
-        {tab !== "Crear" ? (
+        {tab === "Editar" || tab === "Eliminar" ? (
           <div className="stack">
             <SelectInput
               label={tab === "Editar" ? "Usuario" : "Usuario a eliminar"}
@@ -647,6 +650,138 @@ function WorkerTrainingProfile({ user, onClose }) {
           </div>
         ) : null}
       </section>
+    </div>
+  );
+}
+
+function BulkTrainingPanel({ users }) {
+  const { data: courses = [], loading: coursesLoading, error: coursesError } = useAsyncData(listTrainingCourses, [], []);
+  const [courseId, setCourseId] = useState("");
+  const [estado, setEstado] = useState("finalizado");
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("activos");
+  const [status, setStatus] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const filteredUsers = users.filter((item) => {
+    if (statusFilter === "activos" && !boolValue(item.activo)) return false;
+    if (statusFilter === "inactivos" && boolValue(item.activo)) return false;
+    if (!search.trim()) return true;
+    return normalizeText(`${item.nombre || ""} ${item.email || ""}`).includes(normalizeText(search));
+  });
+
+  function toggleUser(id) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      const key = String(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function selectAllVisible() {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      filteredUsers.forEach((item) => next.add(String(item.id)));
+      return next;
+    });
+  }
+
+  async function handleApply() {
+    setStatus(null);
+    if (!courseId) {
+      setStatus({ type: "error", message: "Selecciona una capacitacion." });
+      return;
+    }
+    if (!selectedIds.size) {
+      setStatus({ type: "error", message: "Selecciona al menos un trabajador." });
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await bulkSetTrainingStatus([...selectedIds].map(Number), courseId, estado);
+      setStatus({
+        type: "success",
+        message: `${result.updated} trabajador(es) quedaron con ${courseId} en "${trainingStatusLabel(estado).toLowerCase()}".`
+      });
+      setSelectedIds(new Set());
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <Alert>
+        Selecciona varios trabajadores y una capacitacion para marcarla igual en todos a la vez. Las capacitaciones
+        ya no son secuenciales: se pueden completar en cualquier orden, sin depender de las anteriores.
+      </Alert>
+      {coursesError ? <Alert type="error">{coursesError}</Alert> : null}
+      <div className="form-grid">
+        <SelectInput
+          label="Capacitacion"
+          value={courseId}
+          onChange={setCourseId}
+          options={[
+            { value: "", label: coursesLoading ? "Cargando..." : "Selecciona una capacitacion" },
+            ...courses.map((course) => ({ value: course.id_curso, label: `${course.id_curso} - ${course.nombre_curso}` }))
+          ]}
+        />
+        <SelectInput label="Nuevo estado" value={estado} onChange={setEstado} options={trainingStatusOptions} />
+      </div>
+      <div className="attendance-search-row">
+        <label className="field attendance-search-field">
+          <span className="field-label">Buscar trabajador</span>
+          <span className="search-input">
+            <Search aria-hidden="true" />
+            <input
+              className="input"
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Nombre o correo"
+            />
+          </span>
+        </label>
+        <SelectInput
+          label="Mostrar"
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={[
+            { value: "activos", label: "Activos" },
+            { value: "inactivos", label: "Inactivos" },
+            { value: "todos", label: "Todos" }
+          ]}
+        />
+      </div>
+      <div className="toolbar">
+        <Button variant="secondary" type="button" onClick={selectAllVisible}>Seleccionar visibles ({filteredUsers.length})</Button>
+        <Button variant="secondary" type="button" onClick={() => setSelectedIds(new Set())}>Quitar seleccion</Button>
+        <span className="attendance-marked-count">{selectedIds.size} seleccionados</span>
+      </div>
+      <StatusAlert status={status} />
+      {!filteredUsers.length ? <Alert>No se encontraron trabajadores para estos filtros.</Alert> : null}
+      <div className="attendance-list">
+        {filteredUsers.map((item) => {
+          const checked = selectedIds.has(String(item.id));
+          return (
+            <label key={item.id} className={`attendance-row${checked ? " marked" : ""}`}>
+              <span>
+                <strong>{item.nombre || "Sin nombre"}</strong>
+                <small>{item.email} · {boolValue(item.activo) ? "Activo" : "Inactivo"}</small>
+              </span>
+              <input type="checkbox" checked={checked} onChange={() => toggleUser(item.id)} />
+            </label>
+          );
+        })}
+      </div>
+      <div className="form-actions">
+        <Button icon={Save} loading={saving} onClick={handleApply}>Aplicar a {selectedIds.size} trabajador(es)</Button>
+      </div>
     </div>
   );
 }
@@ -1175,7 +1310,7 @@ function AttendancePanel() {
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
   const [editingAttendanceId, setEditingAttendanceId] = useState(null);
-  const [attendanceEdit, setAttendanceEdit] = useState({ estado: "PUNTUAL", retiro_anticipado: false, motivo_retiro: "" });
+  const [attendanceEdit, setAttendanceEdit] = useState({ estado: "PUNTUAL", retiro_anticipado: false, tipo_retiro: "personal", motivo_retiro: "" });
   const [savingAttendanceId, setSavingAttendanceId] = useState(null);
   const todayRef = useRef(todayLimaISO());
 
@@ -1281,6 +1416,7 @@ function AttendancePanel() {
     Email: workerEmailById[item.usuario_id],
     Estado: attendanceStateLabel(String(item.estado || "AUSENTE").toUpperCase()),
     "Retiro anticipado": item.retiro_anticipado ? "Sí" : "No",
+    "Tipo de retiro": item.retiro_anticipado ? (item.tipo_retiro === "apoyo" ? "Apoyo a otra area" : "Personal") : "",
     "Motivo del retiro": item.motivo_retiro || "",
     "Retirado en": item.retirado_en ? formatDateTimeLima(item.retirado_en) : "",
     "Marcado en": ATTENDANCE_PRESENT_STATES.has(String(item.estado || "").toUpperCase()) ? formatDateTimeLima(item.created_at) : ""
@@ -1291,6 +1427,7 @@ function AttendancePanel() {
     setAttendanceEdit({
       estado: String(item.estado || "PUNTUAL").toUpperCase(),
       retiro_anticipado: Boolean(item.retiro_anticipado),
+      tipo_retiro: item.tipo_retiro || "personal",
       motivo_retiro: item.motivo_retiro || ""
     });
     setStatus(null);
@@ -1308,6 +1445,7 @@ function AttendancePanel() {
       await markAttendance(item.usuario_id, todayLimaISO(), ATTENDANCE_PRESENT_STATES.has(attendanceEdit.estado), "", {
         estado: attendanceEdit.estado,
         retiro_anticipado: attendanceEdit.retiro_anticipado,
+        tipo_retiro: attendanceEdit.retiro_anticipado ? attendanceEdit.tipo_retiro : null,
         motivo_retiro: attendanceEdit.retiro_anticipado ? attendanceEdit.motivo_retiro.trim() : null
       });
       setEditingAttendanceId(null);
@@ -1321,7 +1459,7 @@ function AttendancePanel() {
   }
 
   function exportAttendance() {
-    const columns = ["Fecha", "Trabajador", "Email", "Estado", "Retiro anticipado", "Motivo del retiro", "Retirado en", "Marcado en"];
+    const columns = ["Fecha", "Trabajador", "Email", "Estado", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro", "Retirado en", "Marcado en"];
     const header = columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("");
     const body = attendanceRows
       .map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>`)
@@ -1417,7 +1555,11 @@ function AttendancePanel() {
                   </div>
                   <div className="attendance-today-badges">
                     <span className="notification-status-badge active">{attendanceStateLabel(String(item.estado).toUpperCase())}</span>
-                    {item.retiro_anticipado ? <span className="attendance-withdrawal-badge">Retiro anticipado</span> : null}
+                    {item.retiro_anticipado ? (
+                      <span className="attendance-withdrawal-badge">
+                        Retiro anticipado{item.tipo_retiro === "apoyo" ? " · Apoyo" : " · Personal"}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
                 <div className="attendance-today-meta">
@@ -1432,16 +1574,36 @@ function AttendancePanel() {
                       onChange={(estado) => setAttendanceEdit((current) => ({
                         ...current,
                         estado,
-                        ...(ATTENDANCE_PRESENT_STATES.has(estado) ? {} : { retiro_anticipado: false, motivo_retiro: "" })
+                        ...(ATTENDANCE_PRESENT_STATES.has(estado) ? {} : { retiro_anticipado: false, tipo_retiro: "personal", motivo_retiro: "" })
                       }))}
                       options={attendanceStateOptions.filter((option) => option.value !== "AUSENTE")}
                     />
                     {ATTENDANCE_PRESENT_STATES.has(attendanceEdit.estado) ? (
                       <SelectInput
                         label="Salida"
-                        value={attendanceEdit.retiro_anticipado ? "retiro" : "normal"}
-                        onChange={(value) => setAttendanceEdit((current) => ({ ...current, retiro_anticipado: value === "retiro", motivo_retiro: value === "retiro" ? current.motivo_retiro : "" }))}
-                        options={[{ value: "normal", label: "Asistencia normal" }, { value: "retiro", label: "Retiro anticipado" }]}
+                        value={!attendanceEdit.retiro_anticipado ? "normal" : attendanceEdit.tipo_retiro === "apoyo" ? "retiro_apoyo" : "retiro_personal"}
+                        onChange={(value) => setAttendanceEdit((current) => {
+                          if (value === "normal") return { ...current, retiro_anticipado: false, tipo_retiro: "personal", motivo_retiro: "" };
+                          if (value === "retiro_apoyo") {
+                            return {
+                              ...current,
+                              retiro_anticipado: true,
+                              tipo_retiro: "apoyo",
+                              motivo_retiro: current.tipo_retiro === "apoyo" ? current.motivo_retiro : "Apoyo a otra area"
+                            };
+                          }
+                          return {
+                            ...current,
+                            retiro_anticipado: true,
+                            tipo_retiro: "personal",
+                            motivo_retiro: current.tipo_retiro === "apoyo" ? "" : current.motivo_retiro
+                          };
+                        })}
+                        options={[
+                          { value: "normal", label: "Asistencia normal" },
+                          { value: "retiro_apoyo", label: "Retiro anticipado · Fue a apoyar a otra area" },
+                          { value: "retiro_personal", label: "Retiro anticipado · Motivo personal" }
+                        ]}
                       />
                     ) : null}
                     {attendanceEdit.retiro_anticipado ? (
@@ -1450,7 +1612,7 @@ function AttendancePanel() {
                         value={attendanceEdit.motivo_retiro}
                         onChange={(motivo_retiro) => setAttendanceEdit((current) => ({ ...current, motivo_retiro }))}
                         maxLength={500}
-                        placeholder="Indica por qué se retiró antes de tiempo"
+                        placeholder={attendanceEdit.tipo_retiro === "apoyo" ? "Ej. Apoyo a otra area - Tienda X" : "Indica por qué se retiró antes de tiempo"}
                       />
                     ) : null}
                     <div className="attendance-edit-actions">

@@ -2,14 +2,18 @@ import { calculatePoints } from "./scoring.js";
 
 export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"];
 const ATTENDANCE_PRESENT_STATES = ["PUNTUAL", "TARDANZA"];
+export const ATTENDANCE_RETIRO_TYPES = ["personal", "apoyo"];
 
-export function validateAttendanceEdit({ estado, retiro_anticipado, motivo_retiro }) {
+export function validateAttendanceEdit({ estado, retiro_anticipado, motivo_retiro, tipo_retiro }) {
   const normalizedState = String(estado || "").trim().toUpperCase();
   if (!ATTENDANCE_STATES.includes(normalizedState)) {
     return "Selecciona un estado de asistencia valido.";
   }
   if (retiro_anticipado && !ATTENDANCE_PRESENT_STATES.includes(normalizedState)) {
     return "Solo un trabajador presente (Puntual o Tardanza) puede figurar con retiro anticipado.";
+  }
+  if (retiro_anticipado && !ATTENDANCE_RETIRO_TYPES.includes(String(tipo_retiro || "").trim().toLowerCase())) {
+    return "Selecciona si el retiro fue por apoyo a otra area o por un motivo personal.";
   }
   if (retiro_anticipado && !String(motivo_retiro || "").trim()) {
     return "Ingresa el motivo del retiro anticipado.";

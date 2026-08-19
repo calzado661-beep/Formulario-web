@@ -351,6 +351,25 @@ export async function setUserTrainingStatus(userId, courseId, status) {
   return apiResult;
 }
 
+export async function listTrainingCourses() {
+  const apiResult = await requestLocalApi("/api/trainings/courses", {}, { requiredBackend: true });
+  if (!Array.isArray(apiResult?.courses)) {
+    throw new Error("No se pudieron cargar las capacitaciones.");
+  }
+  return apiResult.courses;
+}
+
+export async function bulkSetTrainingStatus(userIds, courseId, status) {
+  const apiResult = await requestLocalApi("/api/trainings/bulk", {
+    method: "PUT",
+    body: JSON.stringify({ usuario_ids: userIds, curso_id: courseId, estado: status })
+  }, { requiredBackend: true });
+  if (typeof apiResult?.updated !== "number") {
+    throw new Error("No se pudo actualizar la capacitacion para el grupo seleccionado.");
+  }
+  return apiResult;
+}
+
 export async function listTasks() {
   const apiResult = await requestLocalApi("/api/tasks");
   let tasks = apiResult?.tasks;
