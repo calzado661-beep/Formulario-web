@@ -222,6 +222,14 @@ function isActive(value) {
   return !["false", "0", "no"].includes(String(value ?? true).trim().toLowerCase());
 }
 
+// Los dos unicos documentos que admite una amonestacion.
+const TIPOS_DOCUMENTO = ["CARTA AMONESTACION", "MEMORANDUM"];
+
+function normalizeTipoDocumento(value) {
+  const raw = String(value ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+  return TIPOS_DOCUMENTO.includes(raw) ? raw : null;
+}
+
 const HANGTAG_VALUES = new Set(["CON_HANGTAG", "SIN_HANGTAG"]);
 
 function normalizeHangtag(value) {
@@ -1543,6 +1551,8 @@ async function handleCreateAmonestacion(request, response) {
     const body = JSON.parse((await readBody(request)) || "{}");
     const usuarioId = Number(body.usuario_id);
     const descripcion = String(body.descripcion || "").trim();
+    const tipoDocumento = normalizeTipoDocumento(body.tipo_documento);
+    const fecha = String(body.fecha || "").trim();
 
     if (!Number.isInteger(usuarioId) || usuarioId <= 0) {
       sendJson(response, 400, { error: "Selecciona un usuario valido." });
@@ -1550,6 +1560,18 @@ async function handleCreateAmonestacion(request, response) {
     }
     if (!descripcion) {
       sendJson(response, 400, { error: "La descripcion de la amonestacion es obligatoria." });
+      return;
+    }
+    if (!tipoDocumento) {
+      sendJson(response, 400, { error: "Selecciona el tipo de documento: carta de amonestacion o memorandum." });
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+      sendJson(response, 400, { error: "Selecciona una fecha valida." });
+      return;
+    }
+    if (fecha > currentLimaDate()) {
+      sendJson(response, 400, { error: "La fecha no puede ser posterior a hoy." });
       return;
     }
 
@@ -1563,6 +1585,8 @@ async function handleCreateAmonestacion(request, response) {
     const payload = {
       usuario_id: usuarioId,
       descripcion,
+      tipo_documento: tipoDocumento,
+      fecha,
       created_by: session?.id ? Number(session.id) : null
     };
     let result = await supabase.from("amonestaciones").insert(payload).select("*").single();
@@ -2581,6 +2605,18 @@ async function loadGroupLeaderData() {
     tasks,
     recordTasks,
     leaders,
+    // Sin filtrar por rol ni por activo: un registro puede tener como
+    // trabajador a alguien inactivo o a un jefe de equipo que hizo la tarea el
+    // mismo. `workers`/`leaders` siguen restringidos para los selectores de
+    // alta; esto es para poder mostrar y agrupar cualquier registro existente
+    // (por ejemplo en el Ranking).
+    allUsers: users.map((item) => ({
+      id: item.id,
+      nombre: item.nombre,
+      email: item.email,
+      rol: item.rol,
+      activo: isActive(item.activo)
+    })),
     records: recordsWithTimes,
     activities,
     operationsMigrationRequired: false,

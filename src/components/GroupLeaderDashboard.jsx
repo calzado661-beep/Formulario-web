@@ -27,14 +27,17 @@ import {
   getTaskTitle,
   isGroupLeaderTimeTask,
   normalizeMeasurementType,
+  normalizeRole,
   normalizeText
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
 import {
   Alert,
   Button,
+  CheckboxInput,
   DataTable,
   DEFAULT_PAGE_SIZE,
+  Field,
   LoadingBlock,
   Panel,
   SelectInput,
@@ -64,12 +67,56 @@ var initialFilters = {
   scope: "all",
   workerId: "",
   taskId: "",
+  categoria: "",
   search: "",
   order: "desc"
 };
 function recordSortTime(record) {
   const value = new Date(record.hora_inicio || record.fecha_registro || record.created_at || 0).getTime();
   return Number.isNaN(value) ? 0 : value;
+}
+// Muestra el equivalente en 12 horas junto al campo de hora, que se captura en
+// formato 24h y puede confundirse (8:00 vs 20:00).
+function timeTo12h(value) {
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value || "")) return "";
+  const [hours, minutes] = value.split(":").map(Number);
+  const period = hours < 12 ? "AM" : "PM";
+  const hour12 = hours % 12 === 0 ? 12 : hours % 12;
+  return `${hour12}:${String(minutes).padStart(2, "0")} ${period}`;
+}
+// Rendimiento promedio (cantidad por hora) de cada operante en cada tarea,
+// calculado sobre todo el historial cerrado, sin importar los filtros activos
+// de la tabla ni quien lo haya registrado.
+function buildWorkerTaskAverages(records) {
+  const totals = new Map();
+  for (const record of records) {
+    const minutes = Number(record.tiempo_minutos || 0);
+    const quantity = Number(record.cantidad || 0);
+    if (!record.hora_fin || !(minutes > 0) || !(quantity > 0)) continue;
+    const key = `${record.trabajador_id}::${record.tarea_id}`;
+    const entry = totals.get(key) || { rateSum: 0, count: 0 };
+    entry.rateSum += (quantity / minutes) * 60;
+    entry.count += 1;
+    totals.set(key, entry);
+  }
+  const averages = new Map();
+  totals.forEach((entry, key) => averages.set(key, entry.rateSum / entry.count));
+  return averages;
+}
+// Compara el rendimiento de un registro contra el promedio de ese operante en
+// esa misma tarea. Null si el registro no tiene con que compararse todavia.
+function compareToAverage(record, averages) {
+  const minutes = Number(record.tiempo_minutos || 0);
+  const quantity = Number(record.cantidad || 0);
+  if (!record.hora_fin || !(minutes > 0) || !(quantity > 0)) return null;
+  const average = averages.get(`${record.trabajador_id}::${record.tarea_id}`);
+  if (!average) return null;
+  const rate = (quantity / minutes) * 60;
+  const diffPct = ((rate - average) / average) * 100;
+  if (Math.abs(diffPct) < 1) return { label: "En su promedio", tone: "neutral" };
+  return diffPct > 0
+    ? { label: `${Math.round(diffPct)}% sobre su promedio`, tone: "good" }
+    : { label: `${Math.round(Math.abs(diffPct))}% bajo su promedio`, tone: "bad" };
 }
 function GroupLeaderDashboard({ user }) {
   const [workspace, setWorkspace] = useState("Registrar actividad normal");
@@ -86,31 +133,53 @@ function GroupLeaderDashboard({ user }) {
 function RankingDashboard({ user }) {
   const [taskId, setTaskId] = useState("");
   const [topLimit, setTopLimit] = useState("5");
+  const [period, setPeriod] = useState("mes");
+  const [includeInactive, setIncludeInactive] = useState(false);
   const { data, loading, error, reload } = useAsyncData(
     loadGroupLeaderContext,
     [user?.id],
-    { workers: [], tasks: [], brands: [], stores: [], leaders: [], records: [] }
+    { workers: [], tasks: [], brands: [], stores: [], leaders: [], allUsers: [], records: [] }
   );
   const tasks = (data.tasks || []).filter(isGroupLeaderTimeTask);
-  const workers = data.workers || [];
   const records = data.records || [];
+  // Union de todos los que el servidor conoce: operantes, jefes y cualquier
+  // otro usuario que haya quedado como trabajador de un registro (por
+  // ejemplo, un jefe de equipo que hizo la tarea el mismo).
+  const peopleById = useMemo(() => {
+    const map = new Map();
+    (data.allUsers || []).forEach((item) => map.set(String(item.id), item));
+    (data.workers || []).forEach((item) => {
+      if (!map.has(String(item.id))) map.set(String(item.id), { ...item, activo: true });
+    });
+    (data.leaders || []).forEach((item) => {
+      if (!map.has(String(item.id))) map.set(String(item.id), { ...item, activo: true });
+    });
+    return map;
+  }, [data.allUsers, data.workers, data.leaders]);
+  const today = todayLimaISO();
+  const currentMonth = today.slice(0, 7);
   const rankingByTask = useMemo(() => {
     const taskIds = new Set(tasks.map((task) => String(task.id)));
-    const activeWorkers = new Map(workers.map((worker) => [String(worker.id), worker]));
-    const grouped = /* @__PURE__ */ new Map();
+    const grouped = new Map();
     for (const record of records) {
       if (!taskIds.has(String(record.tarea_id))) continue;
-      const worker = activeWorkers.get(String(record.trabajador_id));
-      if (!worker) continue;
+      const recordDate = String(record.fecha_registro || "").slice(0, 10);
+      if (period === "dia" && recordDate !== today) continue;
+      if (period === "mes" && recordDate.slice(0, 7) !== currentMonth) continue;
+      const person = peopleById.get(String(record.trabajador_id));
+      if (!person) continue;
+      if (!includeInactive && !person.activo) continue;
       const cantidad = Number(record.cantidad || 0);
       const minutos = Number(record.tiempo_minutos || 0);
       if (cantidad <= 0 || minutos <= 0) continue;
       const taskKey = String(record.tarea_id);
-      if (!grouped.has(taskKey)) grouped.set(taskKey, /* @__PURE__ */ new Map());
+      if (!grouped.has(taskKey)) grouped.set(taskKey, new Map());
       const workersMap = grouped.get(taskKey);
       const workerKey = String(record.trabajador_id);
       const current = workersMap.get(workerKey) || {
-        nombre: worker.nombre || worker.email || `ID ${worker.id}`,
+        nombre: person.nombre || person.email || `ID ${record.trabajador_id}`,
+        rol: normalizeRole(person.rol),
+        activo: Boolean(person.activo),
         cantidad: 0,
         minutos: 0,
         registros: 0
@@ -127,60 +196,84 @@ function RankingDashboard({ user }) {
       if (!ranked.length) return null;
       return { id: task.id, nombre: getTaskTitle(task) || `Tarea ${task.id}`, ranked };
     }).filter(Boolean);
-  }, [records, tasks, workers]);
+  }, [records, tasks, peopleById, period, includeInactive, currentMonth, today]);
   const visibleRanking = taskId ? rankingByTask.filter((item) => String(item.id) === String(taskId)) : rankingByTask;
   const limit = Number(topLimit);
-  return /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(
-    Panel,
-    {
-      title: "Ranking por tarea",
-      eyebrow: "Rendimiento promedio",
-      actions: /* @__PURE__ */ React.createElement(Button, { variant: "secondary", icon: RefreshCcw, onClick: reload }, "Actualizar")
-    },
-    loading ? /* @__PURE__ */ React.createElement(LoadingBlock, null) : null,
-    error ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, error) : null,
-    /* @__PURE__ */ React.createElement(Alert, null, "El rendimiento se calcula como cantidad total entre tiempo total, expresado por hora. Solo se consideran las tareas de jefe de equipo que registran cantidad y tiempo, y \xFAnicamente operantes activos."),
-    /* @__PURE__ */ React.createElement("div", { className: "history-toolbar" }, /* @__PURE__ */ React.createElement(
-      SelectInput,
-      {
-        label: "Tarea",
-        value: taskId,
-        onChange: setTaskId,
-        options: [
-          { value: "", label: "Todas" },
-          ...tasks.map((task) => ({ value: String(task.id), label: getTaskTitle(task) || `ID ${task.id}` }))
-        ]
-      }
-    ), /* @__PURE__ */ React.createElement(
-      SelectInput,
-      {
-        label: "Mostrar",
-        value: topLimit,
-        onChange: setTopLimit,
-        options: [
-          { value: "3", label: "Top 3" },
-          { value: "5", label: "Top 5" },
-          { value: "10", label: "Top 10" },
-          { value: "0", label: "Todos" }
-        ]
-      }
-    )),
-    !loading && !visibleRanking.length ? /* @__PURE__ */ React.createElement(Alert, null, "A\xFAn no hay registros con cantidad y tiempo para armar el ranking.") : null
-  ), visibleRanking.map((item) => /* @__PURE__ */ React.createElement(Panel, { key: item.id, title: item.nombre, eyebrow: "Top operantes" }, /* @__PURE__ */ React.createElement(
-    DataTable,
-    {
-      rows: (limit ? item.ranked.slice(0, limit) : item.ranked).map((entry, index) => ({
-        "#": index + 1,
-        Operante: entry.nombre,
-        "Rendimiento (por hora)": formatRate(entry.rendimiento),
-        "Cantidad total": formatNumber(entry.cantidad),
-        "Tiempo total": formatDuration(entry.minutos),
-        Registros: entry.registros
-      })),
-      columns: ["#", "Operante", "Rendimiento (por hora)", "Cantidad total", "Tiempo total", "Registros"],
-      compact: true
-    }
-  ))));
+  return (
+    <div className="stack">
+      <Panel
+        title="Ranking por tarea"
+        eyebrow="Rendimiento promedio"
+        actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}
+      >
+        {loading ? <LoadingBlock /> : null}
+        {error ? <Alert type="error">{error}</Alert> : null}
+        <Alert>
+          El rendimiento se calcula como cantidad total entre tiempo total, expresado por hora, sobre las tareas de
+          jefe de equipo que registran cantidad y tiempo. Incluye a jefes que hicieron la tarea ellos mismos. Por
+          defecto se muestra el mes actual y solo trabajadores activos: ajusta los filtros para verlo distinto.
+        </Alert>
+        <div className="history-toolbar">
+          <SelectInput
+            label="Periodo"
+            value={period}
+            onChange={setPeriod}
+            options={[
+              { value: "mes", label: "Mes actual" },
+              { value: "dia", label: "Hoy" },
+              { value: "general", label: "General (todo)" }
+            ]}
+          />
+          <SelectInput
+            label="Tarea"
+            value={taskId}
+            onChange={setTaskId}
+            options={[
+              { value: "", label: "Todas" },
+              ...tasks.map((task) => ({ value: String(task.id), label: getTaskTitle(task) || `ID ${task.id}` }))
+            ]}
+          />
+          <SelectInput
+            label="Mostrar"
+            value={topLimit}
+            onChange={setTopLimit}
+            options={[
+              { value: "3", label: "Top 3" },
+              { value: "5", label: "Top 5" },
+              { value: "10", label: "Top 10" },
+              { value: "0", label: "Todos" }
+            ]}
+          />
+          <CheckboxInput
+            label="Incluir inactivos"
+            checked={includeInactive}
+            onChange={setIncludeInactive}
+          />
+        </div>
+        {!loading && !visibleRanking.length ? (
+          <Alert>Aun no hay registros con cantidad y tiempo para armar el ranking en este periodo.</Alert>
+        ) : null}
+      </Panel>
+      {visibleRanking.map((item) => (
+        <Panel key={item.id} title={item.nombre} eyebrow="Top operantes">
+          <DataTable
+            rows={(limit ? item.ranked.slice(0, limit) : item.ranked).map((entry, index) => ({
+              "#": index + 1,
+              Trabajador: entry.nombre +
+                (entry.rol && entry.rol !== "operante" ? ` (${entry.rol})` : "") +
+                (!entry.activo ? " · inactivo" : ""),
+              "Rendimiento (por hora)": formatRate(entry.rendimiento),
+              "Cantidad total": formatNumber(entry.cantidad),
+              "Tiempo total": formatDuration(entry.minutos),
+              Registros: entry.registros
+            }))}
+            columns={["#", "Trabajador", "Rendimiento (por hora)", "Cantidad total", "Tiempo total", "Registros"]}
+            compact
+          />
+        </Panel>
+      ))}
+    </div>
+  );
 }
 var initialIncidentForm = {
   usuario_id: "",
@@ -367,6 +460,11 @@ function GroupTimeDashboard({ user }) {
   const brands = data.brands || [];
   const stores = data.stores || [];
   const records = data.records || [];
+  const taskCategoryById = useMemo(
+    () => new Map(recordTasks.map((task) => [String(task.id), String(task.tipo_tarea || "").trim()])),
+    [recordTasks]
+  );
+  const workerTaskAverages = useMemo(() => buildWorkerTaskAverages(records), [records]);
   const selectedTask = useMemo(
     () => tasks.find((task) => String(task.id) === String(form.tarea_id)),
     [tasks, form.tarea_id]
@@ -388,6 +486,7 @@ function GroupTimeDashboard({ user }) {
       if (filters.scope === "mine" && String(record.encargado_id) !== String(user.id)) return false;
       if (filters.workerId && String(record.trabajador_id) !== String(filters.workerId)) return false;
       if (filters.taskId && String(record.tarea_id) !== String(filters.taskId)) return false;
+      if (filters.categoria && taskCategoryById.get(String(record.tarea_id)) !== filters.categoria) return false;
       if (!term) return true;
       return normalizeText(
         [
@@ -409,7 +508,7 @@ function GroupTimeDashboard({ user }) {
       const diff = recordSortTime(a) - recordSortTime(b);
       return filters.order === "asc" ? diff : -diff;
     });
-  }, [filters, records, user.id]);
+  }, [filters, records, taskCategoryById, user.id]);
   const pendingActivities = useMemo(
     () => (data.activities || []).filter((activity) => activity.estado === "EN_CURSO"),
     [data.activities]
@@ -420,6 +519,7 @@ function GroupTimeDashboard({ user }) {
       if (filters.scope === "mine" && String(activity.encargado_id) !== String(user.id)) return false;
       if (filters.workerId && String(activity.trabajador_id) !== String(filters.workerId)) return false;
       if (filters.taskId && String(activity.tarea_id) !== String(filters.taskId)) return false;
+      if (filters.categoria && taskCategoryById.get(String(activity.tarea_id)) !== filters.categoria) return false;
       if (!term) return true;
       return normalizeText(
         [
@@ -436,7 +536,7 @@ function GroupTimeDashboard({ user }) {
         ].join(" ")
       ).includes(term);
     });
-  }, [filters, pendingActivities, user.id]);
+  }, [filters, pendingActivities, taskCategoryById, user.id]);
   const combinedRows = useMemo(() => {
     const merged = [
       ...filteredPending.map((activity) => ({ kind: "pending", key: `pending-${activity.id}`, sortTime: recordSortTime(activity), activity })),
@@ -637,14 +737,21 @@ function GroupTimeDashboard({ user }) {
         max: todayLimaISO()
       }
     ), /* @__PURE__ */ React.createElement(
-      TextInput,
+      Field,
       {
         label: "Hora de inicio",
-        type: "time",
-        value: form.hora_inicio,
-        onChange: (hora_inicio) => updateForm({ hora_inicio }),
         hint: "La cantidad y el cierre se completan despues en el historial."
-      }
+      },
+      /* @__PURE__ */ React.createElement("span", { className: "time-with-meridiem" }, /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          className: "input",
+          type: "time",
+          "aria-label": "Hora de inicio",
+          value: form.hora_inicio,
+          onChange: (event) => updateForm({ hora_inicio: event.target.value })
+        }
+      ), /* @__PURE__ */ React.createElement("span", { className: "time-meridiem-badge" }, timeTo12h(form.hora_inicio) || "--:-- --"))
     ), selectedTask ? /* @__PURE__ */ React.createElement(
       DynamicGroupFields,
       {
@@ -719,6 +826,18 @@ function GroupTimeDashboard({ user }) {
     ), /* @__PURE__ */ React.createElement(
       SelectInput,
       {
+        label: "Categoria",
+        value: filters.categoria,
+        onChange: (categoria) => updateFilters({ categoria }),
+        options: [
+          { value: "", label: "Todas" },
+          { value: "Ingreso", label: "Ingreso" },
+          { value: "Despacho", label: "Despacho" }
+        ]
+      }
+    ), /* @__PURE__ */ React.createElement(
+      SelectInput,
+      {
         label: "Ordenar por fecha",
         value: filters.order,
         onChange: (order) => updateFilters({ order }),
@@ -743,6 +862,7 @@ function GroupTimeDashboard({ user }) {
         tasks: recordTasks,
         brands,
         stores,
+        averages: workerTaskAverages,
         currentUserId: user.id,
         editingDisabled: data.historyMigrationRequired,
         editingId,
@@ -759,11 +879,16 @@ function GroupTimeDashboard({ user }) {
     )
   ));
 }
+// Orden de columnas fijo, compartido por el encabezado y las tres formas de
+// fila (normal, en edicion, pendiente): Acciones va primero para no tener que
+// desplazar la tabla, Encargado va al final porque es el dato menos usado al
+// revisar el propio trabajo.
 function EditableGroupHistory({
   rows,
   tasks,
   brands,
   stores,
+  averages,
   currentUserId,
   editingDisabled,
   editingId,
@@ -778,90 +903,158 @@ function EditableGroupHistory({
   onStatus
 }) {
   const { page, totalPages, setPage, start, end } = usePagination(rows.length, DEFAULT_PAGE_SIZE);
-  if (!rows.length) return /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, "Sin registros para los filtros actuales.");
+  if (!rows.length) return <div className="empty-state">Sin registros para los filtros actuales.</div>;
   const visibleRows = rows.slice(start, end);
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "editable-history-wrap", role: "region", "aria-label": "Historial editable de tareas", tabIndex: "0" }, /* @__PURE__ */ React.createElement("table", { className: "editable-history-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "ID"), /* @__PURE__ */ React.createElement("th", null, "Fecha"), /* @__PURE__ */ React.createElement("th", null, "Encargado"), /* @__PURE__ */ React.createElement("th", null, "Operante"), /* @__PURE__ */ React.createElement("th", null, "Tarea"), /* @__PURE__ */ React.createElement("th", null, "Hora inicio"), /* @__PURE__ */ React.createElement("th", null, "Hora fin"), /* @__PURE__ */ React.createElement("th", null, "Cantidad"), /* @__PURE__ */ React.createElement("th", null, "Tiempo"), /* @__PURE__ */ React.createElement("th", null, "Numero de guia"), /* @__PURE__ */ React.createElement("th", null, "Codigo de lote"), /* @__PURE__ */ React.createElement("th", null, "Hangtag"), /* @__PURE__ */ React.createElement("th", null, "Marca"), /* @__PURE__ */ React.createElement("th", null, "Tienda"), /* @__PURE__ */ React.createElement("th", null, "Detalle"), /* @__PURE__ */ React.createElement("th", null, "Puntaje"), /* @__PURE__ */ React.createElement("th", null, "Modificado"), /* @__PURE__ */ React.createElement("th", { className: "history-actions-heading" }, "Acciones"))), /* @__PURE__ */ React.createElement("tbody", null, visibleRows.map((row) => {
-    if (row.kind === "pending") {
-      return /* @__PURE__ */ React.createElement(PendingActivityRow, {
-        key: row.key,
-        activity: row.activity,
-        tasks,
-        brands,
-
-        currentUserId,
-        onReload,
-        onStatus
-      });
-    }
-    const record = row.record;
-    const mine = String(record.encargado_id) === String(currentUserId);
-    const editable = mine && !editingDisabled && record.revision !== null && record.revision !== void 0;
-    if (String(editingId) === String(record.id) && draft) {
-      return /* @__PURE__ */ React.createElement(
-        EditableHistoryRow,
-        {
-          key: row.key,
-          record,
-          draft,
-          tasks,
-          brands,
-          stores,
-
-          saving,
-          onDraft,
-          onSave: () => onSave(record),
-          onCancel
-        }
-      );
-    }
-    return /* @__PURE__ */ React.createElement(
-      HistoryRow,
-      {
-        key: row.key,
-        record,
-        editable,
-        busy: saving,
-        readonlyReason: mine && record.revision == null ? "Registro anterior" : editingDisabled && mine ? "Migracion pendiente" : "Solo lectura",
-        onEdit: () => onEdit(record),
-        onDelete: () => onDelete(record)
-      }
-    );
-  })))), /* @__PURE__ */ React.createElement(TablePager, { page, totalPages, totalRows: rows.length, onChange: setPage }));
+  return (
+    <>
+      <div className="editable-history-wrap" role="region" aria-label="Historial editable de tareas" tabIndex="0">
+        <table className="editable-history-table">
+          <thead>
+            <tr>
+              <th className="history-actions-heading">Acciones</th>
+              <th>Fecha</th>
+              <th>Operante</th>
+              <th>Tarea</th>
+              <th>Hora inicio</th>
+              <th>Hora fin</th>
+              <th>Cantidad</th>
+              <th>Tiempo</th>
+              <th>Vs. promedio</th>
+              <th>Numero de guia</th>
+              <th>Codigo de lote</th>
+              <th>Hangtag</th>
+              <th>Marca</th>
+              <th>Tienda</th>
+              <th>Detalle</th>
+              <th>Puntaje</th>
+              <th>Modificado</th>
+              <th>Encargado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleRows.map((row) => {
+              if (row.kind === "pending") {
+                return (
+                  <PendingActivityRow
+                    key={row.key}
+                    activity={row.activity}
+                    tasks={tasks}
+                    brands={brands}
+                    currentUserId={currentUserId}
+                    onReload={onReload}
+                    onStatus={onStatus}
+                  />
+                );
+              }
+              const record = row.record;
+              const mine = String(record.encargado_id) === String(currentUserId);
+              const editable = mine && !editingDisabled && record.revision !== null && record.revision !== undefined;
+              if (String(editingId) === String(record.id) && draft) {
+                return (
+                  <EditableHistoryRow
+                    key={row.key}
+                    record={record}
+                    draft={draft}
+                    tasks={tasks}
+                    brands={brands}
+                    stores={stores}
+                    saving={saving}
+                    onDraft={onDraft}
+                    onSave={() => onSave(record)}
+                    onCancel={onCancel}
+                  />
+                );
+              }
+              return (
+                <HistoryRow
+                  key={row.key}
+                  record={record}
+                  editable={editable}
+                  busy={saving}
+                  average={compareToAverage(record, averages)}
+                  readonlyReason={mine && record.revision == null ? "Registro anterior" : editingDisabled && mine ? "Migracion pendiente" : "Solo lectura"}
+                  onEdit={() => onEdit(record)}
+                  onDelete={() => onDelete(record)}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <TablePager page={page} totalPages={totalPages} totalRows={rows.length} onChange={setPage} />
+    </>
+  );
 }
-function HistoryRow({ record, editable, busy, readonlyReason, onEdit, onDelete }) {
+function HistoryRow({ record, editable, busy, average, readonlyReason, onEdit, onDelete }) {
   const [confirming, setConfirming] = useState(false);
   const pending = isPendingRecord(record);
-  const pendingMark = /* @__PURE__ */ React.createElement("span", { className: "muted" }, "Pendiente");
-  return /* @__PURE__ */ React.createElement("tr", { className: pending ? "history-pending-record" : void 0 }, /* @__PURE__ */ React.createElement("td", { className: "history-id-cell" }, "#", record.id, pending ? /* @__PURE__ */ React.createElement("span", { className: "history-pending-badge" }, "Sin cerrar") : null), /* @__PURE__ */ React.createElement("td", null, formatRecordDate(record)), /* @__PURE__ */ React.createElement("td", null, record.encargado_nombre || record.encargado_email || "-"), /* @__PURE__ */ React.createElement("td", null, record.trabajador_nombre || record.trabajador_email || "-"), /* @__PURE__ */ React.createElement("td", null, record.tarea_nombre || "-"), /* @__PURE__ */ React.createElement("td", { className: "history-time-cell" }, formatTimeLima(record.hora_inicio)), /* @__PURE__ */ React.createElement("td", { className: "history-time-cell" }, pending ? pendingMark : formatTimeLima(record.hora_fin)), /* @__PURE__ */ React.createElement("td", { className: "history-number-cell" }, pending ? pendingMark : formatNumber(record.cantidad) || "-"), /* @__PURE__ */ React.createElement("td", null, pending ? pendingMark : formatDuration(record.tiempo_minutos) || "-"), /* @__PURE__ */ React.createElement("td", null, record.codigo_guia || record.numero_guia || "-"), /* @__PURE__ */ React.createElement("td", null, record.lote || "-"), /* @__PURE__ */ React.createElement("td", null, hangtagLabel(record.tipo_etiquetado)), /* @__PURE__ */ React.createElement("td", null, record.marca_nombre || "-"), /* @__PURE__ */ React.createElement("td", null, record.tienda_nombre || "-"), /* @__PURE__ */ React.createElement("td", { className: "history-detail-cell", title: record.detalle || "" }, record.detalle || "-"), /* @__PURE__ */ React.createElement("td", { className: "history-score-cell" }, pending ? pendingMark : formatScore(record.puntaje)), /* @__PURE__ */ React.createElement("td", { className: "history-updated-cell" }, formatUpdatedAt(record)), /* @__PURE__ */ React.createElement("td", { className: "history-actions-cell" }, !editable ? /* @__PURE__ */ React.createElement("span", { className: "history-readonly-badge" }, readonlyReason) : confirming ? /* @__PURE__ */ React.createElement("div", { className: "history-row-actions" }, /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      className: "history-delete-button",
-      disabled: busy,
-      onClick: () => {
-        setConfirming(false);
-        onDelete();
-      }
-    },
-    busy ? "Eliminando..." : "Confirmar"
-  ), /* @__PURE__ */ React.createElement(
-    "button",
-    { type: "button", className: "history-cancel-button", disabled: busy, onClick: () => setConfirming(false) },
-    "No"
-  )) : /* @__PURE__ */ React.createElement("div", { className: "history-row-actions" }, /* @__PURE__ */ React.createElement(
-    "button",
-    { type: "button", className: "history-edit-button", onClick: onEdit },
-    pending ? "Completar" : "Editar"
-  ), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      className: "history-delete-button",
-      title: `Eliminar el registro #${record.id}`,
-      onClick: () => setConfirming(true)
-    },
-    "Eliminar"
-  ))));
+  const pendingMark = <span className="muted">Pendiente</span>;
+  return (
+    <tr className={pending ? "history-pending-record" : undefined}>
+      <td className="history-actions-cell">
+        {!editable ? (
+          <span className="history-readonly-badge">{readonlyReason}</span>
+        ) : confirming ? (
+          <div className="history-row-actions">
+            <button
+              type="button"
+              className="history-delete-button"
+              disabled={busy}
+              onClick={() => {
+                setConfirming(false);
+                onDelete();
+              }}
+            >
+              {busy ? "Eliminando..." : "Confirmar"}
+            </button>
+            <button type="button" className="history-cancel-button" disabled={busy} onClick={() => setConfirming(false)}>
+              No
+            </button>
+          </div>
+        ) : (
+          <div className="history-row-actions">
+            <button type="button" className="history-edit-button" onClick={onEdit}>
+              {pending ? "Completar" : "Editar"}
+            </button>
+            <button
+              type="button"
+              className="history-delete-button"
+              title={`Eliminar el registro #${record.id}`}
+              onClick={() => setConfirming(true)}
+            >
+              Eliminar
+            </button>
+          </div>
+        )}
+      </td>
+      <td>
+        {formatRecordDate(record)}
+        {pending ? <span className="history-pending-badge">Sin cerrar</span> : null}
+      </td>
+      <td>{record.trabajador_nombre || record.trabajador_email || "-"}</td>
+      <td>{record.tarea_nombre || "-"}</td>
+      <td className="history-time-cell">{formatTimeLima(record.hora_inicio)}</td>
+      <td className="history-time-cell">{pending ? pendingMark : formatTimeLima(record.hora_fin)}</td>
+      <td className="history-number-cell">{pending ? pendingMark : formatNumber(record.cantidad) || "-"}</td>
+      <td>{pending ? pendingMark : formatDuration(record.tiempo_minutos) || "-"}</td>
+      <td>
+        {average ? (
+          <span className={`history-avg-badge history-avg-${average.tone}`}>{average.label}</span>
+        ) : (
+          <span className="muted">-</span>
+        )}
+      </td>
+      <td>{record.codigo_guia || record.numero_guia || "-"}</td>
+      <td>{record.lote || "-"}</td>
+      <td>{hangtagLabel(record.tipo_etiquetado)}</td>
+      <td>{record.marca_nombre || "-"}</td>
+      <td>{record.tienda_nombre || "-"}</td>
+      <td className="history-detail-cell" title={record.detalle || ""}>{record.detalle || "-"}</td>
+      <td className="history-score-cell">{pending ? pendingMark : formatScore(record.puntaje)}</td>
+      <td className="history-updated-cell">{formatUpdatedAt(record)}</td>
+      <td>{record.encargado_nombre || record.encargado_email || "-"}</td>
+    </tr>
+  );
 }
 function EditableHistoryRow({ record, draft, tasks, brands, stores, saving, onDraft, onSave, onCancel }) {
   const selectedTask = tasks.find((task) => String(task.id) === String(draft.tarea_id));
@@ -869,102 +1062,137 @@ function EditableHistoryRow({ record, draft, tasks, brands, stores, saving, onDr
   const updateDraft = (changes) => onDraft((current) => ({ ...current, ...changes }));
   const start = limaDateTimeToISO(draft.fecha_registro, draft.hora_inicio);
   const finish = limaDateTimeToISO(draft.fecha_fin || draft.fecha_registro, draft.hora_fin);
-  return /* @__PURE__ */ React.createElement("tr", { className: "history-editing-row" }, /* @__PURE__ */ React.createElement("td", { className: "history-id-cell" }, "#", record.id), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: "history-cell-input history-date-input",
-      type: "date",
-      "aria-label": `Fecha del registro ${record.id}`,
-      max: todayLimaISO(),
-      value: draft.fecha_registro,
-      onChange: (event) => updateDraft({ fecha_registro: event.target.value })
-    }
-  )), /* @__PURE__ */ React.createElement("td", null, record.encargado_nombre || record.encargado_email || "Tu registro"), /* @__PURE__ */ React.createElement("td", null, record.trabajador_nombre || record.trabajador_email || "-"), /* @__PURE__ */ React.createElement("td", null, record.tarea_nombre || getTaskTitle(selectedTask) || "-"), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: "history-cell-input history-time-input",
-      type: "time",
-      "aria-label": `Hora inicio del registro ${record.id}`,
-      value: draft.hora_inicio,
-      onChange: (event) => updateDraft({ hora_inicio: event.target.value })
-    }
-  )), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: "history-cell-input history-time-input",
-      type: "time",
-      "aria-label": `Hora fin del registro ${record.id}`,
-      value: draft.hora_fin,
-      onChange: (event) => updateDraft({ hora_fin: event.target.value })
-    }
-  )), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: "history-cell-input history-quantity-input",
-      type: "number",
-      min: "1",
-      step: "1",
-      "aria-label": `Cantidad del registro ${record.id}`,
-      value: draft.cantidad,
-      onChange: (event) => updateDraft({ cantidad: event.target.value })
-    }
-  )), /* @__PURE__ */ React.createElement("td", { className: "history-preview-cell" }, start && finish ? formatDurationFromDates(start, finish) : "Pendiente"), /* @__PURE__ */ React.createElement("td", null, fields.guia ? /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: "history-cell-input",
-      "aria-label": `Numero de guia del registro ${record.id}`,
-      value: draft.numero_guia || "",
-      onChange: (event) => updateDraft({ numero_guia: event.target.value }),
-      placeholder: "Opcional"
-    }
-  ) : /* @__PURE__ */ React.createElement("span", { className: "muted" }, "No aplica")), /* @__PURE__ */ React.createElement("td", null, fields.lote ? /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: "history-cell-input",
-      "aria-label": `Codigo de lote del registro ${record.id}`,
-      value: draft.lote,
-      onChange: (event) => updateDraft({ lote: event.target.value.toUpperCase() }),
-      placeholder: "Opcional"
-    }
-  ) : /* @__PURE__ */ React.createElement("span", { className: "muted" }, "No aplica")), /* @__PURE__ */ React.createElement("td", null, fields.hangtag ? /* @__PURE__ */ React.createElement(
-    "select",
-    {
-      className: "history-cell-input history-select-input",
-      "aria-label": `Hangtag del registro ${record.id}`,
-      value: draft.tipo_etiquetado || "",
-      onChange: (event) => updateDraft({ tipo_etiquetado: event.target.value })
-    },
-    HANGTAG_OPTIONS.map((option) => /* @__PURE__ */ React.createElement("option", { key: option.value, value: option.value }, option.label))
-  ) : /* @__PURE__ */ React.createElement("span", { className: "muted" }, "No aplica")), /* @__PURE__ */ React.createElement("td", null, fields.marca ? /* @__PURE__ */ React.createElement(
-    "select",
-    {
-      className: "history-cell-input history-select-input",
-      "aria-label": `Marca del registro ${record.id}`,
-      value: draft.marca_id,
-      onChange: (event) => updateDraft({ marca_id: event.target.value })
-    },
-    /* @__PURE__ */ React.createElement("option", { value: "" }, "Selecciona"),
-    brands.map((brand) => /* @__PURE__ */ React.createElement("option", { key: brand.id, value: String(brand.id) }, brand.nombre))
-  ) : /* @__PURE__ */ React.createElement("span", { className: "muted" }, "No aplica")), /* @__PURE__ */ React.createElement("td", null, fields.tienda ? /* @__PURE__ */ React.createElement(
-    "select",
-    {
-      className: "history-cell-input history-select-input",
-      "aria-label": `Tienda del registro ${record.id}`,
-      value: draft.tienda_id,
-      onChange: (event) => updateDraft({ tienda_id: event.target.value })
-    },
-    /* @__PURE__ */ React.createElement("option", { value: "" }, "Selecciona"),
-    stores.map((store) => /* @__PURE__ */ React.createElement("option", { key: store.id, value: String(store.id) }, store.nombre))
-  ) : /* @__PURE__ */ React.createElement("span", { className: "muted" }, "No aplica")), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: "history-cell-input history-detail-input",
-      "aria-label": `Detalle del registro ${record.id}`,
-      value: draft.detalle,
-      onChange: (event) => updateDraft({ detalle: event.target.value }),
-      placeholder: "Opcional"
-    }
-  )), /* @__PURE__ */ React.createElement("td", { className: "history-preview-cell" }, "Se recalcula"), /* @__PURE__ */ React.createElement("td", { className: "history-updated-cell" }, formatUpdatedAt(record)), /* @__PURE__ */ React.createElement("td", { className: "history-actions-cell" }, /* @__PURE__ */ React.createElement("div", { className: "history-row-actions" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "history-save-button", disabled: saving, onClick: onSave }, saving ? "Guardando..." : "Guardar"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "history-cancel-button", disabled: saving, onClick: onCancel }, "Cancelar"))));
+  return (
+    <tr className="history-editing-row">
+      <td className="history-actions-cell">
+        <div className="history-row-actions">
+          <button type="button" className="history-save-button" disabled={saving} onClick={onSave}>
+            {saving ? "Guardando..." : "Guardar"}
+          </button>
+          <button type="button" className="history-cancel-button" disabled={saving} onClick={onCancel}>
+            Cancelar
+          </button>
+        </div>
+      </td>
+      <td>
+        <input
+          className="history-cell-input history-date-input"
+          type="date"
+          aria-label={`Fecha del registro ${record.id}`}
+          max={todayLimaISO()}
+          value={draft.fecha_registro}
+          onChange={(event) => updateDraft({ fecha_registro: event.target.value })}
+        />
+      </td>
+      <td>{record.trabajador_nombre || record.trabajador_email || "-"}</td>
+      <td>{record.tarea_nombre || getTaskTitle(selectedTask) || "-"}</td>
+      <td>
+        <input
+          className="history-cell-input history-time-input"
+          type="time"
+          aria-label={`Hora inicio del registro ${record.id}`}
+          value={draft.hora_inicio}
+          onChange={(event) => updateDraft({ hora_inicio: event.target.value })}
+        />
+      </td>
+      <td>
+        <input
+          className="history-cell-input history-time-input"
+          type="time"
+          aria-label={`Hora fin del registro ${record.id}`}
+          value={draft.hora_fin}
+          onChange={(event) => updateDraft({ hora_fin: event.target.value })}
+        />
+      </td>
+      <td>
+        <input
+          className="history-cell-input history-quantity-input"
+          type="number"
+          min="1"
+          step="1"
+          aria-label={`Cantidad del registro ${record.id}`}
+          value={draft.cantidad}
+          onChange={(event) => updateDraft({ cantidad: event.target.value })}
+        />
+      </td>
+      <td className="history-preview-cell">{start && finish ? formatDurationFromDates(start, finish) : "Pendiente"}</td>
+      <td><span className="muted">Se recalcula</span></td>
+      <td>
+        {fields.guia ? (
+          <input
+            className="history-cell-input"
+            aria-label={`Numero de guia del registro ${record.id}`}
+            value={draft.numero_guia || ""}
+            onChange={(event) => updateDraft({ numero_guia: event.target.value })}
+            placeholder="Opcional"
+          />
+        ) : <span className="muted">No aplica</span>}
+      </td>
+      <td>
+        {fields.lote ? (
+          <input
+            className="history-cell-input"
+            aria-label={`Codigo de lote del registro ${record.id}`}
+            value={draft.lote}
+            onChange={(event) => updateDraft({ lote: event.target.value.toUpperCase() })}
+            placeholder="Opcional"
+          />
+        ) : <span className="muted">No aplica</span>}
+      </td>
+      <td>
+        {fields.hangtag ? (
+          <select
+            className="history-cell-input history-select-input"
+            aria-label={`Hangtag del registro ${record.id}`}
+            value={draft.tipo_etiquetado || ""}
+            onChange={(event) => updateDraft({ tipo_etiquetado: event.target.value })}
+          >
+            {HANGTAG_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        ) : <span className="muted">No aplica</span>}
+      </td>
+      <td>
+        {fields.marca ? (
+          <select
+            className="history-cell-input history-select-input"
+            aria-label={`Marca del registro ${record.id}`}
+            value={draft.marca_id}
+            onChange={(event) => updateDraft({ marca_id: event.target.value })}
+          >
+            <option value="">Selecciona</option>
+            {brands.map((brand) => <option key={brand.id} value={String(brand.id)}>{brand.nombre}</option>)}
+          </select>
+        ) : <span className="muted">No aplica</span>}
+      </td>
+      <td>
+        {fields.tienda ? (
+          <select
+            className="history-cell-input history-select-input"
+            aria-label={`Tienda del registro ${record.id}`}
+            value={draft.tienda_id}
+            onChange={(event) => updateDraft({ tienda_id: event.target.value })}
+          >
+            <option value="">Selecciona</option>
+            {stores.map((store) => <option key={store.id} value={String(store.id)}>{store.nombre}</option>)}
+          </select>
+        ) : <span className="muted">No aplica</span>}
+      </td>
+      <td>
+        <input
+          className="history-cell-input history-detail-input"
+          aria-label={`Detalle del registro ${record.id}`}
+          value={draft.detalle}
+          onChange={(event) => updateDraft({ detalle: event.target.value })}
+          placeholder="Opcional"
+        />
+      </td>
+      <td className="history-preview-cell">Se recalcula</td>
+      <td className="history-updated-cell">{formatUpdatedAt(record)}</td>
+      <td>{record.encargado_nombre || record.encargado_email || "Tu registro"}</td>
+    </tr>
+  );
 }
 function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, onStatus }) {
   const mine = String(activity.encargado_id) === String(currentUserId);
@@ -1034,9 +1262,18 @@ function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, 
 
   return (
     <tr className="history-pending-row">
-      <td className="history-id-cell">#{activity.id}<span className="history-pending-badge">En curso</span></td>
-      <td>{formatRecordDate(activity)}</td>
-      <td>{activity.encargado_nombre || activity.encargado_email || "-"}</td>
+      <td className="history-actions-cell">
+        {mine ? (
+          <div className="history-row-actions">
+            <button type="button" className="history-save-button" disabled={busy} onClick={finish}>{busy ? "Guardando..." : "Finalizar"}</button>
+            <button type="button" className="history-cancel-button" disabled={busy} onClick={cancel}>Cancelar</button>
+          </div>
+        ) : <span className="history-readonly-badge">En curso · otro jefe</span>}
+      </td>
+      <td>
+        {formatRecordDate(activity)}
+        <span className="history-pending-badge">En curso</span>
+      </td>
       <td>{activity.trabajador_nombre || activity.trabajador_email || "-"}</td>
       <td>{activity.tarea_nombre || "-"}</td>
       <td className="history-time-cell">{formatTimeLima(activity.hora_inicio)}</td>
@@ -1079,6 +1316,7 @@ function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, 
         ) : formatNumber(activity.cantidad)}
       </td>
       <td>{durationPreview}</td>
+      <td><span className="muted">-</span></td>
       <td>{activity.numero_guia || activity.codigo_guia || "-"}</td>
       <td>
         {usesLote ? (
@@ -1115,14 +1353,7 @@ function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, 
       <td className="history-detail-cell" title={activity.detalle || activity.observacion || ""}>{activity.detalle || activity.observacion || "-"}</td>
       <td className="history-score-cell">Pendiente</td>
       <td className="history-updated-cell">{formatUpdatedAt(activity)}</td>
-      <td className="history-actions-cell">
-        {mine ? (
-          <div className="history-row-actions">
-            <button type="button" className="history-save-button" disabled={busy} onClick={finish}>{busy ? "Guardando..." : "Finalizar"}</button>
-            <button type="button" className="history-cancel-button" disabled={busy} onClick={cancel}>Cancelar</button>
-          </div>
-        ) : <span className="history-readonly-badge">En curso · otro jefe</span>}
-      </td>
+      <td>{activity.encargado_nombre || activity.encargado_email || "-"}</td>
     </tr>
   );
 }

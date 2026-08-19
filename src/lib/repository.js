@@ -1041,6 +1041,7 @@ export async function loadGroupLeaderContext() {
       brands: apiContext.brands || [],
       stores: apiContext.stores || [],
       leaders: apiContext.leaders || [],
+      allUsers: apiContext.allUsers || [],
       activities: apiContext.activities || [],
       operationsMigrationRequired: Boolean(apiContext.operationsMigrationRequired),
       historyMigrationRequired: Boolean(apiContext.historyMigrationRequired),
@@ -1055,7 +1056,7 @@ export async function loadGroupLeaderContext() {
     listTiendas().then((stores) => stores.filter((store) => String(store.activo ?? true) !== "false")),
     listGroupLeaderRecords()
   ]);
-  return { workers, tasks, brands, stores, leaders: [], activities: [], operationsMigrationRequired: false, historyMigrationRequired: false, records };
+  return { workers, tasks, brands, stores, leaders: [], allUsers: workers, activities: [], operationsMigrationRequired: false, historyMigrationRequired: false, records };
 }
 
 export async function listGroupLeaderRecords(encargadoId = null) {

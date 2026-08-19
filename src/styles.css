@@ -2289,25 +2289,16 @@ tbody tr:hover {
   background: rgba(45, 212, 191, 0.055);
 }
 
+/* La columna de acciones va primero y no se fija a los bordes: fijarla
+   (position: sticky) hace que el boton quede flotando sobre los demas campos
+   al desplazar la tabla. */
 .editable-history-table th:first-child,
 .editable-history-table td:first-child {
-  position: sticky;
-  left: 0;
-  z-index: 2;
-  min-width: 66px;
-  background: #0e1b17;
+  min-width: 128px;
 }
 
-.editable-history-table th:first-child {
-  z-index: 4;
-  background: #12231e;
-}
-
-/* La columna de acciones acompana al resto: si se fija a la derecha, el boton
-   queda flotando sobre los campos al desplazar la tabla. */
 .editable-history-table th:last-child,
 .editable-history-table td:last-child {
-  min-width: 122px;
   border-right: 0;
 }
 
@@ -2379,6 +2370,56 @@ tbody tr:hover {
 .history-updated-cell {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  color: var(--muted-2);
+}
+
+/* Equivalente en 12 horas junto al campo de hora en 24h, para evitar
+   confundir 8:00 con 20:00 al registrar. */
+.time-with-meridiem {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.time-with-meridiem .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.time-meridiem-badge {
+  flex-shrink: 0;
+  padding: 0.4rem 0.62rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(222, 238, 226, 0.05);
+  color: var(--muted-2);
+  font-size: 0.82rem;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.history-avg-badge {
+  display: inline-flex;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.history-avg-good {
+  background: rgba(45, 212, 191, 0.14);
+  color: var(--accent);
+}
+
+.history-avg-bad {
+  background: rgba(251, 113, 133, 0.14);
+  color: var(--coral);
+}
+
+.history-avg-neutral {
+  background: rgba(222, 238, 226, 0.06);
   color: var(--muted-2);
 }
 

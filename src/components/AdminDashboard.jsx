@@ -2745,8 +2745,21 @@ function StoresPanel() {
   );
 }
 
+const TIPOS_DOCUMENTO = ["CARTA AMONESTACION", "MEMORANDUM"];
+
 function emptyWarningForm() {
-  return { usuario_id: "", descripcion: "" };
+  return { usuario_id: "", descripcion: "", tipo_documento: "", fecha: todayLimaISO() };
+}
+
+// Muestra la fecha propia de la amonestacion; si es un registro viejo que no la
+// tiene, cae al momento en que se creo.
+function formatWarningDate(warning) {
+  const value = String(warning?.fecha || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split("-");
+    return `${day}/${month}/${year}`;
+  }
+  return formatDateTimeLima(warning?.created_at) || "-";
 }
 
 function WarningsPanel() {
@@ -2790,11 +2803,13 @@ function WarningsPanel() {
     const user = userById[String(warning.usuario_id)];
     const author = userById[String(warning.created_by)];
     return {
+      // `id` solo identifica la fila para React; no se muestra como columna.
       id: warning.id,
-      Fecha: formatDateTimeLima(warning.created_at),
-      Trabajador: user?.nombre || user?.email || `Usuario ${warning.usuario_id}`,
+      Fecha: formatWarningDate(warning),
+      Trabajador: user?.nombre || user?.email || "-",
+      "Tipo de documento": warning.tipo_documento || "-",
       Descripcion: warning.descripcion,
-      "Registrado por": author?.nombre || author?.email || "-"
+      Encargado: author?.nombre || author?.email || "-"
     };
   });
 
@@ -2809,9 +2824,22 @@ function WarningsPanel() {
       setStatus({ type: "error", message: "La descripcion es obligatoria." });
       return;
     }
+    if (!form.tipo_documento) {
+      setStatus({ type: "error", message: "Selecciona el tipo de documento." });
+      return;
+    }
+    if (!form.fecha || form.fecha > todayLimaISO()) {
+      setStatus({ type: "error", message: "Selecciona una fecha valida que no sea posterior a hoy." });
+      return;
+    }
     setSaving(true);
     try {
-      await createAmonestacion({ usuario_id: Number(form.usuario_id), descripcion: form.descripcion.trim() });
+      await createAmonestacion({
+        usuario_id: Number(form.usuario_id),
+        descripcion: form.descripcion.trim(),
+        tipo_documento: form.tipo_documento,
+        fecha: form.fecha
+      });
       setForm(emptyWarningForm());
       setStatus({ type: "success", message: "Amonestacion registrada correctamente." });
       reload();
@@ -2860,6 +2888,23 @@ function WarningsPanel() {
                 ...activeUsers.map((user) => ({ value: String(user.id), label: `${user.nombre || user.email} (${normalizeRole(user.rol)})` }))
               ]}
             />
+            <SelectInput
+              label="Tipo de documento"
+              value={form.tipo_documento}
+              onChange={(tipo_documento) => setForm({ ...form, tipo_documento })}
+              options={[
+                { value: "", label: "Selecciona el documento" },
+                ...TIPOS_DOCUMENTO.map((tipo) => ({ value: tipo, label: tipo }))
+              ]}
+            />
+            <TextInput
+              label="Fecha"
+              type="date"
+              value={form.fecha}
+              max={todayLimaISO()}
+              onChange={(fecha) => setForm({ ...form, fecha })}
+              hint="Puede ser hoy o una fecha anterior."
+            />
             <div className="form-span">
               <TextArea
                 label="Descripcion"
@@ -2883,7 +2928,7 @@ function WarningsPanel() {
                 { value: "", label: "Selecciona una amonestacion" },
                 ...warnings.map((warning) => {
                   const user = userById[String(warning.usuario_id)];
-                  const label = `${warning.id} - ${user?.nombre || user?.email || `Usuario ${warning.usuario_id}`} - ${String(warning.descripcion || "").slice(0, 40)}`;
+                  const label = `${formatWarningDate(warning)} · ${user?.nombre || user?.email || "-"} · ${warning.tipo_documento || "-"} · ${String(warning.descripcion || "").slice(0, 40)}`;
                   return { value: String(warning.id), label };
                 })
               ]}
@@ -2901,7 +2946,7 @@ function WarningsPanel() {
       </Panel>
 
       <Panel title="Historial de amonestaciones" eyebrow="Detalle">
-        {loading ? <LoadingBlock /> : <DataTable rows={historyRows} columns={["Fecha", "Trabajador", "Descripcion", "Registrado por"]} empty="Todavia no se registraron amonestaciones." />}
+        {loading ? <LoadingBlock /> : <DataTable rows={historyRows} columns={["Fecha", "Trabajador", "Tipo de documento", "Descripcion", "Encargado"]} empty="Todavia no se registraron amonestaciones." />}
       </Panel>
     </div>
   );
