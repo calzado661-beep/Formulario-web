@@ -374,7 +374,7 @@ async function selectUsers() {
   const [usersResult, movementsResult] = await Promise.all([
     supabase
       .from("usuarios")
-      .select("id,nombre,email,rol,activo,created_at,fecha_cumpleanos,sueldo")
+      .select("id,nombre,email,rol,activo,created_at,fecha_cumpleanos,sueldo,dni,sexo,telefono,direccion,distrito,grado_academico,ciclo_semestre,puesto,estado_civil,hijos,talla_zapatillas,talla_polo")
       .order("id", { ascending: true }),
     supabase
       .from("movimientos_personal")
@@ -505,6 +505,20 @@ async function saveEmploymentDates(userId, dates) {
   }
 }
 
+const OPTIONAL_TEXT_USER_FIELDS = [
+  "dni",
+  "sexo",
+  "telefono",
+  "direccion",
+  "distrito",
+  "grado_academico",
+  "ciclo_semestre",
+  "puesto",
+  "estado_civil",
+  "talla_zapatillas",
+  "talla_polo"
+];
+
 function userPayloadForDb(body, { creating = false } = {}) {
   let sueldo;
   if (body.sueldo !== undefined) {
@@ -515,6 +529,18 @@ function userPayloadForDb(body, { creating = false } = {}) {
     sueldo = Math.round((sueldo + Number.EPSILON) * 100) / 100;
   }
 
+  let hijos;
+  if (body.hijos !== undefined) {
+    if (body.hijos === null || body.hijos === "") {
+      hijos = null;
+    } else {
+      hijos = Number(body.hijos);
+      if (!Number.isInteger(hijos) || hijos < 0) {
+        throw new Error("El numero de hijos debe ser un entero mayor o igual a cero.");
+      }
+    }
+  }
+
   const payload = {
     nombre: body.nombre === undefined ? undefined : String(body.nombre).trim(),
     email: body.email === undefined ? undefined : String(body.email).trim().toLowerCase(),
@@ -523,8 +549,15 @@ function userPayloadForDb(body, { creating = false } = {}) {
     fecha_cumpleanos:
       body.fecha_cumpleanos === undefined ? undefined : body.fecha_cumpleanos || null,
     sueldo,
+    hijos,
     password_hash: body.password_hash === undefined ? undefined : String(body.password_hash)
   };
+
+  for (const field of OPTIONAL_TEXT_USER_FIELDS) {
+    if (body[field] === undefined) continue;
+    const trimmed = String(body[field] ?? "").trim();
+    payload[field] = trimmed || null;
+  }
 
   if (creating && (!payload.nombre || !payload.email || !payload.password_hash)) {
     throw new Error("Nombre, usuario y contrasena son obligatorios.");

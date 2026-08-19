@@ -100,6 +100,68 @@ function boolValue(value) {
   return !["false", "0", "no"].includes(String(value ?? true).trim().toLowerCase());
 }
 
+const sexoOptions = ["Masculino", "Femenino", "Otro"];
+const estadoCivilOptions = ["Soltero(a)", "Casado(a)", "Conviviente", "Divorciado(a)", "Viudo(a)"];
+const gradoAcademicoOptions = ["Primaria", "Secundaria", "Tecnico", "Universitario", "Postgrado"];
+const tallaPoloOptions = ["S", "M", "L", "XL", "XXL"];
+const personalDataFieldKeys = [
+  "dni",
+  "sexo",
+  "telefono",
+  "direccion",
+  "distrito",
+  "grado_academico",
+  "ciclo_semestre",
+  "puesto",
+  "estado_civil",
+  "hijos",
+  "talla_zapatillas",
+  "talla_polo"
+];
+
+function emptyPersonalDataFields() {
+  return Object.fromEntries(personalDataFieldKeys.map((key) => [key, ""]));
+}
+
+function personalDataFromUser(user) {
+  return Object.fromEntries(personalDataFieldKeys.map((key) => [
+    key,
+    user?.[key] === null || user?.[key] === undefined ? "" : String(user[key])
+  ]));
+}
+
+function PersonalDataFields({ form, setForm }) {
+  const withBlank = (options) => [{ value: "", label: "Sin especificar" }, ...options];
+  return (
+    <>
+      <TextInput label="DNI" value={form.dni} onChange={(dni) => setForm({ ...form, dni })} maxLength={20} />
+      <SelectInput label="Sexo" value={form.sexo} onChange={(sexo) => setForm({ ...form, sexo })} options={withBlank(sexoOptions)} />
+      <TextInput label="Telefono" value={form.telefono} onChange={(telefono) => setForm({ ...form, telefono })} maxLength={30} />
+      <TextInput label="Distrito" value={form.distrito} onChange={(distrito) => setForm({ ...form, distrito })} maxLength={120} />
+      <div className="form-span">
+        <TextArea label="Direccion" value={form.direccion} onChange={(direccion) => setForm({ ...form, direccion })} rows={2} />
+      </div>
+      <SelectInput label="Grado academico" value={form.grado_academico} onChange={(grado_academico) => setForm({ ...form, grado_academico })} options={withBlank(gradoAcademicoOptions)} />
+      <TextInput label="Ciclo / semestre" value={form.ciclo_semestre} onChange={(ciclo_semestre) => setForm({ ...form, ciclo_semestre })} placeholder="Ej. 8vo ciclo" maxLength={60} />
+      <TextInput label="Puesto" value={form.puesto} onChange={(puesto) => setForm({ ...form, puesto })} placeholder="Ej. Auxiliar de almacen" maxLength={120} />
+      <SelectInput label="Estado civil" value={form.estado_civil} onChange={(estado_civil) => setForm({ ...form, estado_civil })} options={withBlank(estadoCivilOptions)} />
+      <TextInput label="Numero de hijos" type="number" min="0" step="1" value={form.hijos} onChange={(hijos) => setForm({ ...form, hijos })} />
+      <TextInput label="Talla de zapatillas" value={form.talla_zapatillas} onChange={(talla_zapatillas) => setForm({ ...form, talla_zapatillas })} maxLength={10} />
+      <SelectInput label="Talla de polo" value={form.talla_polo} onChange={(talla_polo) => setForm({ ...form, talla_polo })} options={withBlank(tallaPoloOptions)} />
+    </>
+  );
+}
+
+function personalDataPayload(form) {
+  return Object.fromEntries(personalDataFieldKeys.map((key) => {
+    if (key === "hijos") {
+      return [key, form.hijos === "" ? null : Number(form.hijos)];
+    }
+    const trimmed = String(form[key] || "").trim();
+    return [key, trimmed || null];
+  }));
+}
+
 function StatusAlert({ status }) {
   if (!status?.message) return null;
   return <Alert type={status.type}>{status.message}</Alert>;
@@ -118,7 +180,8 @@ function UsersPanel() {
     fecha_cumpleanos: "",
     sueldo: "0.00",
     rol: "operante",
-    activo: true
+    activo: true,
+    ...emptyPersonalDataFields()
   });
   const [editId, setEditId] = useState("");
   const [profileUserId, setProfileUserId] = useState("");
@@ -132,7 +195,8 @@ function UsersPanel() {
     sueldo: "0.00",
     fecha_ingreso: "",
     fecha_salida: "",
-    motivo_salida: ""
+    motivo_salida: "",
+    ...emptyPersonalDataFields()
   });
 
   const selectedUser = users.find((user) => String(user.id) === String(editId));
@@ -150,7 +214,8 @@ function UsersPanel() {
       sueldo: Number(selectedUser.sueldo || 0).toFixed(2),
       fecha_ingreso: selectedUser.fecha_ingreso || "",
       fecha_salida: selectedUser.fecha_salida || "",
-      motivo_salida: selectedUser.motivo_salida || ""
+      motivo_salida: selectedUser.motivo_salida || "",
+      ...personalDataFromUser(selectedUser)
     });
   }, [selectedUser?.id]);
 
@@ -159,6 +224,10 @@ function UsersPanel() {
     setStatus(null);
     if (!createForm.nombre.trim() || !createForm.email.trim() || !createForm.password) {
       setStatus({ type: "error", message: "Nombre, usuario y contrasena son obligatorios." });
+      return;
+    }
+    if (createForm.hijos !== "" && (!Number.isInteger(Number(createForm.hijos)) || Number(createForm.hijos) < 0)) {
+      setStatus({ type: "error", message: "El numero de hijos debe ser un entero mayor o igual a cero." });
       return;
     }
     setSaving(true);
@@ -170,7 +239,8 @@ function UsersPanel() {
           rol: createForm.rol,
           activo: createForm.activo,
           fecha_cumpleanos: createForm.fecha_cumpleanos || null,
-          sueldo: Number(createForm.sueldo)
+          sueldo: Number(createForm.sueldo),
+          ...personalDataPayload(createForm)
         },
         createForm.password
       );
@@ -181,7 +251,8 @@ function UsersPanel() {
         fecha_cumpleanos: "",
         sueldo: "0.00",
         rol: "operante",
-        activo: true
+        activo: true,
+        ...emptyPersonalDataFields()
       });
       setStatus({ type: "success", message: "Usuario creado correctamente." });
       reload();
@@ -212,6 +283,10 @@ function UsersPanel() {
       setStatus({ type: "error", message: "Ingresa el motivo de la salida." });
       return;
     }
+    if (editForm.hijos !== "" && (!Number.isInteger(Number(editForm.hijos)) || Number(editForm.hijos) < 0)) {
+      setStatus({ type: "error", message: "El numero de hijos debe ser un entero mayor o igual a cero." });
+      return;
+    }
     setSaving(true);
     try {
       await updateUser(
@@ -225,7 +300,8 @@ function UsersPanel() {
           sueldo: Number(editForm.sueldo),
           fecha_ingreso: editForm.fecha_ingreso || null,
           fecha_salida: editForm.fecha_salida || null,
-          motivo_salida: editForm.fecha_salida ? editForm.motivo_salida.trim() : null
+          motivo_salida: editForm.fecha_salida ? editForm.motivo_salida.trim() : null,
+          ...personalDataPayload(editForm)
         },
         editForm.password.trim() || null
       );
@@ -333,6 +409,7 @@ function UsersPanel() {
             />
             <SelectInput label="Rol" value={createForm.rol} onChange={(rol) => setCreateForm({ ...createForm, rol })} options={roleOptions} />
             <CheckboxInput label="Activo" checked={createForm.activo} onChange={(activo) => setCreateForm({ ...createForm, activo })} />
+            <PersonalDataFields form={createForm} setForm={setCreateForm} />
             <div className="form-span">
               <Button type="submit" icon={Plus} loading={saving}>Crear usuario</Button>
             </div>
@@ -409,6 +486,7 @@ function UsersPanel() {
                     La fecha de salida es opcional. Si queda vacia, el usuario permanecera activo; al registrar una salida se desactivara. Si la registras, debes indicar el motivo.
                   </Alert>
                 </div>
+                <PersonalDataFields form={editForm} setForm={setEditForm} />
                 <div className="form-span">
                   <FormActions saving={saving} saveLabel="Guardar cambios" />
                 </div>
