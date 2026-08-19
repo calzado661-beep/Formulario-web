@@ -171,20 +171,6 @@ const INDICATORS = [
   { label: "Permanencia promedio", value: "11.45", suffix: "meses", detail: "Personal activo" }
 ];
 
-const WORKERS = [
-  { id: 68, name: "Aaron Osorio", role: "jefe de equipo", alias: "aaron.o", points: { 2025: [0, 1, 0, 1, 0, 1, 3, 0, 1, 2, 0, 0], 2026: [3, 4, 3, 0, 2, 3, 1, 0, 0, 0, 0, 0] } },
-  { id: 75, name: "Alexander Rojas", role: "operante", alias: "alexander.r", points: { 2025: [0, 0, 0, 33, 34, 45, 38, 22, 35, 37, 42, 46], 2026: [27, 44, 73, 4, 0, 0, 8, 0, 0, 0, 0, 0] } },
-  { id: 67, name: "Alexandra Paredes", role: "jefe de equipo", alias: "alexandra.p", points: { 2025: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2026: [0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0] } },
-  { id: 76, name: "Dylan Vasquez", role: "operante", alias: "dylan.v", points: { 2025: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2026: [0, 0, 67, 42, 48, 72, 33, 0, 0, 0, 0, 0] } },
-  { id: 74, name: "Giancarlos Toribio", role: "operante", alias: "giancarlos.t", points: { 2025: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 28], 2026: [53, 46, 34, 22, 25, 7, 42, 0, 0, 0, 0, 0] } },
-  { id: 70, name: "Jafet Pacheco", role: "operante", alias: "jafet.p", points: { 2025: [0, 0, 23, 23, 19, 12, 23, 7, 0, 20, 2, 17], 2026: [12, 9, 27, 9, 0, 1, 8, 0, 0, 0, 0, 0] } },
-  { id: 72, name: "Luis Vargas", role: "operante", alias: "luis.v", points: { 2025: [0, 0, 0, 99, 104, 131, 78, 123, 71, 146, 139, 131], 2026: [106, 80, 57, 4, 0, 0, 8, 0, 0, 0, 0, 0] } },
-  { id: 71, name: "Renzo Calzada", role: "operante", alias: "renzo.c", points: { 2025: [0, 0, 4, 7, 5, 6, 15, 11, 14, 0, 2, 20], 2026: [7, 8, 3, 6, 15, 0, 3, 0, 0, 0, 0, 0] } },
-  { id: 73, name: "Sair Ramirez", role: "operante", alias: "sair.r", points: { 2025: [0, 0, 0, 56, 84, 88, 88, 55, 50, 122, 68, 42], 2026: [56, 82, 116, 0, 0, 0, 0, 0, 0, 0, 0, 0] } },
-  { id: 69, name: "Saul Meza", role: "operante", alias: "saul.m", points: { 2025: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2026: [48, 25, 23, 44, 30, 18, 31, 0, 0, 0, 0, 0] } },
-  { id: 77, name: "Sebastian Andre", role: "operante", alias: "sebastian.a", points: { 2025: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2026: [0, 0, 0, 0, 16, 26, 6, 0, 0, 0, 0, 0] } }
-];
-
 const ROLE_OPTIONS = [
   { value: "administrador", label: "Administrador", active: 1 },
   { value: "jefe de equipo", label: "Jefe de equipo", active: 2 },
@@ -1466,28 +1452,6 @@ function distributeTotal(total, weights) {
 function taskMonthlySeries(task, year) {
   return TASK_MONTHLY_BY_YEAR[year]?.[task.shortName]
     || distributeTotal(task.yearly[year] || 0, YEAR_MONTHLY_TASKS[year]);
-}
-
-function monthSelectionFactor(dateParts, monthNumber, years) {
-  const selectedMonths = Object.keys(dateParts);
-  if (!selectedMonths.length) return 1;
-  if (!Object.prototype.hasOwnProperty.call(dateParts, monthNumber)) return 0;
-  const days = dateParts[monthNumber];
-  if (days === null) return 1;
-  const totalDays = availableDaysForMonth(years, monthNumber).length;
-  if (!totalDays) return 0;
-  return days.length / totalDays;
-}
-
-function workerPointsForPeriod(worker, years, dateParts) {
-  const effectiveYears = years.length ? years : [2025, 2026];
-  return effectiveYears.reduce((total, year) => total + worker.points[year].reduce((yearTotal, value, monthIndex) => (
-    yearTotal + value * monthSelectionFactor(dateParts, monthIndex + 1, effectiveYears)
-  ), 0), 0);
-}
-
-function aliasToWorkerName(alias) {
-  return WORKERS.find((worker) => worker.alias === alias)?.name || alias;
 }
 
 function selectedLabel(options, values, fallback) {
