@@ -92,16 +92,12 @@ function RankingDashboard({ user }) {
     { workers: [], tasks: [], brands: [], stores: [], leaders: [], records: [] }
   );
   const tasks = (data.tasks || []).filter(isGroupLeaderTimeTask);
-  const workers = data.workers || [];
   const records = data.records || [];
   const rankingByTask = useMemo(() => {
     const taskIds = new Set(tasks.map((task) => String(task.id)));
-    const activeWorkers = new Map(workers.map((worker) => [String(worker.id), worker]));
     const grouped = /* @__PURE__ */ new Map();
     for (const record of records) {
       if (!taskIds.has(String(record.tarea_id))) continue;
-      const worker = activeWorkers.get(String(record.trabajador_id));
-      if (!worker) continue;
       const cantidad = Number(record.cantidad || 0);
       const minutos = Number(record.tiempo_minutos || 0);
       if (cantidad <= 0 || minutos <= 0) continue;
@@ -110,7 +106,10 @@ function RankingDashboard({ user }) {
       const workersMap = grouped.get(taskKey);
       const workerKey = String(record.trabajador_id);
       const current = workersMap.get(workerKey) || {
-        nombre: worker.nombre || worker.email || `ID ${worker.id}`,
+        // El nombre viene del propio registro para no perder a operantes que
+        // ya no figuran como activos (o cambiaron de rol) desde que hicieron
+        // el trabajo.
+        nombre: record.trabajador_nombre || record.trabajador_email || `ID ${record.trabajador_id}`,
         cantidad: 0,
         minutos: 0,
         registros: 0
@@ -127,7 +126,7 @@ function RankingDashboard({ user }) {
       if (!ranked.length) return null;
       return { id: task.id, nombre: getTaskTitle(task) || `Tarea ${task.id}`, ranked };
     }).filter(Boolean);
-  }, [records, tasks, workers]);
+  }, [records, tasks]);
   const visibleRanking = taskId ? rankingByTask.filter((item) => String(item.id) === String(taskId)) : rankingByTask;
   const limit = Number(topLimit);
   return /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(
@@ -139,7 +138,7 @@ function RankingDashboard({ user }) {
     },
     loading ? /* @__PURE__ */ React.createElement(LoadingBlock, null) : null,
     error ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, error) : null,
-    /* @__PURE__ */ React.createElement(Alert, null, "El rendimiento se calcula como cantidad total entre tiempo total, expresado por hora. Solo se consideran las tareas de jefe de equipo que registran cantidad y tiempo, y \xFAnicamente operantes activos."),
+    /* @__PURE__ */ React.createElement(Alert, null, "El rendimiento se calcula como cantidad total entre tiempo total, expresado por hora. Solo se consideran las tareas de jefe de equipo que registran cantidad y tiempo; incluye a todo operante con registros, aunque ya no este activo."),
     /* @__PURE__ */ React.createElement("div", { className: "history-toolbar" }, /* @__PURE__ */ React.createElement(
       SelectInput,
       {
