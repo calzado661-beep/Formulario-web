@@ -780,7 +780,7 @@ function TrainingsPanel() {
 
   const selectedCourse = courses.find((course) => course.id_curso === courseId);
   const statusUsers = statusData?.users || [];
-  const activeUsers = statusUsers.filter((item) => boolValue(item.activo));
+  const activeUsers = statusUsers.filter((item) => boolValue(item.activo) && normalizeRole(item.rol) !== "administrador");
   const completedUsers = activeUsers.filter((item) => item.completado);
   const pendingUsers = activeUsers.filter((item) => !item.completado);
   const percent = activeUsers.length ? Math.round((completedUsers.length / activeUsers.length) * 100) : 0;
