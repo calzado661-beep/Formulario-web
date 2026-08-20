@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import {
   BadgeCheck,
   ClipboardCheck,
+  FileSpreadsheet,
   Hash,
   RefreshCcw,
   Save,
@@ -20,7 +21,7 @@ import {
   updateGroupLeaderActivity,
   updateGroupLeaderRecord
 } from "../lib/repository";
-import { formatDateTimeLima, limaDateTimeToISO, todayLimaISO } from "../lib/dates";
+import { formatDateTimeLima, limaDateTimeToISO, todayLimaISO, yesterdayLimaISO } from "../lib/dates";
 import {
   getGroupLeaderTaskMode,
   getTaskFieldFlags,
@@ -84,16 +85,34 @@ function timeTo12h(value) {
   const hour12 = hours % 12 === 0 ? 12 : hours % 12;
   return `${hour12}:${String(minutes).padStart(2, "0")} ${period}`;
 }
-// Rendimiento promedio (cantidad por hora) de cada operante en cada tarea,
-// calculado sobre todo el historial cerrado, sin importar los filtros activos
-// de la tabla ni quien lo haya registrado.
-function buildWorkerTaskAverages(records) {
+// Registros antiguos guardaron el hangtag como "con hangtag"/"sin hangtag"
+// (minuscula, con espacio) antes de que existiera el selector actual, que
+// escribe CON_HANGTAG/SIN_HANGTAG. Se reconocen las dos formas por igual para
+// no perder esos 260+ registros historicos al agrupar o mostrar.
+function normalizeHangtagValue(value) {
+  const raw = String(value || "").trim().toUpperCase().replace(/\s+/g, "_");
+  return raw === "CON_HANGTAG" || raw === "SIN_HANGTAG" ? raw : null;
+}
+// Clave de agrupacion para promediar una tarea: si la tarea usa hangtag
+// (hoy, Etiquetado), con y sin hangtag se promedian por separado porque
+// rinden distinto: un Etiquetado con hangtag no es comparable a uno sin el.
+function taskAverageKey(tarea_id, tipo_etiquetado, taskFlagsById) {
+  const taskId = String(tarea_id);
+  const splitsByHangtag = taskFlagsById?.get(taskId)?.hangtag;
+  return splitsByHangtag ? `${taskId}::${normalizeHangtagValue(tipo_etiquetado) || "SIN_DATO"}` : taskId;
+}
+// Rendimiento promedio (cantidad por hora) de TODOS los operantes activos en
+// una tarea -no del propio operante-, calculado sobre todo el historial
+// cerrado. Compara contra el ritmo tipico del equipo, no contra el historial
+// personal de quien hizo el registro.
+function buildTaskAverages(records, activeWorkerIds, taskFlagsById) {
   const totals = new Map();
   for (const record of records) {
     const minutes = Number(record.tiempo_minutos || 0);
     const quantity = Number(record.cantidad || 0);
     if (!record.hora_fin || !(minutes > 0) || !(quantity > 0)) continue;
-    const key = `${record.trabajador_id}::${record.tarea_id}`;
+    if (!activeWorkerIds.has(String(record.trabajador_id))) continue;
+    const key = taskAverageKey(record.tarea_id, record.tipo_etiquetado, taskFlagsById);
     const entry = totals.get(key) || { rateSum: 0, count: 0 };
     entry.rateSum += (quantity / minutes) * 60;
     entry.count += 1;
@@ -103,20 +122,21 @@ function buildWorkerTaskAverages(records) {
   totals.forEach((entry, key) => averages.set(key, entry.rateSum / entry.count));
   return averages;
 }
-// Compara el rendimiento de un registro contra el promedio de ese operante en
-// esa misma tarea. Null si el registro no tiene con que compararse todavia.
-function compareToAverage(record, averages) {
+// Compara el rendimiento de un registro contra el promedio del equipo en esa
+// tarea (y, si aplica, ese mismo estado de hangtag). Null si todavia no hay
+// promedio con que compararlo.
+function compareToTaskAverage(record, averages, taskFlagsById) {
   const minutes = Number(record.tiempo_minutos || 0);
   const quantity = Number(record.cantidad || 0);
   if (!record.hora_fin || !(minutes > 0) || !(quantity > 0)) return null;
-  const average = averages.get(`${record.trabajador_id}::${record.tarea_id}`);
+  const average = averages.get(taskAverageKey(record.tarea_id, record.tipo_etiquetado, taskFlagsById));
   if (!average) return null;
   const rate = (quantity / minutes) * 60;
   const diffPct = ((rate - average) / average) * 100;
-  if (Math.abs(diffPct) < 1) return { label: "En su promedio", tone: "neutral" };
+  if (Math.abs(diffPct) < 1) return { label: "En el promedio", tone: "neutral" };
   return diffPct > 0
-    ? { label: `${Math.round(diffPct)}% sobre su promedio`, tone: "good" }
-    : { label: `${Math.round(Math.abs(diffPct))}% bajo su promedio`, tone: "bad" };
+    ? { label: `${Math.round(diffPct)}% sobre el promedio`, tone: "good" }
+    : { label: `${Math.round(Math.abs(diffPct))}% bajo el promedio`, tone: "bad" };
 }
 function GroupLeaderDashboard({ user }) {
   const [workspace, setWorkspace] = useState("Registrar actividad normal");
@@ -130,10 +150,19 @@ function GroupLeaderDashboard({ user }) {
     }
   ), workspace === "Registrar actividad normal" ? /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(Panel, { title: "Registrar actividad normal", eyebrow: "Registro propio" }, /* @__PURE__ */ React.createElement(Alert, null, "Los registros de este apartado quedar\xE1n asociados a tu propio usuario, no al operante.")), /* @__PURE__ */ React.createElement(WorkerDashboard, { user, embedded: true })) : workspace === "Registrar actividad (tiempo)" ? /* @__PURE__ */ React.createElement(GroupTimeDashboard, { user }) : workspace === "Registrar incidencias" ? /* @__PURE__ */ React.createElement(IncidentDashboard, { user }) : /* @__PURE__ */ React.createElement(RankingDashboard, { user }));
 }
+// Metrica activa del grafico de ranking: cada una sabe leer su valor de una
+// entrada ya agregada y formatearlo para la barra.
+const RANKING_METRICS = {
+  rendimiento: { label: "Rendimiento (por hora)", getValue: (entry) => entry.rendimiento, format: (value) => `${formatRate(value)}/h` },
+  cantidad: { label: "Cantidad total", getValue: (entry) => entry.cantidad, format: (value) => formatNumber(value) || "0" },
+  minutos: { label: "Minutos totales", getValue: (entry) => entry.minutos, format: (value) => formatDuration(value) || "0 min" }
+};
+
 function RankingDashboard({ user }) {
   const [taskId, setTaskId] = useState("");
   const [topLimit, setTopLimit] = useState("5");
   const [period, setPeriod] = useState("mes");
+  const [metric, setMetric] = useState("rendimiento");
   const [includeInactive, setIncludeInactive] = useState(false);
   const { data, loading, error, reload } = useAsyncData(
     loadGroupLeaderContext,
@@ -157,14 +186,29 @@ function RankingDashboard({ user }) {
     return map;
   }, [data.allUsers, data.workers, data.leaders]);
   const today = todayLimaISO();
+  const yesterday = yesterdayLimaISO();
   const currentMonth = today.slice(0, 7);
-  const rankingByTask = useMemo(() => {
+  const taskFlagsById = useMemo(
+    () => new Map((data.tasks || []).map((task) => [String(task.id), getTaskFieldFlags(task)])),
+    [data.tasks]
+  );
+  // Las tarjetas de hangtag se guian por los mismos filtros que el resto de
+  // esta pantalla (periodo, tarea, incluir inactivos): si el filtro de tarea
+  // apunta a otra cosa, no tiene sentido mostrarlas.
+  const hangtagTasks = tasks.filter((task) => {
+    if (taskId && String(task.id) !== String(taskId)) return false;
+    return Boolean(taskFlagsById.get(String(task.id))?.hangtag);
+  });
+  const { rankingByTask, hangtagAverages } = useMemo(() => {
     const taskIds = new Set(tasks.map((task) => String(task.id)));
     const grouped = new Map();
+    const hangtagTotals = new Map();
     for (const record of records) {
       if (!taskIds.has(String(record.tarea_id))) continue;
+      if (taskId && String(record.tarea_id) !== String(taskId)) continue;
       const recordDate = String(record.fecha_registro || "").slice(0, 10);
       if (period === "dia" && recordDate !== today) continue;
+      if (period === "ayer" && recordDate !== yesterday) continue;
       if (period === "mes" && recordDate.slice(0, 7) !== currentMonth) continue;
       const person = peopleById.get(String(record.trabajador_id));
       if (!person) continue;
@@ -188,19 +232,59 @@ function RankingDashboard({ user }) {
       current.minutos += minutos;
       current.registros += 1;
       workersMap.set(workerKey, current);
+
+      if (taskFlagsById.get(taskKey)?.hangtag) {
+        const hangtagKey = `${taskKey}::${normalizeHangtagValue(record.tipo_etiquetado) || "SIN_DATO"}`;
+        const entry = hangtagTotals.get(hangtagKey) || { rateSum: 0, count: 0 };
+        entry.rateSum += (cantidad / minutos) * 60;
+        entry.count += 1;
+        hangtagTotals.set(hangtagKey, entry);
+      }
     }
-    return tasks.map((task) => {
+    const hangtagAverages = new Map();
+    hangtagTotals.forEach((entry, key) => hangtagAverages.set(key, entry.rateSum / entry.count));
+    const rankingByTask = tasks.map((task) => {
       const workersMap = grouped.get(String(task.id));
       if (!workersMap) return null;
       const ranked = [...workersMap.values()].map((entry) => ({ ...entry, rendimiento: entry.cantidad / entry.minutos * 60 })).sort((a, b) => b.rendimiento - a.rendimiento);
       if (!ranked.length) return null;
       return { id: task.id, nombre: getTaskTitle(task) || `Tarea ${task.id}`, ranked };
     }).filter(Boolean);
-  }, [records, tasks, peopleById, period, includeInactive, currentMonth, today]);
+    return { rankingByTask, hangtagAverages };
+  }, [records, tasks, peopleById, period, includeInactive, currentMonth, today, yesterday, taskId, taskFlagsById]);
   const visibleRanking = taskId ? rankingByTask.filter((item) => String(item.id) === String(taskId)) : rankingByTask;
   const limit = Number(topLimit);
   return (
     <div className="stack">
+      {hangtagTasks.length ? (
+        <div className="hangtag-summary-card">
+          <div className="hangtag-summary-header">
+            <p className="eyebrow">Se ajusta a los filtros de abajo</p>
+            <h2>Promedio por hangtag</h2>
+            <p>Rendimiento en pares por hora, con y sin hangtag por separado. Cambia con el periodo, la tarea y "incluir inactivos" que elijas mas abajo.</p>
+          </div>
+          <div className="hangtag-summary-grid">
+            {hangtagTasks.map((task) => {
+              const unit = String(task.unidad_medida || "unidades").toLowerCase();
+              const label = hangtagTasks.length > 1 ? `${getTaskTitle(task)} · ` : "";
+              return (
+                <React.Fragment key={task.id}>
+                  <HangtagStatTile
+                    label={`${label}Con hangtag`}
+                    value={hangtagAverages.get(`${task.id}::CON_HANGTAG`)}
+                    unit={unit}
+                  />
+                  <HangtagStatTile
+                    label={`${label}Sin hangtag`}
+                    value={hangtagAverages.get(`${task.id}::SIN_HANGTAG`)}
+                    unit={unit}
+                  />
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
       <Panel
         title="Ranking por tarea"
         eyebrow="Rendimiento promedio"
@@ -219,10 +303,17 @@ function RankingDashboard({ user }) {
             value={period}
             onChange={setPeriod}
             options={[
-              { value: "mes", label: "Mes actual" },
               { value: "dia", label: "Hoy" },
-              { value: "general", label: "General (todo)" }
+              { value: "ayer", label: "Ayer" },
+              { value: "mes", label: "Mes actual" },
+              { value: "general", label: "Todo" }
             ]}
+          />
+          <SelectInput
+            label="Metrica"
+            value={metric}
+            onChange={setMetric}
+            options={Object.entries(RANKING_METRICS).map(([value, spec]) => ({ value, label: spec.label }))}
           />
           <SelectInput
             label="Tarea"
@@ -254,24 +345,97 @@ function RankingDashboard({ user }) {
           <Alert>Aun no hay registros con cantidad y tiempo para armar el ranking en este periodo.</Alert>
         ) : null}
       </Panel>
-      {visibleRanking.map((item) => (
-        <Panel key={item.id} title={item.nombre} eyebrow="Top operantes">
-          <DataTable
-            rows={(limit ? item.ranked.slice(0, limit) : item.ranked).map((entry, index) => ({
-              "#": index + 1,
-              Trabajador: entry.nombre +
-                (entry.rol && entry.rol !== "operante" ? ` (${entry.rol})` : "") +
-                (!entry.activo ? " · inactivo" : ""),
-              "Rendimiento (por hora)": formatRate(entry.rendimiento),
-              "Cantidad total": formatNumber(entry.cantidad),
-              "Tiempo total": formatDuration(entry.minutos),
-              Registros: entry.registros
-            }))}
-            columns={["#", "Trabajador", "Rendimiento (por hora)", "Cantidad total", "Tiempo total", "Registros"]}
-            compact
-          />
-        </Panel>
-      ))}
+      {visibleRanking.map((item) => {
+        const ordered = [...item.ranked].sort(
+          (a, b) => RANKING_METRICS[metric].getValue(b) - RANKING_METRICS[metric].getValue(a)
+        );
+        const limited = limit ? ordered.slice(0, limit) : ordered;
+        return (
+          <Panel key={item.id} title={item.nombre} eyebrow="Top operantes">
+            <RankingBarChart entries={limited} metric={metric} />
+            <DataTable
+              rows={limited.map((entry, index) => ({
+                "#": index + 1,
+                Trabajador: entry.nombre +
+                  (entry.rol && entry.rol !== "operante" ? ` (${entry.rol})` : "") +
+                  (!entry.activo ? " · inactivo" : ""),
+                "Rendimiento (por hora)": formatRate(entry.rendimiento),
+                "Cantidad total": formatNumber(entry.cantidad),
+                "Tiempo total": formatDuration(entry.minutos),
+                Registros: entry.registros
+              }))}
+              columns={["#", "Trabajador", "Rendimiento (por hora)", "Cantidad total", "Tiempo total", "Registros"]}
+              compact
+            />
+          </Panel>
+        );
+      })}
+    </div>
+  );
+}
+
+// Barras horizontales de una sola serie: la longitud compara la metrica
+// elegida entre trabajadores. El hover/foco de cada fila muestra las otras
+// dos metricas sin tener que cambiar el filtro para verlas.
+function RankingBarChart({ entries, metric }) {
+  const [hoveredKey, setHoveredKey] = useState(null);
+  if (!entries.length) return null;
+  const spec = RANKING_METRICS[metric] || RANKING_METRICS.rendimiento;
+  const maxValue = Math.max(...entries.map((entry) => spec.getValue(entry)), 1);
+  return (
+    <div className="ranking-chart" role="list" aria-label={`Ranking por ${spec.label.toLowerCase()}`}>
+      {entries.map((entry, index) => {
+        const value = spec.getValue(entry);
+        const widthPct = Math.max(2, Math.round((value / maxValue) * 100));
+        const key = `${entry.nombre}-${index}`;
+        const hovered = hoveredKey === key;
+        const clearIfSelf = () => setHoveredKey((current) => (current === key ? null : current));
+        return (
+          <div
+            key={key}
+            className="ranking-chart-row"
+            role="listitem"
+            tabIndex={0}
+            onMouseEnter={() => setHoveredKey(key)}
+            onMouseLeave={clearIfSelf}
+            onFocus={() => setHoveredKey(key)}
+            onBlur={clearIfSelf}
+          >
+            <span className="ranking-chart-label" title={entry.nombre}>{entry.nombre}</span>
+            <span className="ranking-chart-track">
+              <span className="ranking-chart-bar" style={{ width: `${widthPct}%` }} />
+            </span>
+            <span className="ranking-chart-value">{spec.format(value)}</span>
+            {hovered ? (
+              <div className="ranking-chart-tooltip" role="tooltip">
+                <strong>{entry.nombre}</strong>
+                <div className={`ranking-chart-tooltip-row${metric === "rendimiento" ? " active" : ""}`}>
+                  <span>Rendimiento</span><span>{formatRate(entry.rendimiento)}/h</span>
+                </div>
+                <div className={`ranking-chart-tooltip-row${metric === "cantidad" ? " active" : ""}`}>
+                  <span>Cantidad total</span><span>{formatNumber(entry.cantidad)}</span>
+                </div>
+                <div className={`ranking-chart-tooltip-row${metric === "minutos" ? " active" : ""}`}>
+                  <span>Tiempo total</span><span>{formatDuration(entry.minutos) || "0 min"}</span>
+                </div>
+                <div className="ranking-chart-tooltip-row">
+                  <span>Registros</span><span>{entry.registros}</span>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+// Comparacion Con hangtag / Sin hangtag de una tarea: dos barras sobre la
+// misma escala, reusando el mismo lenguaje visual que el ranking principal.
+function HangtagStatTile({ label, value, unit }) {
+  return (
+    <div className="hangtag-stat-tile">
+      <span className="hangtag-stat-label">{label}</span>
+      <strong className="hangtag-stat-value">{value ? `${formatRate(value)} ${unit}/h` : "Sin datos"}</strong>
     </div>
   );
 }
@@ -464,7 +628,18 @@ function GroupTimeDashboard({ user }) {
     () => new Map(recordTasks.map((task) => [String(task.id), String(task.tipo_tarea || "").trim()])),
     [recordTasks]
   );
-  const workerTaskAverages = useMemo(() => buildWorkerTaskAverages(records), [records]);
+  const taskFlagsById = useMemo(
+    () => new Map(recordTasks.map((task) => [String(task.id), getTaskFieldFlags(task)])),
+    [recordTasks]
+  );
+  // El promedio compara contra operantes activos; un jefe que hizo la tarea
+  // el mismo o un operante ya inactivo no forman parte de la base de
+  // comparacion (sus propios registros igual se pueden comparar contra ella).
+  const activeWorkerIds = useMemo(() => new Set(workers.map((worker) => String(worker.id))), [workers]);
+  const taskAverages = useMemo(
+    () => buildTaskAverages(records, activeWorkerIds, taskFlagsById),
+    [records, activeWorkerIds, taskFlagsById]
+  );
   const selectedTask = useMemo(
     () => tasks.find((task) => String(task.id) === String(form.tarea_id)),
     [tasks, form.tarea_id]
@@ -776,7 +951,16 @@ function GroupTimeDashboard({ user }) {
     {
       title: "Historial editable",
       eyebrow: "Listado principal de la base de datos",
-      actions: /* @__PURE__ */ React.createElement(Button, { variant: "secondary", icon: RefreshCcw, onClick: reload }, "Actualizar")
+      actions: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+        Button,
+        {
+          variant: "secondary",
+          icon: FileSpreadsheet,
+          disabled: !combinedRows.length,
+          onClick: () => exportGroupHistoryToCsv(combinedRows)
+        },
+        "Exportar a Excel"
+      ), /* @__PURE__ */ React.createElement(Button, { variant: "secondary", icon: RefreshCcw, onClick: reload }, "Actualizar"))
     },
     /* @__PURE__ */ React.createElement(Alert, null, "Las filas marcadas como Sin cerrar esperan su cantidad y su fecha y hora de fin: usa Completar para cargarlas. Al guardar, el tiempo y el puntaje se recalculan. Los registros de otros jefes son de solo lectura."),
     /* @__PURE__ */ React.createElement("div", { className: "history-toolbar" }, /* @__PURE__ */ React.createElement("div", { className: "scope-switch", "aria-label": "Alcance de registros" }, /* @__PURE__ */ React.createElement(
@@ -862,7 +1046,8 @@ function GroupTimeDashboard({ user }) {
         tasks: recordTasks,
         brands,
         stores,
-        averages: workerTaskAverages,
+        averages: taskAverages,
+        taskFlagsById,
         currentUserId: user.id,
         editingDisabled: data.historyMigrationRequired,
         editingId,
@@ -889,6 +1074,7 @@ function EditableGroupHistory({
   brands,
   stores,
   averages,
+  taskFlagsById,
   currentUserId,
   editingDisabled,
   editingId,
@@ -920,10 +1106,10 @@ function EditableGroupHistory({
               <th>Cantidad</th>
               <th>Tiempo</th>
               <th>Vs. promedio</th>
-              <th>Numero de guia</th>
-              <th>Codigo de lote</th>
               <th>Hangtag</th>
+              <th>Codigo de lote</th>
               <th>Marca</th>
+              <th>Numero de guia</th>
               <th>Tienda</th>
               <th>Detalle</th>
               <th>Puntaje</th>
@@ -971,7 +1157,7 @@ function EditableGroupHistory({
                   record={record}
                   editable={editable}
                   busy={saving}
-                  average={compareToAverage(record, averages)}
+                  average={compareToTaskAverage(record, averages, taskFlagsById)}
                   readonlyReason={mine && record.revision == null ? "Registro anterior" : editingDisabled && mine ? "Migracion pendiente" : "Solo lectura"}
                   onEdit={() => onEdit(record)}
                   onDelete={() => onDelete(record)}
@@ -1044,10 +1230,10 @@ function HistoryRow({ record, editable, busy, average, readonlyReason, onEdit, o
           <span className="muted">-</span>
         )}
       </td>
-      <td>{record.codigo_guia || record.numero_guia || "-"}</td>
-      <td>{record.lote || "-"}</td>
       <td>{hangtagLabel(record.tipo_etiquetado)}</td>
+      <td>{record.lote || "-"}</td>
       <td>{record.marca_nombre || "-"}</td>
+      <td>{record.codigo_guia || record.numero_guia || "-"}</td>
       <td>{record.tienda_nombre || "-"}</td>
       <td className="history-detail-cell" title={record.detalle || ""}>{record.detalle || "-"}</td>
       <td className="history-score-cell">{pending ? pendingMark : formatScore(record.puntaje)}</td>
@@ -1118,28 +1304,6 @@ function EditableHistoryRow({ record, draft, tasks, brands, stores, saving, onDr
       <td className="history-preview-cell">{start && finish ? formatDurationFromDates(start, finish) : "Pendiente"}</td>
       <td><span className="muted">Se recalcula</span></td>
       <td>
-        {fields.guia ? (
-          <input
-            className="history-cell-input"
-            aria-label={`Numero de guia del registro ${record.id}`}
-            value={draft.numero_guia || ""}
-            onChange={(event) => updateDraft({ numero_guia: event.target.value })}
-            placeholder="Opcional"
-          />
-        ) : <span className="muted">No aplica</span>}
-      </td>
-      <td>
-        {fields.lote ? (
-          <input
-            className="history-cell-input"
-            aria-label={`Codigo de lote del registro ${record.id}`}
-            value={draft.lote}
-            onChange={(event) => updateDraft({ lote: event.target.value.toUpperCase() })}
-            placeholder="Opcional"
-          />
-        ) : <span className="muted">No aplica</span>}
-      </td>
-      <td>
         {fields.hangtag ? (
           <select
             className="history-cell-input history-select-input"
@@ -1154,6 +1318,17 @@ function EditableHistoryRow({ record, draft, tasks, brands, stores, saving, onDr
         ) : <span className="muted">No aplica</span>}
       </td>
       <td>
+        {fields.lote ? (
+          <input
+            className="history-cell-input"
+            aria-label={`Codigo de lote del registro ${record.id}`}
+            value={draft.lote}
+            onChange={(event) => updateDraft({ lote: event.target.value.toUpperCase() })}
+            placeholder="Opcional"
+          />
+        ) : <span className="muted">No aplica</span>}
+      </td>
+      <td>
         {fields.marca ? (
           <select
             className="history-cell-input history-select-input"
@@ -1164,6 +1339,17 @@ function EditableHistoryRow({ record, draft, tasks, brands, stores, saving, onDr
             <option value="">Selecciona</option>
             {brands.map((brand) => <option key={brand.id} value={String(brand.id)}>{brand.nombre}</option>)}
           </select>
+        ) : <span className="muted">No aplica</span>}
+      </td>
+      <td>
+        {fields.guia ? (
+          <input
+            className="history-cell-input"
+            aria-label={`Numero de guia del registro ${record.id}`}
+            value={draft.numero_guia || ""}
+            onChange={(event) => updateDraft({ numero_guia: event.target.value })}
+            placeholder="Opcional"
+          />
         ) : <span className="muted">No aplica</span>}
       </td>
       <td>
@@ -1317,7 +1503,7 @@ function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, 
       </td>
       <td>{durationPreview}</td>
       <td><span className="muted">-</span></td>
-      <td>{activity.numero_guia || activity.codigo_guia || "-"}</td>
+      <td>{hangtagLabel(activity.tipo_etiquetado)}</td>
       <td>
         {usesLote ? (
           mine ? (
@@ -1332,7 +1518,6 @@ function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, 
           ) : (activity.lote || "-")
         ) : <span className="muted">No aplica</span>}
       </td>
-      <td>{hangtagLabel(activity.tipo_etiquetado)}</td>
       <td>
         {usesBrand ? (
           mine ? (
@@ -1349,6 +1534,7 @@ function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, 
           ) : (activity.marca_nombre || "-")
         ) : <span className="muted">No aplica</span>}
       </td>
+      <td>{activity.numero_guia || activity.codigo_guia || "-"}</td>
       <td>{activity.tienda_nombre || <span className="muted">No aplica</span>}</td>
       <td className="history-detail-cell" title={activity.detalle || activity.observacion || ""}>{activity.detalle || activity.observacion || "-"}</td>
       <td className="history-score-cell">Pendiente</td>
@@ -1489,7 +1675,7 @@ function recordToEditableDraft(record) {
     hora_inicio: timeInputValue(record.hora_inicio),
     hora_fin: timeInputValue(record.hora_fin),
     cantidad: Number(record.cantidad) > 0 ? String(record.cantidad) : "",
-    tipo_etiquetado: record.tipo_etiquetado || "",
+    tipo_etiquetado: normalizeHangtagValue(record.tipo_etiquetado) || "",
     numero_guia: record.numero_guia || record.codigo_guia || "",
     marca_id: record.marca_id ? String(record.marca_id) : "",
     lote: record.lote || "",
@@ -1554,9 +1740,63 @@ function isValidTime(value) {
 function isPendingRecord(record) {
   return !record?.hora_fin;
 }
+function csvCell(value) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return /["\n,;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+// Misma forma para una fila cerrada (record) y una pendiente (activity): los
+// campos vacios de una fila "Sin cerrar" quedan en blanco en vez de mostrar
+// "Pendiente", que solo tiene sentido en pantalla.
+function groupHistoryExportRow(item, pending) {
+  return {
+    Fecha: formatRecordDate(item),
+    Encargado: item.encargado_nombre || item.encargado_email || "",
+    Operante: item.trabajador_nombre || item.trabajador_email || "",
+    Tarea: item.tarea_nombre || "",
+    "Hora inicio": formatTimeLima(item.hora_inicio),
+    "Hora fin": pending ? "" : formatTimeLima(item.hora_fin),
+    Cantidad: pending ? "" : (formatNumber(item.cantidad) || ""),
+    "Tiempo (min)": pending ? "" : (item.tiempo_minutos ?? ""),
+    "Numero de guia": item.codigo_guia || item.numero_guia || "",
+    "Codigo de lote": item.lote || "",
+    Hangtag: item.tipo_etiquetado ? hangtagLabel(item.tipo_etiquetado) : "",
+    Marca: item.marca_nombre || "",
+    Tienda: item.tienda_nombre || "",
+    Detalle: item.detalle || item.observacion || "",
+    Puntaje: pending ? "" : (item.puntaje ?? ""),
+    Modificado: item.updated_at ? formatUpdatedAt(item) : "",
+    Estado: pending ? "Sin cerrar" : "Cerrado"
+  };
+}
+const GROUP_HISTORY_EXPORT_COLUMNS = [
+  "Fecha", "Encargado", "Operante", "Tarea", "Hora inicio", "Hora fin", "Cantidad",
+  "Tiempo (min)", "Hangtag", "Codigo de lote", "Marca", "Numero de guia", "Tienda",
+  "Detalle", "Puntaje", "Modificado", "Estado"
+];
+// Exporta exactamente las filas que se ven en la tabla (ya filtradas por
+// operante, tarea, categoria, busqueda y alcance), en el mismo orden.
+function exportGroupHistoryToCsv(rows) {
+  const lines = [GROUP_HISTORY_EXPORT_COLUMNS.map(csvCell).join(",")];
+  rows.forEach((row) => {
+    const pending = row.kind === "pending";
+    const exportRow = groupHistoryExportRow(pending ? row.activity : row.record, pending);
+    lines.push(GROUP_HISTORY_EXPORT_COLUMNS.map((column) => csvCell(exportRow[column])).join(","));
+  });
+  // BOM inicial para que Excel detecte UTF-8 y no rompa tildes/enies.
+  const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `historial-tareas-jefe-equipo-${todayLimaISO()}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
 function hangtagLabel(value) {
   if (!value) return "-";
-  return HANGTAG_OPTIONS.find((option) => option.value === value)?.label || String(value);
+  const normalized = normalizeHangtagValue(value);
+  return HANGTAG_OPTIONS.find((option) => option.value === normalized)?.label || String(value);
 }
 function formatUpdatedAt(record) {
   const value = record?.updated_at || record?.updatedAt || null;

@@ -15,6 +15,13 @@ export function todayLimaISO() {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+export function yesterdayLimaISO() {
+  // Lima no tiene horario de verano: restar 24h siempre cae en el dia de
+  // calendario anterior al reformatear en su zona horaria.
+  const parts = partsFor(new Date(Date.now() - 24 * 60 * 60 * 1000));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 export function formatDateTimeLima(value) {
   if (!value) return "";
   const date = new Date(String(value).replace(" ", "T"));

@@ -2839,7 +2839,10 @@ async function handleWorkerLiveProgress(request, response) {
         record_id: Number(record.id),
         registro_tarea_id: Number(record.id),
         origen: "historial_jefe_equipo",
-        estado: Number(record.revision || 1) > 1 ? "ACTUALIZADA" : "FINALIZADA",
+        // Un registro sin hora_fin sigue "Sin cerrar" en el historial: aqui
+        // se traduce como EN_CURSO para que el operante lo vea como tarea
+        // abierta, no como si ya estuviera terminada.
+        estado: !record.hora_fin ? "EN_CURSO" : Number(record.revision || 1) > 1 ? "ACTUALIZADA" : "FINALIZADA",
         horaInicio: record.hora_inicio || null,
         horaFin: record.hora_fin || null,
         tiempoMinutos: nullableNumber(record.tiempo_minutos),

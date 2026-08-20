@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BadgeCheck, CheckCircle2, ChevronDown, Clock3, Minus, Plus, RefreshCcw, Save, Timer, X } from "lucide-react";
+import { BadgeCheck, CheckCircle2, Minus, Plus, RefreshCcw, Save, Timer, X } from "lucide-react";
 import {
   createWorkerActivityLog,
   friendlyError,
@@ -86,13 +86,12 @@ function emptyRecord() {
 
 export default function WorkerDashboard({ user, embedded = false }) {
   const [tab, setTab] = useState("Registrar actividad");
-  const tabs = embedded ? ["Registrar actividad", "Historial"] : ["Registrar actividad", "Progreso en vivo", "Historial"];
+  const tabs = ["Registrar actividad", "Historial"];
 
   return (
     <div className={embedded ? "stack embedded-worker" : "stack"}>
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
       {tab === "Registrar actividad" ? <RegisterActivity user={user} /> : null}
-      {tab === "Progreso en vivo" ? <WorkerLiveProgress user={user} /> : null}
       {tab === "Historial" ? <WorkerHistory user={user} /> : null}
     </div>
   );
@@ -263,6 +262,9 @@ function RegisterActivity({ user }) {
       if (shape.flags.hangtag && !shape.tipoEtiquetado) {
         return `Indica si ${shape.title} va con hangtag o sin hangtag.`;
       }
+      if (shape.flags.marca && !shape.marcaId) {
+        return `Selecciona una marca para ${shape.title}.`;
+      }
       if (shape.type === "cantidad" && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) < 0)) {
         return `Ingresa una cantidad valida para ${shape.title}.`;
       }
@@ -371,6 +373,8 @@ function RegisterActivity({ user }) {
   }
 
   return (
+    <>
+    <TodayLeaderTaskCard user={user} />
     <Panel
       title="Registrar lo realizado"
       eyebrow="Operaciones"
@@ -470,6 +474,7 @@ function RegisterActivity({ user }) {
         </div>
       ) : null}
     </Panel>
+    </>
   );
 }
 
@@ -675,193 +680,70 @@ function liveProgressTime(value) {
   }).format(date);
 }
 
-function liveProgressDate(value) {
-  const raw = String(value || "").slice(0, 10);
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
-  if (match) return `${match[3]}/${match[2]}/${match[1]}`;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "--/--/----";
-  return new Intl.DateTimeFormat("es-PE", { timeZone: "America/Lima", dateStyle: "short" }).format(date);
-}
-
-function liveProgressDuration(startValue, endValue = new Date().toISOString()) {
-  const start = new Date(startValue);
-  const end = new Date(endValue);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return "--";
-  const total = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000));
-  const hours = Math.floor(total / 60);
-  const minutes = total % 60;
-  if (!hours) return `${minutes} min`;
-  return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
-}
-
-function liveProgressMinutes(value) {
-  const total = Number(value);
-  if (!Number.isFinite(total) || total <= 0) return "--";
-  const rounded = Math.max(1, Math.round(total));
-  const hours = Math.floor(rounded / 60);
-  const minutes = rounded % 60;
-  if (!hours) return `${minutes} min`;
-  return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
-}
-
-function liveProgressUpdatedAt(activity) {
-  return activity.updated_at || activity.updatedAt || activity.created_at || activity.hora_fin || activity.horaFin || null;
-}
-
-function WorkerLiveProgress({ user }) {
+// Tarea que un jefe de equipo dejo abierta HOY para este operante. Vive al
+// tope de "Registrar actividad", en reemplazo de la antigua pestaña
+// "Progreso en vivo": no es una lista de todo el historial, solo lo que esta
+// en curso ahora mismo, para que sea lo primero que se ve al entrar.
+function TodayLeaderTaskCard({ user }) {
   const requestRef = useRef(null);
-  const [data, setData] = useState({ activities: [], generatedAt: null, operationsMigrationRequired: false });
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState("");
-
-  async function refresh({ initial = false } = {}) {
-    requestRef.current?.abort();
-    const controller = new AbortController();
-    requestRef.current = controller;
-    if (initial) setLoading(true);
-    else setRefreshing(true);
-    try {
-      const result = await loadWorkerLiveProgress({ signal: controller.signal });
-      setData(result);
-      setError("");
-    } catch (err) {
-      if (err?.name !== "AbortError") setError(friendlyError(err));
-    } finally {
-      if (requestRef.current === controller) {
-        requestRef.current = null;
-        setLoading(false);
-        setRefreshing(false);
-      }
-    }
-  }
+  const [activities, setActivities] = useState([]);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    refresh({ initial: true });
-    const timer = window.setInterval(() => refresh(), 10_000);
+    let cancelled = false;
+    async function refresh() {
+      requestRef.current?.abort();
+      const controller = new AbortController();
+      requestRef.current = controller;
+      try {
+        const result = await loadWorkerLiveProgress({ signal: controller.signal });
+        if (cancelled) return;
+        const today = todayLimaISO();
+        const openToday = (result.activities || []).filter(
+          (activity) => activity.estado === "EN_CURSO" && String(activity.fecha_registro || "").slice(0, 10) === today
+        );
+        setActivities(openToday);
+        setLoaded(true);
+      } catch (err) {
+        if (err?.name !== "AbortError" && !cancelled) setLoaded(true);
+      }
+    }
+    refresh();
+    const timer = window.setInterval(refresh, 10_000);
     return () => {
+      cancelled = true;
       window.clearInterval(timer);
       requestRef.current?.abort();
       requestRef.current = null;
     };
   }, [user?.id]);
 
-  const progressRecords = [...(data.activities || [])]
-    .sort((a, b) => new Date(liveProgressUpdatedAt(b) || 0) - new Date(liveProgressUpdatedAt(a) || 0));
-  const lastUpdate = data.generatedAt
-    ? new Intl.DateTimeFormat("es-PE", { timeZone: "America/Lima", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(data.generatedAt))
-    : "--:--";
+  if (!loaded || !activities.length) return null;
 
   return (
-    <Panel
-      title="Mi progreso en vivo"
-      eyebrow="Seguimiento del jefe de equipo"
-      className="worker-live-progress-panel"
-      actions={<Button variant="secondary" icon={RefreshCcw} loading={refreshing} onClick={() => refresh()}>Actualizar</Button>}
-    >
-      <div className="worker-progress-hero">
-        <div>
-          <span className="worker-progress-live"><i /> Sincronización en vivo</span>
-          <h3>Consulta tus registros actualizados</h3>
-          <p>Esta vista es de solo lectura. Verás automáticamente los cambios que tu jefe haga en horas, cantidad, datos de la tarea y puntaje.</p>
-        </div>
-        <div className="worker-progress-updated">
-          <Clock3 />
-          <span>Última lectura</span>
-          <strong>{lastUpdate}</strong>
-        </div>
-      </div>
-
-      {loading ? <LoadingBlock /> : null}
-      {error ? <Alert type="error">No se pudo actualizar el progreso. {error}</Alert> : null}
-      {data.historyMigrationRequired ? <Alert type="error">Falta aplicar la migración SQL 027 en Supabase para guardar y mostrar correctamente las horas del historial.</Alert> : null}
-      {!loading && !progressRecords.length ? (
-        <Alert>Aún no tienes registros por tiempo creados por un jefe de equipo. Cuando guarde uno, aparecerá aquí automáticamente.</Alert>
-      ) : null}
-
-      <div className="activity-session-grid worker-progress-grid">
-        {progressRecords.map((activity) => <WorkerProgressCard key={activity.id} activity={activity} />)}
+    <Panel title="Tu jefe de equipo te registro esto hoy" eyebrow="En curso" className="today-leader-task-panel">
+      <div className="today-leader-task-grid">
+        {activities.map((activity) => (
+          <article className="today-leader-task-card" key={activity.id}>
+            <header>
+              <Timer />
+              <strong>{activity.tarea_nombre || activity.actividad_nombre || `Tarea ${activity.tarea_id || ""}`}</strong>
+            </header>
+            <dl>
+              <div><dt>Cantidad</dt><dd>{liveProgressNumber(activity.cantidad)}</dd></div>
+              <div><dt>Marca</dt><dd>{activity.marca_nombre || "No aplica"}</dd></div>
+              <div><dt>Lote</dt><dd>{activity.lote || "No aplica"}</dd></div>
+              <div><dt>Numero de guia</dt><dd>{activity.numero_guia || activity.codigo_guia || "No aplica"}</dd></div>
+              <div><dt>Tienda</dt><dd>{activity.tienda_nombre || "No aplica"}</dd></div>
+            </dl>
+            <small>
+              Registrada por {activity.encargado_nombre || "tu jefe de equipo"} · inicio{" "}
+              {liveProgressTime(activity.hora_inicio || activity.horaInicio)}
+            </small>
+          </article>
+        ))}
       </div>
     </Panel>
-  );
-}
-
-function WorkerProgressCard({ activity }) {
-  const [expanded, setExpanded] = useState(true);
-  const history = activity.history || [];
-  const lastAdvance = history.at(-1);
-  const isOpen = activity.estado === "EN_CURSO";
-  const isUpdated = activity.estado === "ACTUALIZADA" || Number(activity.revision || 1) > 1;
-  const start = activity.hora_inicio || activity.horaInicio;
-  const finish = activity.hora_fin || activity.horaFin;
-  const duration = activity.tiempo_minutos ?? activity.tiempoMinutos;
-  const taskName = activity.tarea_nombre || activity.actividad_nombre || `Tarea ${activity.tarea_id || ""}`;
-  const statusLabel = isOpen ? "En curso" : isUpdated ? "Actualizado" : "Registrado";
-
-  return (
-    <article className={`activity-session-card ${isOpen ? "open" : "completed"} worker-progress-card`}>
-      <button type="button" className="activity-session-summary" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
-        <span className={`activity-session-status ${isOpen ? "" : "completed"}`}><i /> {statusLabel}</span>
-        <span className="activity-session-title">
-          <strong>{taskName}</strong>
-          <small>Registrada por {activity.encargado_nombre || "Jefe de equipo"}</small>
-        </span>
-        <span className="activity-session-start">{liveProgressTime(start)} – {liveProgressTime(finish)}</span>
-        <ChevronDown className={expanded ? "expanded" : ""} />
-      </button>
-      {expanded ? (
-        <div className="activity-session-body">
-          <div className="activity-session-stats">
-            <div><span>Cantidad</span><strong>{liveProgressNumber(activity.cantidad)}</strong></div>
-            <div><span>{isOpen ? "Tiempo transcurrido" : "Tiempo total"}</span><strong>{isOpen ? liveProgressDuration(start) : duration != null ? liveProgressMinutes(duration) : liveProgressDuration(start, finish)}</strong></div>
-            <div><span>Puntaje</span><strong>{isOpen || activity.puntaje == null ? "Pendiente" : `${liveProgressNumber(activity.puntaje)} pts`}</strong></div>
-          </div>
-
-          <div className="worker-progress-context">
-            <span>Fecha <strong>{liveProgressDate(activity.fecha_registro || start)}</strong></span>
-            {activity.marca_nombre ? <span>Marca <strong>{activity.marca_nombre}</strong></span> : null}
-            {activity.lote ? <span>Lote <strong>{activity.lote}</strong></span> : null}
-            {activity.tienda_nombre ? <span>Tienda <strong>{activity.tienda_nombre}</strong></span> : null}
-            {(activity.numero_guia || activity.codigo_guia) ? <span>Guía <strong>{activity.numero_guia || activity.codigo_guia}</strong></span> : null}
-            {(activity.observacion || activity.detalle) ? <span>Detalle <strong>{activity.observacion || activity.detalle}</strong></span> : null}
-          </div>
-
-          <div className="worker-progress-current">
-            <Timer />
-            <div>
-              <span>Última actualización del jefe</span>
-              <strong>{lastAdvance ? `${liveProgressNumber(lastAdvance.cantidad)} a las ${liveProgressTime(lastAdvance.created_at)}` : liveProgressTime(liveProgressUpdatedAt(activity))}</strong>
-            </div>
-          </div>
-
-          <WorkerProgressHistory activity={activity} />
-        </div>
-      ) : null}
-    </article>
-  );
-}
-
-function WorkerProgressHistory({ activity }) {
-  const entries = activity.history || [];
-  if (!entries.length) return null;
-  return (
-    <div className="activity-session-history">
-      <h3>Detalle de actualizaciones</h3>
-      <ol>
-        {entries.map((entry, index) => {
-          const previous = Number(entries[index - 1]?.cantidad || 0);
-          const delta = Number(entry.cantidad || 0) - previous;
-          return (
-            <li key={entry.id || `${entry.tipo || "registro"}-${entry.created_at || index}`}>
-              <span>{liveProgressTime(entry.created_at)}</span>
-              <strong>{liveProgressNumber(entry.cantidad)} acumulado</strong>
-              <small>{entry.tipo === "INICIO" ? "Actividad iniciada" : entry.tipo === "FINALIZACION" || entry.tipo === "REGISTRO" ? `Registrada · ${entry.puntaje ?? activity.puntaje ?? 0} pts` : index && delta ? `${delta > 0 ? "+" : ""}${liveProgressNumber(delta)} desde el valor anterior` : "Registro actualizado por el jefe"}</small>
-            </li>
-          );
-        })}
-      </ol>
-    </div>
   );
 }
 

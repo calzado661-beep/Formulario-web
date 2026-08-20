@@ -2580,6 +2580,166 @@ tbody tr:hover {
   color: var(--muted-2);
 }
 
+/* Ranking: barras horizontales de una sola metrica por tarea. */
+.ranking-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 1.15rem;
+}
+
+.ranking-chart-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(110px, 0.85fr) 1fr auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 8px;
+}
+
+.ranking-chart-row:hover,
+.ranking-chart-row:focus-visible {
+  background: rgba(45, 212, 191, 0.08);
+  outline: none;
+}
+
+.ranking-chart-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  font-weight: 850;
+  color: var(--text);
+}
+
+.ranking-chart-track {
+  position: relative;
+  height: 16px;
+  background: rgba(222, 238, 226, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.ranking-chart-bar {
+  display: block;
+  height: 100%;
+  min-width: 4px;
+  background: var(--accent);
+  border-radius: 0 4px 4px 0;
+  transition: width 0.25s ease;
+}
+
+.ranking-chart-value {
+  min-width: 68px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  font-size: 0.8rem;
+  color: var(--text-strong);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ranking-chart-tooltip {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  margin-top: 0.3rem;
+  min-width: 190px;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: #12231e;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.ranking-chart-tooltip strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--text-strong);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.ranking-chart-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.2rem;
+  padding: 0.12rem 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ranking-chart-tooltip-row.active span:last-child {
+  color: var(--accent);
+  font-weight: 900;
+}
+
+@media (max-width: 640px) {
+  .ranking-chart-row {
+    grid-template-columns: minmax(90px, 0.8fr) 1fr auto;
+    gap: 0.4rem;
+  }
+}
+
+/* Tarjeta destacada arriba del Ranking, distinta de un Panel comun: son las
+   dos tarjetitas de promedio por hangtag, en pares por hora. */
+.hangtag-summary-card {
+  padding: 1.1rem 1.25rem;
+  border: 1px solid rgba(45, 212, 191, 0.32);
+  border-radius: var(--radius);
+  background: rgba(45, 212, 191, 0.06);
+}
+
+.hangtag-summary-header p.eyebrow {
+  margin: 0 0 0.2rem;
+}
+
+.hangtag-summary-header h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+  color: var(--text-strong);
+}
+
+.hangtag-summary-header p {
+  margin: 0 0 1rem;
+  max-width: 62ch;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.hangtag-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.hangtag-stat-tile {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(45, 212, 191, 0.22);
+  border-radius: 10px;
+  background: rgba(8, 16, 15, 0.35);
+}
+
+.hangtag-stat-label {
+  color: var(--muted-2);
+  font-size: 0.74rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.hangtag-stat-value {
+  color: var(--text-strong);
+  font-size: 1.3rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
 .history-detail-cell {
   max-width: 210px;
   overflow: hidden;
@@ -3004,6 +3164,71 @@ tbody tr:hover {
 .worker-live-progress-panel .panel-body {
   display: grid;
   gap: 1rem;
+}
+
+/* Tarjeta de la tarea que el jefe de equipo dejo abierta hoy, arriba de
+   "Registrar lo realizado". */
+.today-leader-task-panel {
+  border-color: rgba(45, 212, 191, 0.32);
+}
+
+.today-leader-task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.85rem;
+}
+
+.today-leader-task-card {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  border-radius: var(--radius);
+  background: rgba(45, 212, 191, 0.05);
+}
+
+.today-leader-task-card header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--accent);
+}
+
+.today-leader-task-card header svg {
+  width: 18px;
+  height: 18px;
+}
+
+.today-leader-task-card header strong {
+  color: var(--text-strong);
+  font-size: 0.95rem;
+}
+
+.today-leader-task-card dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 0.5rem 0.7rem;
+  margin: 0;
+}
+
+.today-leader-task-card dt {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.today-leader-task-card dd {
+  margin: 0.1rem 0 0;
+  color: var(--text);
+  font-weight: 850;
+  font-size: 0.86rem;
+}
+
+.today-leader-task-card small {
+  color: var(--muted-2);
+  font-size: 0.75rem;
 }
 
 .worker-progress-hero {
