@@ -19,6 +19,7 @@ import {
   getActivityReportSettings,
   getAttendanceForDate,
   getAttendanceReportSettings,
+  getTrainingStatusByCourse,
   getUserTrainingProfile,
   listAllActivityLogs,
   listAmonestaciones,
@@ -58,7 +59,7 @@ import {
 } from "../lib/scoring";
 import { validateAttendanceEdit } from "../lib/operations";
 import { useAsyncData } from "../lib/hooks";
-import FootwearDashboard from "./FootwearDashboard";
+import FootwearDashboard, { VerticalBarChart } from "./FootwearDashboard";
 import {
   Alert,
   Button,
@@ -90,6 +91,7 @@ function trainingStatusLabel(status) {
 export default function AdminDashboard({ section }) {
   if (section === "Dashboard") return <FootwearDashboard />;
   if (section === "Usuarios") return <UsersPanel />;
+  if (section === "Capacitaciones") return <TrainingsPanel />;
   if (section === "Tareas") return <TasksPanel />;
   if (section === "Asistencia") return <AttendancePanel />;
   if (section === "Notificaciones") return <NotificationsPanel />;
@@ -379,8 +381,7 @@ function UsersPanel() {
       </Panel>
 
       <Panel actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
-        <Tabs tabs={["Crear", "Editar", "Eliminar", "Capacitaciones"]} active={tab} onChange={setTab} />
-        {tab === "Capacitaciones" ? <BulkTrainingPanel users={users} /> : null}
+        <Tabs tabs={["Crear", "Editar", "Eliminar"]} active={tab} onChange={setTab} />
         <StatusAlert status={status} />
 
         {tab === "Crear" ? (
@@ -650,6 +651,141 @@ function WorkerTrainingProfile({ user, onClose }) {
           </div>
         ) : null}
       </section>
+    </div>
+  );
+}
+
+function TrainingsPanel() {
+  const { data: users = [], loading: usersLoading, error: usersError, reload: reloadUsers } = useAsyncData(selectUsers, [], []);
+  const { data: courses = [], loading: coursesLoading, error: coursesError } = useAsyncData(listTrainingCourses, [], []);
+  const [courseId, setCourseId] = useState("");
+  const [tab, setTab] = useState("Resumen");
+  const [selectedBar, setSelectedBar] = useState("");
+  const [detailSearch, setDetailSearch] = useState("");
+
+  useEffect(() => {
+    if (!courseId && courses.length) setCourseId(courses[0].id_curso);
+  }, [courses, courseId]);
+
+  const { data: statusData, loading: statusLoading, error: statusError, reload: reloadStatus } = useAsyncData(
+    () => (courseId ? getTrainingStatusByCourse(courseId) : Promise.resolve(null)),
+    [courseId],
+    null
+  );
+
+  useEffect(() => {
+    setSelectedBar("");
+    setDetailSearch("");
+  }, [courseId]);
+
+  const selectedCourse = courses.find((course) => course.id_curso === courseId);
+  const statusUsers = statusData?.users || [];
+  const activeUsers = statusUsers.filter((item) => boolValue(item.activo));
+  const completedUsers = activeUsers.filter((item) => item.completado);
+  const pendingUsers = activeUsers.filter((item) => !item.completado);
+  const percent = activeUsers.length ? Math.round((completedUsers.length / activeUsers.length) * 100) : 0;
+
+  const chartData = [
+    { name: "Hicieron", value: completedUsers.length },
+    { name: "No hicieron", value: pendingUsers.length }
+  ];
+
+  const detailUsers = selectedBar === "Hicieron" ? completedUsers : selectedBar === "No hicieron" ? pendingUsers : [];
+  const filteredDetailUsers = detailUsers.filter((item) => (
+    !detailSearch.trim() || normalizeText(`${item.nombre || ""} ${item.email || ""}`).includes(normalizeText(detailSearch))
+  ));
+
+  return (
+    <div className="stack">
+      <Panel
+        title="Capacitaciones"
+        eyebrow="Seguimiento por curso"
+        actions={
+          <Button variant="secondary" icon={RefreshCcw} onClick={() => { reloadUsers(); reloadStatus(); }}>
+            Actualizar
+          </Button>
+        }
+      >
+        <Tabs tabs={["Resumen", "Asignar en lote"]} active={tab} onChange={setTab} />
+
+        {tab === "Resumen" ? (
+          <div className="stack">
+            {coursesError ? <Alert type="error">{coursesError}</Alert> : null}
+            <SelectInput
+              label="Capacitacion"
+              value={courseId}
+              onChange={setCourseId}
+              options={[
+                { value: "", label: coursesLoading ? "Cargando..." : "Selecciona una capacitacion" },
+                ...courses.map((course) => ({ value: course.id_curso, label: `${course.id_curso} - ${course.nombre_curso}` }))
+              ]}
+            />
+            {statusLoading ? <LoadingBlock /> : null}
+            {statusError ? <Alert type="error">{statusError}</Alert> : null}
+            {!statusLoading && !statusError && courseId ? (
+              <>
+                <div className="metrics-row">
+                  <Metric label="Hicieron la capacitacion" value={completedUsers.length} tone="accent" />
+                  <Metric label="No la hicieron" value={pendingUsers.length} />
+                  <Metric label="% completado" value={`${percent}%`} />
+                </div>
+                <div style={{ "--pbi-ink": "#111827", "--pbi-muted": "#5c6b7a", "--pbi-gold": "#eacb2b" }}>
+                  <VerticalBarChart
+                    id="capacitaciones-resumen"
+                    data={chartData}
+                    ariaLabel={`Trabajadores activos que hicieron o no la capacitacion ${selectedCourse?.nombre_curso || courseId}`}
+                    tone="gold"
+                    onSelect={(item) => setSelectedBar((current) => (current === item.name ? "" : item.name))}
+                    selectedNames={selectedBar ? [selectedBar] : []}
+                  />
+                </div>
+                {selectedBar ? (
+                  <div className="stack">
+                    <div className="attendance-search-row">
+                      <label className="field attendance-search-field">
+                        <span className="field-label">Buscar trabajador</span>
+                        <span className="search-input">
+                          <Search aria-hidden="true" />
+                          <input
+                            className="input"
+                            type="search"
+                            value={detailSearch}
+                            onChange={(event) => setDetailSearch(event.target.value)}
+                            placeholder="Nombre o correo"
+                          />
+                        </span>
+                      </label>
+                    </div>
+                    <DataTable
+                      rows={filteredDetailUsers.map((item) => ({
+                        Nombre: item.nombre || "Sin nombre",
+                        Correo: item.email,
+                        Rol: item.rol,
+                        Estado: trainingStatusLabel(item.estado)
+                      }))}
+                      columns={["Nombre", "Correo", "Rol", "Estado"]}
+                      empty="No hay trabajadores en este grupo."
+                    />
+                  </div>
+                ) : (
+                  <Alert>Haz clic en una barra del grafico para ver el listado de trabajadores.</Alert>
+                )}
+              </>
+            ) : null}
+          </div>
+        ) : null}
+
+        {tab === "Asignar en lote" ? (
+          usersLoading ? (
+            <LoadingBlock />
+          ) : (
+            <>
+              {usersError ? <Alert type="error">{usersError}</Alert> : null}
+              <BulkTrainingPanel users={users} />
+            </>
+          )
+        ) : null}
+      </Panel>
     </div>
   );
 }

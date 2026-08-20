@@ -370,6 +370,14 @@ export async function bulkSetTrainingStatus(userIds, courseId, status) {
   return apiResult;
 }
 
+export async function getTrainingStatusByCourse(courseId) {
+  const apiResult = await requestLocalApi(`/api/trainings/status/${encodeURIComponent(courseId)}`, {}, { requiredBackend: true });
+  if (!Array.isArray(apiResult?.users)) {
+    throw new Error("No se pudo cargar el estado de la capacitacion.");
+  }
+  return apiResult;
+}
+
 export async function listTasks() {
   const apiResult = await requestLocalApi("/api/tasks");
   let tasks = apiResult?.tasks;

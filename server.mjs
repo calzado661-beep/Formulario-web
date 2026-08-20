@@ -847,6 +847,49 @@ async function handleReadTrainingCourses(request, response) {
   }
 }
 
+async function handleReadTrainingStatus(request, response, courseId) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const normalizedCourseId = String(courseId || "").trim().toUpperCase().replace(/\s+/g, " ");
+    if (!normalizedCourseId) {
+      sendJson(response, 400, { error: "Capacitacion invalida." });
+      return;
+    }
+
+    const [courseResult, usersResult, progressResult] = await Promise.all([
+      supabase.from("capacitaciones").select("id,id_curso,orden,nombre_curso").eq("id_curso", normalizedCourseId).maybeSingle(),
+      supabase.from("usuarios").select("id,nombre,email,rol,activo").order("nombre", { ascending: true }),
+      supabase.from("usuario_capacitaciones").select("usuario_id,estado,completado,completado_en").eq("curso_id", normalizedCourseId)
+    ]);
+    const firstError = [courseResult.error, usersResult.error, progressResult.error].find(Boolean);
+    if (firstError) throw firstError;
+    if (!courseResult.data) {
+      sendJson(response, 404, { error: "Capacitacion no encontrada." });
+      return;
+    }
+
+    const progressByUser = new Map((progressResult.data || []).map((item) => [Number(item.usuario_id), item]));
+    const users = (usersResult.data || []).map((user) => {
+      const progress = progressByUser.get(Number(user.id));
+      const estado = trainingStateFromProgress(progress);
+      return {
+        id: Number(user.id),
+        nombre: user.nombre,
+        email: user.email,
+        rol: user.rol,
+        activo: user.activo,
+        estado,
+        completado: estado === "finalizado",
+        completado_en: progress?.completado_en || null
+      };
+    });
+
+    sendJson(response, 200, { course: courseResult.data, users });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo cargar el estado de la capacitacion." });
+  }
+}
+
 async function handleBulkUpdateTraining(request, response) {
   try {
     const session = requireSessionRole(request, response, ["administrador"]);
@@ -3889,6 +3932,7 @@ export async function handleRequest(request, response, { serveFiles = true } = {
   const apiPath = decodeURIComponent(apiUrl.pathname);
   const trainingProfileMatch = apiPath.match(/^\/api\/users\/(\d+)\/trainings\/?$/);
   const trainingCourseMatch = apiPath.match(/^\/api\/users\/(\d+)\/trainings\/(CAP\s+\d+)\/?$/i);
+  const trainingStatusMatch = apiPath.match(/^\/api\/trainings\/status\/(CAP\s+\d+)\/?$/i);
   const attendanceReportSettingMatch = apiPath.match(/^\/api\/attendance-report\/settings\/(\d+)\/?$/);
   const attendanceReportSendMatch = apiPath.match(/^\/api\/attendance-report\/settings\/(\d+)\/send\/?$/);
   const activityReportSettingMatch = apiPath.match(/^\/api\/activity-report\/settings\/(\d+)\/?$/);
@@ -3939,6 +3983,11 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (/^\/api\/trainings\/bulk\/?$/.test(apiPath) && request.method === "PUT") {
     await handleBulkUpdateTraining(request, response);
+    return;
+  }
+
+  if (trainingStatusMatch && request.method === "GET") {
+    await handleReadTrainingStatus(request, response, trainingStatusMatch[1]);
     return;
   }
 

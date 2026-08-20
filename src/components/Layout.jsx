@@ -5,6 +5,7 @@ import {
   BellRing,
   CalendarCheck2,
   ClipboardList,
+  GraduationCap,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -23,6 +24,7 @@ const SIDEBAR_STATE_KEY = "formulario_sidebar_collapsed";
 const adminItems = [
   { key: "Dashboard", label: "Dashboard calzado", icon: LayoutDashboard },
   { key: "Usuarios", icon: UsersRound },
+  { key: "Capacitaciones", icon: GraduationCap },
   { key: "Tareas", label: "Tareas y puntajes", icon: ClipboardList },
   { key: "Asistencia", icon: CalendarCheck2 },
   { key: "Notificaciones", icon: BellRing },
