@@ -1884,6 +1884,88 @@ tbody tr:hover {
   transition: width 0.25s ease;
 }
 
+.training-chart {
+  display: flex;
+  gap: 2.5rem;
+  align-items: flex-end;
+  justify-content: center;
+  flex-wrap: wrap;
+  padding: 1.5rem 1.5rem 1.15rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-solid);
+}
+
+.training-chart-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  width: 150px;
+  border: none;
+  background: none;
+  padding: 0.5rem 0.5rem 0;
+  border-radius: 10px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.training-chart-bar:hover,
+.training-chart-bar:focus-visible {
+  background: var(--surface-soft);
+  transform: translateY(-2px);
+  outline: none;
+}
+
+.training-chart-bar-value {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+
+.training-chart-bar-track {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+}
+
+.training-chart-bar-fill {
+  width: 72%;
+  min-height: 2px;
+  border-radius: 10px 10px 4px 4px;
+  transition: height 0.3s ease, filter 0.15s ease;
+}
+
+.training-chart-bar--done .training-chart-bar-fill {
+  background: linear-gradient(180deg, var(--success), var(--accent-dark));
+  box-shadow: 0 0 18px rgba(52, 211, 153, 0.28);
+}
+
+.training-chart-bar--pending .training-chart-bar-fill {
+  background: linear-gradient(180deg, var(--coral), var(--danger));
+  box-shadow: 0 0 18px rgba(244, 63, 94, 0.24);
+}
+
+.training-chart-bar:hover .training-chart-bar-fill,
+.training-chart-bar:focus-visible .training-chart-bar-fill {
+  filter: brightness(1.15);
+}
+
+.training-chart-bar-label {
+  font-size: 0.82rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.training-detail-dialog {
+  width: min(760px, 96vw);
+}
+
 .training-roadmap {
   display: grid;
   gap: 0.7rem;

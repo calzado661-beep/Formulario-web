@@ -59,7 +59,7 @@ import {
 } from "../lib/scoring";
 import { validateAttendanceEdit } from "../lib/operations";
 import { useAsyncData } from "../lib/hooks";
-import FootwearDashboard, { VerticalBarChart } from "./FootwearDashboard";
+import FootwearDashboard from "./FootwearDashboard";
 import {
   Alert,
   Button,
@@ -655,13 +655,111 @@ function WorkerTrainingProfile({ user, onClose }) {
   );
 }
 
+function TrainingBarChart({ completed, pending, ariaLabel, onSelectGroup }) {
+  const maxValue = Math.max(completed, pending, 1);
+  const trackHeight = 168;
+  const bars = [
+    { key: "completado", label: "Hicieron", value: completed, tone: "done" },
+    { key: "pendiente", label: "No hicieron", value: pending, tone: "pending" }
+  ];
+
+  return (
+    <div className="training-chart" role="group" aria-label={ariaLabel}>
+      {bars.map((bar) => {
+        const barHeight = Math.round((bar.value / maxValue) * trackHeight);
+        return (
+          <button
+            key={bar.key}
+            type="button"
+            className={`training-chart-bar training-chart-bar--${bar.tone}`}
+            onClick={() => onSelectGroup(bar.key)}
+            aria-label={`${bar.label}: ${bar.value}. Presiona para ver el listado.`}
+          >
+            <span className="training-chart-bar-value">{bar.value}</span>
+            <span className="training-chart-bar-track" style={{ height: trackHeight }}>
+              <span className="training-chart-bar-fill" style={{ height: `${Math.max(barHeight, bar.value ? 6 : 2)}px` }} />
+            </span>
+            <span className="training-chart-bar-label">{bar.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function TrainingDetailModal({ course, groupLabel, users, onClose }) {
+  const [search, setSearch] = useState("");
+  const filtered = users.filter((item) => (
+    !search.trim() || normalizeText(`${item.nombre || ""} ${item.email || ""}`).includes(normalizeText(search))
+  ));
+
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  return (
+    <div
+      className="worker-profile-overlay"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className="worker-profile-dialog training-detail-dialog" role="dialog" aria-modal="true" aria-label={`${groupLabel} - ${course}`}>
+        <header className="worker-profile-header">
+          <div className="worker-profile-identity">
+            <span className="worker-profile-avatar"><GraduationCap /></span>
+            <div>
+              <p className="eyebrow">{course}</p>
+              <h2>{groupLabel}</h2>
+              <span>{users.length} trabajador(es)</span>
+            </div>
+          </div>
+          <button type="button" className="profile-close" aria-label="Cerrar" onClick={onClose}>
+            <X />
+          </button>
+        </header>
+
+        <label className="field attendance-search-field">
+          <span className="field-label">Buscar trabajador</span>
+          <span className="search-input">
+            <Search aria-hidden="true" />
+            <input
+              className="input"
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Nombre o correo"
+              autoFocus
+            />
+          </span>
+        </label>
+
+        <DataTable
+          rows={filtered.map((item) => ({
+            Nombre: item.nombre || "Sin nombre",
+            Correo: item.email,
+            Rol: item.rol,
+            Estado: trainingStatusLabel(item.estado)
+          }))}
+          columns={["Nombre", "Correo", "Rol", "Estado"]}
+          empty="No hay trabajadores en este grupo."
+        />
+      </section>
+    </div>
+  );
+}
+
 function TrainingsPanel() {
   const { data: users = [], loading: usersLoading, error: usersError, reload: reloadUsers } = useAsyncData(selectUsers, [], []);
   const { data: courses = [], loading: coursesLoading, error: coursesError } = useAsyncData(listTrainingCourses, [], []);
   const [courseId, setCourseId] = useState("");
   const [tab, setTab] = useState("Resumen");
-  const [selectedBar, setSelectedBar] = useState("");
-  const [detailSearch, setDetailSearch] = useState("");
+  const [modalGroup, setModalGroup] = useState("");
 
   useEffect(() => {
     if (!courseId && courses.length) setCourseId(courses[0].id_curso);
@@ -674,8 +772,7 @@ function TrainingsPanel() {
   );
 
   useEffect(() => {
-    setSelectedBar("");
-    setDetailSearch("");
+    setModalGroup("");
   }, [courseId]);
 
   const selectedCourse = courses.find((course) => course.id_curso === courseId);
@@ -684,16 +781,7 @@ function TrainingsPanel() {
   const completedUsers = activeUsers.filter((item) => item.completado);
   const pendingUsers = activeUsers.filter((item) => !item.completado);
   const percent = activeUsers.length ? Math.round((completedUsers.length / activeUsers.length) * 100) : 0;
-
-  const chartData = [
-    { name: "Hicieron", value: completedUsers.length },
-    { name: "No hicieron", value: pendingUsers.length }
-  ];
-
-  const detailUsers = selectedBar === "Hicieron" ? completedUsers : selectedBar === "No hicieron" ? pendingUsers : [];
-  const filteredDetailUsers = detailUsers.filter((item) => (
-    !detailSearch.trim() || normalizeText(`${item.nombre || ""} ${item.email || ""}`).includes(normalizeText(detailSearch))
-  ));
+  const modalUsers = modalGroup === "completado" ? completedUsers : modalGroup === "pendiente" ? pendingUsers : [];
 
   return (
     <div className="stack">
@@ -706,7 +794,7 @@ function TrainingsPanel() {
           </Button>
         }
       >
-        <Tabs tabs={["Resumen", "Asignar en lote"]} active={tab} onChange={setTab} />
+        <Tabs tabs={["Resumen", "Asignar capacitacion"]} active={tab} onChange={setTab} />
 
         {tab === "Resumen" ? (
           <div className="stack">
@@ -729,53 +817,19 @@ function TrainingsPanel() {
                   <Metric label="No la hicieron" value={pendingUsers.length} />
                   <Metric label="% completado" value={`${percent}%`} />
                 </div>
-                <div style={{ "--pbi-ink": "#111827", "--pbi-muted": "#5c6b7a", "--pbi-gold": "#eacb2b" }}>
-                  <VerticalBarChart
-                    id="capacitaciones-resumen"
-                    data={chartData}
-                    ariaLabel={`Trabajadores activos que hicieron o no la capacitacion ${selectedCourse?.nombre_curso || courseId}`}
-                    tone="gold"
-                    onSelect={(item) => setSelectedBar((current) => (current === item.name ? "" : item.name))}
-                    selectedNames={selectedBar ? [selectedBar] : []}
-                  />
-                </div>
-                {selectedBar ? (
-                  <div className="stack">
-                    <div className="attendance-search-row">
-                      <label className="field attendance-search-field">
-                        <span className="field-label">Buscar trabajador</span>
-                        <span className="search-input">
-                          <Search aria-hidden="true" />
-                          <input
-                            className="input"
-                            type="search"
-                            value={detailSearch}
-                            onChange={(event) => setDetailSearch(event.target.value)}
-                            placeholder="Nombre o correo"
-                          />
-                        </span>
-                      </label>
-                    </div>
-                    <DataTable
-                      rows={filteredDetailUsers.map((item) => ({
-                        Nombre: item.nombre || "Sin nombre",
-                        Correo: item.email,
-                        Rol: item.rol,
-                        Estado: trainingStatusLabel(item.estado)
-                      }))}
-                      columns={["Nombre", "Correo", "Rol", "Estado"]}
-                      empty="No hay trabajadores en este grupo."
-                    />
-                  </div>
-                ) : (
-                  <Alert>Haz clic en una barra del grafico para ver el listado de trabajadores.</Alert>
-                )}
+                <TrainingBarChart
+                  completed={completedUsers.length}
+                  pending={pendingUsers.length}
+                  ariaLabel={`Trabajadores activos que hicieron o no la capacitacion ${selectedCourse?.nombre_curso || courseId}`}
+                  onSelectGroup={setModalGroup}
+                />
+                <Alert>Haz clic en una barra para ver el listado de trabajadores en una ventana flotante.</Alert>
               </>
             ) : null}
           </div>
         ) : null}
 
-        {tab === "Asignar en lote" ? (
+        {tab === "Asignar capacitacion" ? (
           usersLoading ? (
             <LoadingBlock />
           ) : (
@@ -786,6 +840,15 @@ function TrainingsPanel() {
           )
         ) : null}
       </Panel>
+
+      {modalGroup ? (
+        <TrainingDetailModal
+          course={selectedCourse ? `${selectedCourse.id_curso} - ${selectedCourse.nombre_curso}` : courseId}
+          groupLabel={modalGroup === "completado" ? "Hicieron la capacitacion" : "No hicieron la capacitacion"}
+          users={modalUsers}
+          onClose={() => setModalGroup("")}
+        />
+      ) : null}
     </div>
   );
 }

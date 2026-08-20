@@ -784,7 +784,7 @@ function splitLabel(label) {
   return [parts[0], parts.slice(1).join(" ")];
 }
 
-export function VerticalBarChart({ id, data, ariaLabel, tone = "gold", onSelect, selectedNames = [] }) {
+function VerticalBarChart({ id, data, ariaLabel, tone = "gold", onSelect, selectedNames = [] }) {
   const [tooltip, setTooltip] = useState(null);
   if (!data.length) return <p className="pbi-chart-empty">No hay datos para el filtro seleccionado.</p>;
 
