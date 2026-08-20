@@ -351,12 +351,51 @@ export async function setUserTrainingStatus(userId, courseId, status) {
   return apiResult;
 }
 
-export async function listTrainingCourses() {
-  const apiResult = await requestLocalApi("/api/trainings/courses", {}, { requiredBackend: true });
+export async function setUserTrainingDetails(userId, courseId, changes) {
+  const apiResult = await requestLocalApi(
+    `/api/users/${encodeURIComponent(userId)}/trainings/${encodeURIComponent(courseId)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(changes)
+    }
+  );
+  if (!apiResult?.user || !Array.isArray(apiResult.trainings)) {
+    throw new Error("No se pudo actualizar la capacitacion.");
+  }
+  return apiResult;
+}
+
+export async function listTrainingCourses(includeInactive = false) {
+  const apiResult = await requestLocalApi(
+    includeInactive ? "/api/trainings/courses?all=1" : "/api/trainings/courses",
+    {},
+    { requiredBackend: true }
+  );
   if (!Array.isArray(apiResult?.courses)) {
     throw new Error("No se pudieron cargar las capacitaciones.");
   }
   return apiResult.courses;
+}
+
+export async function createTrainingCourse(payload) {
+  const apiResult = await requestLocalApi("/api/trainings/courses", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  }, { requiredBackend: true });
+  if (!apiResult?.course) {
+    throw new Error("No se pudo crear la capacitacion.");
+  }
+  return apiResult.course;
+}
+
+export async function deleteTrainingCourse(courseId) {
+  const apiResult = await requestLocalApi(`/api/trainings/courses/${encodeURIComponent(courseId)}`, {
+    method: "DELETE"
+  }, { requiredBackend: true });
+  if (!apiResult || (!apiResult.deleted && !apiResult.archived)) {
+    throw new Error("No se pudo eliminar la capacitacion.");
+  }
+  return apiResult;
 }
 
 export async function bulkSetTrainingStatus(userIds, courseId, status) {
@@ -630,7 +669,8 @@ export async function deleteAmonestacion(amonestacionId) {
 }
 
 export const PENALTY_KEYS = [
-  { clave: "amonestacion", etiqueta: "Amonestacion", descripcion: "Puntos que resta cada amonestacion registrada." },
+  { clave: "carta_amonestacion", etiqueta: "Carta de amonestacion", descripcion: "Puntos que resta cada amonestacion registrada como Carta de amonestacion." },
+  { clave: "memorandum", etiqueta: "Memorandum", descripcion: "Puntos que resta cada amonestacion registrada como Memorandum." },
   { clave: "inasistencia", etiqueta: "Inasistencia", descripcion: "Puntos que resta cada dia marcado como AUSENTE." },
   { clave: "tardanza", etiqueta: "Tardanza", descripcion: "Puntos que resta cada dia marcado como TARDANZA." }
 ];
@@ -690,7 +730,7 @@ export async function getAttendanceForDate(fecha) {
   return result.data || [];
 }
 
-export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"];
+export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"];
 
 export async function markAttendance(usuarioId, fecha, presente, horaLimite, changes = {}) {
   const isPresent = Boolean(presente);

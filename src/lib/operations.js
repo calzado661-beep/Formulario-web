@@ -1,7 +1,7 @@
 import { calculatePoints } from "./scoring.js";
 
-export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"];
-const ATTENDANCE_PRESENT_STATES = ["PUNTUAL", "TARDANZA"];
+export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"];
+const ATTENDANCE_PRESENT_STATES = ["PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO"];
 export const ATTENDANCE_RETIRO_TYPES = ["personal", "apoyo"];
 
 export function validateAttendanceEdit({ estado, retiro_anticipado, motivo_retiro, tipo_retiro }) {
@@ -26,6 +26,9 @@ export function attendanceDisplayState(attendance) {
   const state = String(attendance?.estado || "AUSENTE").toUpperCase();
   if (state === "PUNTUAL") return "Puntual";
   if (state === "TARDANZA") return "Tardanza";
+  if (state === "ASISTIO_MEDIO_DIA") return "Asistió medio día";
+  if (state === "SALIDA_MEDIODIA") return "Salida mediodía";
+  if (state === "APOYO") return "Apoyo";
   if (state === "PERMISO") return "Permiso";
   if (state === "DESCANSO_MEDICO") return "Descanso Médico";
   if (state === "SUSPENSION") return "Suspensión";

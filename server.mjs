@@ -724,7 +724,8 @@ async function selectUserTrainingProfile(userId) {
   const courses = coursesResult.data || [];
   const progressByCourse = new Map((progressResult.data || []).map((item) => [item.curso_id, item]));
   // Las capacitaciones ya no son secuenciales: cualquier curso esta siempre
-  // disponible y se puede cambiar de estado en cualquier orden.
+  // disponible y se puede cambiar de estado en cualquier orden. La duracion y
+  // el encargado se leen del catalogo existente de capacitaciones.
   const trainings = courses.map((course) => {
     const progress = progressByCourse.get(course.id_curso);
     const estado = trainingStateFromProgress(progress);
@@ -737,6 +738,8 @@ async function selectUserTrainingProfile(userId) {
       completado: completed,
       completado_en: progress?.completado_en || null,
       completado_por: progress?.completado_por || null,
+      nro_horas: course.nro_horas,
+      inversion_curso: course.inversion_curso,
       disponible: true,
       puede_cambiar_estado: true,
       puede_desmarcar: completed
@@ -785,8 +788,18 @@ async function handleUpdateUserTraining(request, response, userId, courseId) {
     const body = JSON.parse((await readBody(request)) || "{}");
     const requestedState = normalizeTrainingState(body.estado) ||
       (typeof body.completado === "boolean" ? (body.completado ? "finalizado" : "pendiente") : "");
-    if (!requestedState) {
-      sendJson(response, 400, { error: "El estado debe ser pendiente, en_curso o finalizado." });
+    const hasNroHoras = body.nro_horas !== undefined;
+    const hasEncargado = body.encargado !== undefined || body.inversion_curso !== undefined;
+    if (hasNroHoras && !String(body.nro_horas || "").trim()) {
+      sendJson(response, 400, { error: "La duracion no puede quedar vacia." });
+      return;
+    }
+    if (hasEncargado && !String(body.encargado ?? body.inversion_curso ?? "").trim()) {
+      sendJson(response, 400, { error: "El encargado no puede quedar vacio." });
+      return;
+    }
+    if (!requestedState && !hasNroHoras && !hasEncargado) {
+      sendJson(response, 400, { error: "Indica un estado, una duracion o un encargado para actualizar." });
       return;
     }
 
@@ -806,17 +819,23 @@ async function handleUpdateUserTraining(request, response, userId, courseId) {
     }
 
     // Las capacitaciones ya no son secuenciales: se pueden marcar en
-    // cualquier orden, sin exigir que las anteriores esten finalizadas.
-    const completed = requestedState === "finalizado";
+    // cualquier orden, sin exigir que las anteriores esten finalizadas. Si
+    // solo se edita la duracion/encargado, no se toca el estado ya guardado.
     const progressPayload = {
       usuario_id: userId,
       capacitacion_id: Number(courseResult.data.id),
-      curso_id: courseId,
-      estado: requestedState,
-      completado: completed,
-      completado_en: completed ? new Date().toISOString() : null,
-      completado_por: completed ? Number(session.id) : null
+      curso_id: courseId
     };
+    if (requestedState) {
+      const completed = requestedState === "finalizado";
+      progressPayload.estado = requestedState;
+      progressPayload.completado = completed;
+      progressPayload.completado_en = completed ? new Date().toISOString() : null;
+      progressPayload.completado_por = completed ? Number(session.id) : null;
+    }
+    if (hasNroHoras) progressPayload.nro_horas = String(body.nro_horas).trim();
+    if (hasEncargado) progressPayload.encargado = String(body.encargado ?? body.inversion_curso).trim();
+
     const result = await supabase
       .from("usuario_capacitaciones")
       .upsert(progressPayload, { onConflict: "usuario_id,curso_id" });
@@ -826,26 +845,74 @@ async function handleUpdateUserTraining(request, response, userId, courseId) {
   } catch (error) {
     const rawMessage = error.message || "No se pudo actualizar la capacitacion.";
     const message = /\bestado\b/i.test(rawMessage)
-      ? "Falta aplicar la migracion sql/016_estado_capacitaciones.sql en Supabase."
-      : /capacitacion_id/i.test(rawMessage)
-        ? "Falta aplicar la migracion sql/015_usuario_capacitacion_id.sql en Supabase."
-        : rawMessage;
+        ? "Falta aplicar la migracion sql/016_estado_capacitaciones.sql en Supabase."
+        : /capacitacion_id/i.test(rawMessage)
+          ? "Falta aplicar la migracion sql/015_usuario_capacitacion_id.sql en Supabase."
+          : rawMessage;
     sendJson(response, /debes (?:completar|finalizar)|no puedes (?:desmarcar|retroceder)/i.test(message) ? 409 : 500, { error: message });
   }
 }
 
-async function handleReadTrainingCourses(request, response) {
+async function handleReadTrainingCourses(request, response, includeInactive) {
   try {
     if (!requireAdministrator(request, response)) return;
-    const result = await supabase
+    let query = supabase
       .from("capacitaciones")
       .select("id,id_curso,orden,nombre_curso,competencias,nro_horas,inversion_curso,activo")
-      .eq("activo", true)
       .order("orden", { ascending: true });
+    if (!includeInactive) query = query.eq("activo", true);
+    const result = await query;
     if (result.error) throw result.error;
     sendJson(response, 200, { courses: result.data || [] });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron cargar las capacitaciones." });
+  }
+}
+
+async function handleCreateTrainingCourse(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const nombreCurso = String(body.nombre_curso ?? body.curso ?? "").trim();
+    const competencias = String(body.competencias ?? body.competencia ?? "").trim();
+    if (!nombreCurso) {
+      sendJson(response, 400, { error: "El nombre del curso no puede quedar vacio." });
+      return;
+    }
+    if (!competencias) {
+      sendJson(response, 400, { error: "La competencia no puede quedar vacia." });
+      return;
+    }
+    const activo = body.activo === undefined ? true : Boolean(body.activo);
+
+    const existingResult = await supabase.from("capacitaciones").select("id_curso,orden");
+    if (existingResult.error) throw existingResult.error;
+    const existingRows = existingResult.data || [];
+    const nextNumber = existingRows.reduce((max, row) => {
+      const match = /^CAP\s+(\d+)$/i.exec(String(row.id_curso || "").trim());
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, 0) + 1;
+    const nextOrden = existingRows.reduce((max, row) => Math.max(max, Number(row.orden) || 0), 0) + 1;
+
+    const result = await supabase
+      .from("capacitaciones")
+      .insert({
+        id_curso: `CAP ${nextNumber}`,
+        orden: nextOrden,
+        nombre_curso: nombreCurso,
+        competencias,
+        // La duracion y el encargado ahora se fijan por trabajador; estos
+        // valores solo cubren la columna NOT NULL de la capacitacion base.
+        nro_horas: "Por definir",
+        inversion_curso: "Por definir",
+        activo
+      })
+      .select("id,id_curso,orden,nombre_curso,competencias,nro_horas,inversion_curso,activo")
+      .single();
+    if (result.error) throw result.error;
+    sendJson(response, 201, { course: result.data });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo crear la capacitacion." });
   }
 }
 
@@ -875,6 +942,25 @@ async function handleUpdateTrainingCourse(request, response, courseId) {
       }
       payload.inversion_curso = encargado;
     }
+    if (body.nombre_curso !== undefined || body.curso !== undefined) {
+      const nombreCurso = String(body.nombre_curso ?? body.curso ?? "").trim();
+      if (!nombreCurso) {
+        sendJson(response, 400, { error: "El nombre del curso no puede quedar vacio." });
+        return;
+      }
+      payload.nombre_curso = nombreCurso;
+    }
+    if (body.competencias !== undefined || body.competencia !== undefined) {
+      const competencias = String(body.competencias ?? body.competencia ?? "").trim();
+      if (!competencias) {
+        sendJson(response, 400, { error: "La competencia no puede quedar vacia." });
+        return;
+      }
+      payload.competencias = competencias;
+    }
+    if (body.activo !== undefined) {
+      payload.activo = Boolean(body.activo);
+    }
     if (!Object.keys(payload).length) {
       sendJson(response, 400, { error: "No hay cambios para guardar." });
       return;
@@ -897,6 +983,48 @@ async function handleUpdateTrainingCourse(request, response, courseId) {
   }
 }
 
+async function handleDeleteTrainingCourse(request, response, courseId) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const normalizedCourseId = String(courseId || "").trim().toUpperCase().replace(/\s+/g, " ");
+    if (!normalizedCourseId) {
+      sendJson(response, 400, { error: "Capacitacion invalida." });
+      return;
+    }
+
+    const result = await supabase.from("capacitaciones").delete().eq("id_curso", normalizedCourseId).select("id").maybeSingle();
+    if (result.error) {
+      if (result.error.code === "23503") {
+        const archived = await supabase
+          .from("capacitaciones")
+          .update({ activo: false })
+          .eq("id_curso", normalizedCourseId)
+          .select("id")
+          .maybeSingle();
+        if (archived.error) throw archived.error;
+        if (!archived.data) {
+          sendJson(response, 404, { error: "Capacitacion no encontrada." });
+          return;
+        }
+        sendJson(response, 200, {
+          deleted: false,
+          archived: true,
+          message: "Hay trabajadores con progreso registrado en este curso, asi que se desactivo en lugar de eliminarse."
+        });
+        return;
+      }
+      throw result.error;
+    }
+    if (!result.data) {
+      sendJson(response, 404, { error: "Capacitacion no encontrada." });
+      return;
+    }
+    sendJson(response, 200, { deleted: true, archived: false });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo eliminar la capacitacion." });
+  }
+}
+
 async function handleReadTrainingStatus(request, response, courseId) {
   try {
     if (!requireAdministrator(request, response)) return;
@@ -907,9 +1035,12 @@ async function handleReadTrainingStatus(request, response, courseId) {
     }
 
     const [courseResult, usersResult, progressResult] = await Promise.all([
-      supabase.from("capacitaciones").select("id,id_curso,orden,nombre_curso").eq("id_curso", normalizedCourseId).maybeSingle(),
+      supabase.from("capacitaciones").select("id,id_curso,orden,nombre_curso,nro_horas,inversion_curso").eq("id_curso", normalizedCourseId).maybeSingle(),
       supabase.from("usuarios").select("id,nombre,email,rol,activo").order("nombre", { ascending: true }),
-      supabase.from("usuario_capacitaciones").select("usuario_id,estado,completado,completado_en").eq("curso_id", normalizedCourseId)
+      supabase
+        .from("usuario_capacitaciones")
+        .select("id,usuario_id,capacitacion_id,curso_id,estado,completado,completado_en,completado_por,created_at,updated_at")
+        .eq("curso_id", normalizedCourseId)
     ]);
     const firstError = [courseResult.error, usersResult.error, progressResult.error].find(Boolean);
     if (firstError) throw firstError;
@@ -928,9 +1059,19 @@ async function handleReadTrainingStatus(request, response, courseId) {
         email: user.email,
         rol: user.rol,
         activo: user.activo,
+        registro_id: progress?.id || null,
+        usuario_id: Number(user.id),
+        capacitacion_id: progress?.capacitacion_id || null,
+        curso_id: progress?.curso_id || normalizedCourseId,
         estado,
         completado: estado === "finalizado",
-        completado_en: progress?.completado_en || null
+        completado_en: progress?.completado_en || null,
+        completado_por: progress?.completado_por || null,
+        nro_horas: courseResult.data.nro_horas || null,
+        encargado: courseResult.data.inversion_curso || null,
+        registro_creado_en: progress?.created_at || null,
+        registro_actualizado_en: progress?.updated_at || null,
+        tiene_registro: Boolean(progress)
       };
     });
 
@@ -1815,8 +1956,8 @@ async function handleReadAttendances(request, response) {
   }
 }
 
-const ATTENDANCE_STATES = new Set(["AUSENTE", "PUNTUAL", "TARDANZA", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"]);
-const ATTENDANCE_PRESENT_STATES = new Set(["PUNTUAL", "TARDANZA"]);
+const ATTENDANCE_STATES = new Set(["AUSENTE", "PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"]);
+const ATTENDANCE_PRESENT_STATES = new Set(["PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO"]);
 const ATTENDANCE_RETIRO_TYPES = new Set(["personal", "apoyo"]);
 const ATTENDANCE_TIME_ZONE = "America/Lima";
 
@@ -1898,7 +2039,7 @@ async function handleMarkAttendance(request, response) {
       }
     }
     if (!ATTENDANCE_STATES.has(estado)) {
-      sendJson(response, 400, { error: "El estado de asistencia debe ser Ausente, Puntual, Tardanza, Permiso, Descanso Medico o Suspension." });
+      sendJson(response, 400, { error: "El estado de asistencia seleccionado no es valido." });
       return;
     }
     const present = ATTENDANCE_PRESENT_STATES.has(estado);
@@ -3817,7 +3958,7 @@ async function loadIncidentData() {
     supabase.from("tiendas").select("id,nombre,activo").order("id", { ascending: true }),
     supabase
       .from("incidentes")
-      .select("id,turno,nombre,tarea_id,tarea_nombre,tienda_id,numero_guia,observacion,tipo_error,created_by,created_at,usuario_id")
+      .select("id,turno,nombre,tarea_id,tarea_nombre,tienda_id,numero_guia,observacion,tipo_error,created_by,created_at,usuario_id,area")
       .order("created_at", { ascending: false })
   ]);
 
@@ -3863,9 +4004,11 @@ async function handleCreateIncident(request, response) {
     const turno = String(body.turno || "").trim().toLowerCase();
     const guideNumber = String(body.numero_guia || "").trim();
     const errorType = String(body.tipo_error || "").trim().toUpperCase();
+    const area = String(body.area || "").trim();
+    const isAreaIncident = turno === "incidencia";
 
-    if (![workerId, taskId, storeId].every((id) => Number.isInteger(id) && id > 0)) {
-      sendJson(response, 400, { error: "Operante, tarea y tienda son obligatorios." });
+    if (![taskId, storeId].every((id) => Number.isInteger(id) && id > 0)) {
+      sendJson(response, 400, { error: "Tarea y tienda son obligatorias." });
       return;
     }
     if (!turno || !guideNumber || !errorType) {
@@ -3880,10 +4023,19 @@ async function handleCreateIncident(request, response) {
       sendJson(response, 400, { error: "Selecciona un turno valido." });
       return;
     }
+    const incidentAreas = ["Textil", "Hogar", "Importaciones", "Almacén 1", "Operaciones", "Sistemas", "Tiendas", "Marketing"];
+    if (isAreaIncident && !incidentAreas.includes(area)) {
+      sendJson(response, 400, { error: "Selecciona un area valida." });
+      return;
+    }
+    if (!isAreaIncident && (!Number.isInteger(workerId) || workerId <= 0)) {
+      sendJson(response, 400, { error: "Selecciona un operante activo." });
+      return;
+    }
 
     const tableName = await getTaskTableName();
     const [workerResult, taskResult, storeResult] = await Promise.all([
-      supabase.from("usuarios").select("id,nombre,email,rol,activo").eq("id", workerId).maybeSingle(),
+      isAreaIncident ? Promise.resolve({ data: null, error: null }) : supabase.from("usuarios").select("id,nombre,email,rol,activo").eq("id", workerId).maybeSingle(),
       supabase.from(tableName).select("id,nombre,activo").eq("id", taskId).maybeSingle(),
       supabase.from("tiendas").select("id,nombre,activo").eq("id", storeId).maybeSingle()
     ]);
@@ -3891,7 +4043,7 @@ async function handleCreateIncident(request, response) {
     const worker = workerResult.data;
     const task = taskResult.data;
     const store = storeResult.data;
-    if (workerResult.error || !worker || normalizeRole(worker.rol) !== "operante" || !isActive(worker.activo)) {
+    if (!isAreaIncident && (workerResult.error || !worker || normalizeRole(worker.rol) !== "operante" || !isActive(worker.activo))) {
       sendJson(response, 400, { error: "Selecciona un operante activo." });
       return;
     }
@@ -3906,7 +4058,8 @@ async function handleCreateIncident(request, response) {
 
     const payload = {
       turno,
-      nombre: worker.nombre || worker.email || `Usuario ${worker.id}`,
+      nombre: isAreaIncident ? null : (worker.nombre || worker.email || `Usuario ${worker.id}`),
+      area: isAreaIncident ? area : null,
       tarea_id: task.id,
       tarea_nombre: taskTitle(task),
       tienda_id: store.id,
@@ -3914,7 +4067,7 @@ async function handleCreateIncident(request, response) {
       observacion: body.observacion ? String(body.observacion).trim() : null,
       tipo_error: errorType,
       created_by: Number(session.id),
-      usuario_id: worker.id
+      usuario_id: isAreaIncident ? null : worker.id
     };
     let result = await supabase.from("incidentes").insert(payload).select("*").single();
     if (isPrimaryKeySequenceConflict(result.error)) {
@@ -4031,12 +4184,23 @@ export async function handleRequest(request, response, { serveFiles = true } = {
   }
 
   if (/^\/api\/trainings\/courses\/?$/.test(apiPath) && request.method === "GET") {
-    await handleReadTrainingCourses(request, response);
+    const includeInactive = apiUrl.searchParams.get("incluir_inactivos") === "1" || apiUrl.searchParams.get("all") === "1";
+    await handleReadTrainingCourses(request, response, includeInactive);
+    return;
+  }
+
+  if (/^\/api\/trainings\/courses\/?$/.test(apiPath) && request.method === "POST") {
+    await handleCreateTrainingCourse(request, response);
     return;
   }
 
   if (trainingCourseUpdateMatch && request.method === "PUT") {
     await handleUpdateTrainingCourse(request, response, trainingCourseUpdateMatch[1]);
+    return;
+  }
+
+  if (trainingCourseUpdateMatch && request.method === "DELETE") {
+    await handleDeleteTrainingCourse(request, response, trainingCourseUpdateMatch[1]);
     return;
   }
 

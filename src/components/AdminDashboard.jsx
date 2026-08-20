@@ -7,12 +7,14 @@ import {
   createAttendanceReportSettings,
   createTask,
   createTienda,
+  createTrainingCourse,
   createUser,
   deleteActivityReportSettings,
   deleteAmonestacion,
   deleteAttendanceReportSettings,
   deleteTask,
   deleteTienda,
+  deleteTrainingCourse,
   deleteUser,
   friendlyError,
   getActivityReportPreview,
@@ -58,7 +60,6 @@ import {
   getTaskFieldFlags,
   validateQuantityRanges
 } from "../lib/scoring";
-import { validateAttendanceEdit } from "../lib/operations";
 import { useAsyncData } from "../lib/hooks";
 import FootwearDashboard from "./FootwearDashboard";
 import {
@@ -205,7 +206,6 @@ function UsersPanel() {
     ...emptyPersonalDataFields()
   });
   const [editId, setEditId] = useState("");
-  const [profileUserId, setProfileUserId] = useState("");
   const [editForm, setEditForm] = useState({
     nombre: "",
     email: "",
@@ -221,7 +221,6 @@ function UsersPanel() {
   });
 
   const selectedUser = users.find((user) => String(user.id) === String(editId));
-  const profileUser = users.find((user) => String(user.id) === String(profileUserId));
 
   useEffect(() => {
     if (!selectedUser) return;
@@ -385,14 +384,12 @@ function UsersPanel() {
           </Button>
         }
       >
-        <Alert>Presiona un trabajador para abrir su perfil y revisar sus capacitaciones.</Alert>
         {loading ? (
           <LoadingBlock />
         ) : (
           <DataTable
             rows={rows}
             columns={["Nombre", "Nombres completos", "Usuario", "Rol", "Activo", "Fecha nacimiento", "Telefono emergencia"]}
-            onRowClick={(row) => setProfileUserId(String(row.id))}
             empty={showInactive ? "No hay usuarios registrados." : "No hay usuarios activos. Presiona \"Mostrar inactivos\" para verlos."}
           />
         )}
@@ -528,10 +525,58 @@ function UsersPanel() {
           </div>
         ) : null}
       </Panel>
+    </div>
+  );
+}
 
-      {profileUser ? (
-        <WorkerTrainingProfile user={profileUser} onClose={() => setProfileUserId("")} />
-      ) : null}
+function TrainingDetailFields({ training, onSaved }) {
+  const [nroHoras, setNroHoras] = useState(training.nro_horas || "");
+  const [encargado, setEncargado] = useState(training.inversion_curso || "");
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    setNroHoras(training.nro_horas || "");
+    setEncargado(training.inversion_curso || "");
+  }, [training.nro_horas, training.inversion_curso]);
+
+  const dirty = nroHoras !== (training.nro_horas || "") || encargado !== (training.inversion_curso || "");
+
+  async function handleSave() {
+    setStatus(null);
+    if (!nroHoras.trim()) {
+      setStatus({ type: "error", message: "La duracion no puede quedar vacia." });
+      return;
+    }
+    if (!encargado.trim()) {
+      setStatus({ type: "error", message: "El encargado no puede quedar vacio." });
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateTrainingCourse(training.id_curso, {
+        nro_horas: nroHoras.trim(),
+        encargado: encargado.trim()
+      });
+      onSaved();
+      setStatus({ type: "success", message: "Datos actualizados." });
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="training-detail-fields">
+      <div className="form-grid">
+        <TextInput label="Duracion" value={nroHoras} onChange={setNroHoras} placeholder="Ej. 1 Hora" maxLength={60} />
+        <TextInput label="Encargado" value={encargado} onChange={setEncargado} placeholder="Nombre del encargado" maxLength={150} />
+      </div>
+      {status ? <StatusAlert status={status} /> : null}
+      <div className="form-actions">
+        <Button variant="secondary" icon={Save} loading={saving} disabled={!dirty} onClick={handleSave}>Guardar</Button>
+      </div>
     </div>
   );
 }
@@ -646,12 +691,7 @@ function WorkerTrainingProfile({ user, onClose }) {
                         {locked ? "Pendiente · bloqueada" : trainingStatusLabel(trainingStatus)}
                       </span>
                     </div>
-                    <div className="training-meta">
-                      <span><strong>ID capacitacion:</strong> {training.capacitacion_id}</span>
-                      <span><strong>Competencia:</strong> {training.competencias}</span>
-                      <span><strong>Duracion:</strong> {training.nro_horas}</span>
-                      <span><strong>Encargado:</strong> {training.inversion_curso}</span>
-                    </div>
+                    <TrainingDetailFields training={training} onSaved={reload} />
                     {finalized && training.completado_en ? (
                       <small>Completada el {formatDateTimeLima(training.completado_en)}</small>
                     ) : null}
@@ -740,9 +780,9 @@ function TrainingDetailModal({ course, groupLabel, users, onClose }) {
           <div className="worker-profile-identity">
             <span className="worker-profile-avatar"><GraduationCap /></span>
             <div>
-              <p className="eyebrow">{course}</p>
+              <p className="eyebrow">Registros de usuario_capacitaciones · {course}</p>
               <h2>{groupLabel}</h2>
-              <span>{users.length} trabajador(es)</span>
+              <span>{users.length} trabajador(es) · {users.filter((item) => item.tiene_registro).length} registro(s) creados</span>
             </div>
           </div>
           <button type="button" className="profile-close" aria-label="Cerrar" onClick={onClose}>
@@ -767,12 +807,26 @@ function TrainingDetailModal({ course, groupLabel, users, onClose }) {
 
         <DataTable
           rows={filtered.map((item) => ({
+            "ID registro": item.registro_id || "Sin registro",
+            "ID usuario": item.usuario_id || item.id,
             Nombre: item.nombre || "Sin nombre",
             Correo: item.email,
             Rol: item.rol,
-            Estado: trainingStatusLabel(item.estado)
+            "ID capacitación": item.capacitacion_id || "—",
+            Curso: item.curso_id || "—",
+            Estado: trainingStatusLabel(item.estado),
+            Completado: item.completado ? "Sí" : "No",
+            Duración: item.nro_horas || "—",
+            Encargado: item.encargado || "—",
+            "Completado en": item.completado_en ? formatDateTimeLima(item.completado_en) : "—",
+            "Completado por": item.completado_por || "—",
+            "Registro creado": item.registro_creado_en ? formatDateTimeLima(item.registro_creado_en) : "—",
+            "Última actualización": item.registro_actualizado_en ? formatDateTimeLima(item.registro_actualizado_en) : "—"
           }))}
-          columns={["Nombre", "Correo", "Rol", "Estado"]}
+          columns={[
+            "ID registro", "ID usuario", "Nombre", "Correo", "Rol", "ID capacitación", "Curso", "Estado",
+            "Completado", "Duración", "Encargado", "Completado en", "Completado por", "Registro creado", "Última actualización"
+          ]}
           empty="No hay trabajadores en este grupo."
         />
       </section>
@@ -783,9 +837,22 @@ function TrainingDetailModal({ course, groupLabel, users, onClose }) {
 function TrainingsPanel() {
   const { data: users = [], loading: usersLoading, error: usersError, reload: reloadUsers } = useAsyncData(selectUsers, [], []);
   const { data: courses = [], loading: coursesLoading, error: coursesError, reload: reloadCourses } = useAsyncData(listTrainingCourses, [], []);
+  const {
+    data: allCourses = [],
+    loading: allCoursesLoading,
+    error: allCoursesError,
+    reload: reloadAllCourses
+  } = useAsyncData(() => listTrainingCourses(true), [], []);
   const [courseId, setCourseId] = useState("");
   const [tab, setTab] = useState("Resumen");
   const [modalGroup, setModalGroup] = useState("");
+  const [profileUserId, setProfileUserId] = useState("");
+  const [showInactiveWorkers, setShowInactiveWorkers] = useState(false);
+
+  function reloadCourseData() {
+    reloadCourses();
+    reloadAllCourses();
+  }
 
   useEffect(() => {
     if (!courseId && courses.length) setCourseId(courses[0].id_curso);
@@ -810,8 +877,46 @@ function TrainingsPanel() {
   const percent = activeUsers.length ? Math.round((completedUsers.length / activeUsers.length) * 100) : 0;
   const modalUsers = modalGroup === "completado" ? completedUsers : modalGroup === "en_curso" ? inProgressUsers : modalGroup === "pendiente" ? pendingUsers : [];
 
+  const profileUser = users.find((user) => String(user.id) === String(profileUserId));
+  const inactiveWorkerCount = users.filter((user) => !boolValue(user.activo)).length;
+  const visibleWorkers = showInactiveWorkers ? users : users.filter((user) => boolValue(user.activo));
+  const workerRows = visibleWorkers.map((user) => ({
+    id: user.id,
+    Nombre: user.nombre,
+    Correo: user.email,
+    Rol: normalizeRole(user.rol),
+    Activo: boolValue(user.activo)
+  }));
+
   return (
     <div className="stack">
+      <Panel
+        title="Capacitaciones por trabajador"
+        eyebrow="Perfil individual"
+        actions={
+          <Button
+            variant="secondary"
+            icon={showInactiveWorkers ? EyeOff : Eye}
+            onClick={() => setShowInactiveWorkers((current) => !current)}
+          >
+            {showInactiveWorkers ? "Ocultar inactivos" : `Mostrar inactivos (${inactiveWorkerCount})`}
+          </Button>
+        }
+      >
+        <Alert>Presiona un trabajador para abrir su perfil y revisar sus capacitaciones.</Alert>
+        {usersLoading ? (
+          <LoadingBlock />
+        ) : (
+          <DataTable
+            rows={workerRows}
+            columns={["Nombre", "Correo", "Rol", "Activo"]}
+            onRowClick={(row) => setProfileUserId(String(row.id))}
+            empty={showInactiveWorkers ? "No hay usuarios registrados." : "No hay usuarios activos. Presiona \"Mostrar inactivos\" para verlos."}
+          />
+        )}
+        {usersError ? <Alert type="error">{usersError}</Alert> : null}
+      </Panel>
+
       <Panel
         title="Capacitaciones"
         eyebrow="Seguimiento por curso"
@@ -870,7 +975,12 @@ function TrainingsPanel() {
         ) : null}
 
         {tab === "Cursos" ? (
-          <CoursesEditor courses={courses} loading={coursesLoading} error={coursesError} onReload={reloadCourses} />
+          <CoursesEditor
+            courses={allCourses}
+            loading={allCoursesLoading}
+            error={allCoursesError}
+            onReload={reloadCourseData}
+          />
         ) : null}
       </Panel>
 
@@ -888,33 +998,49 @@ function TrainingsPanel() {
           onClose={() => setModalGroup("")}
         />
       ) : null}
+
+      {profileUser ? (
+        <WorkerTrainingProfile user={profileUser} onClose={() => setProfileUserId("")} />
+      ) : null}
     </div>
   );
 }
 
-function CourseEditCard({ course, onSaved }) {
-  const [nroHoras, setNroHoras] = useState(course.nro_horas || "");
-  const [encargado, setEncargado] = useState(course.inversion_curso || "");
+function CourseCard({ course, onSaved, onDeleted }) {
+  const [nombreCurso, setNombreCurso] = useState(course.nombre_curso || "");
+  const [competencias, setCompetencias] = useState(course.competencias || "");
+  const [activo, setActivo] = useState(boolValue(course.activo));
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [status, setStatus] = useState(null);
 
-  const dirty = nroHoras !== (course.nro_horas || "") || encargado !== (course.inversion_curso || "");
+  useEffect(() => {
+    setNombreCurso(course.nombre_curso || "");
+    setCompetencias(course.competencias || "");
+    setActivo(boolValue(course.activo));
+  }, [course.nombre_curso, course.competencias, course.activo]);
+
+  const dirty =
+    nombreCurso !== (course.nombre_curso || "") ||
+    competencias !== (course.competencias || "") ||
+    activo !== boolValue(course.activo);
 
   async function handleSave() {
     setStatus(null);
-    if (!nroHoras.trim()) {
-      setStatus({ type: "error", message: "La duracion no puede quedar vacia." });
+    if (!nombreCurso.trim()) {
+      setStatus({ type: "error", message: "El curso no puede quedar vacio." });
       return;
     }
-    if (!encargado.trim()) {
-      setStatus({ type: "error", message: "Ingresa el nombre del encargado." });
+    if (!competencias.trim()) {
+      setStatus({ type: "error", message: "La competencia no puede quedar vacia." });
       return;
     }
     setSaving(true);
     try {
       const updated = await updateTrainingCourse(course.id_curso, {
-        nro_horas: nroHoras.trim(),
-        encargado: encargado.trim()
+        nombre_curso: nombreCurso.trim(),
+        competencias: competencias.trim(),
+        activo
       });
       setStatus({ type: "success", message: "Capacitacion actualizada." });
       onSaved(updated);
@@ -925,18 +1051,85 @@ function CourseEditCard({ course, onSaved }) {
     }
   }
 
+  async function handleDelete() {
+    if (!window.confirm(
+      `Eliminar "${course.id_curso} - ${course.nombre_curso}"? Si hay trabajadores con progreso registrado en este curso, se desactivara en su lugar.`
+    )) return;
+    setStatus(null);
+    setDeleting(true);
+    try {
+      const result = await deleteTrainingCourse(course.id_curso);
+      if (result?.archived) {
+        setStatus({
+          type: "warning",
+          message: result.message || "Hay trabajadores con progreso en este curso; se desactivo en lugar de eliminarse."
+        });
+      }
+      onDeleted();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <article className="document-card">
       <h3>{course.id_curso} - {course.nombre_curso}</h3>
       <div className="form-grid">
-        <TextInput label="Duracion" value={nroHoras} onChange={setNroHoras} placeholder="Ej. 1 Hora" maxLength={60} />
-        <TextInput label="Encargado" value={encargado} onChange={setEncargado} placeholder="Nombre del encargado" maxLength={150} />
+        <TextInput label="Curso" value={nombreCurso} onChange={setNombreCurso} maxLength={200} />
+        <TextInput label="Competencia" value={competencias} onChange={setCompetencias} maxLength={150} />
       </div>
+      <CheckboxInput label="Curso activo" checked={activo} onChange={setActivo} />
       <StatusAlert status={status} />
       <div className="form-actions">
-        <Button icon={Save} loading={saving} disabled={!dirty} onClick={handleSave}>Guardar</Button>
+        <Button variant="danger" icon={Trash2} loading={deleting} disabled={saving} onClick={handleDelete}>Eliminar</Button>
+        <Button icon={Save} loading={saving} disabled={!dirty || deleting} onClick={handleSave}>Guardar</Button>
       </div>
     </article>
+  );
+}
+
+function CourseCreateForm({ onCreated }) {
+  const [nombreCurso, setNombreCurso] = useState("");
+  const [competencias, setCompetencias] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  async function handleCreate(event) {
+    event.preventDefault();
+    setStatus(null);
+    if (!nombreCurso.trim()) {
+      setStatus({ type: "error", message: "El curso no puede quedar vacio." });
+      return;
+    }
+    if (!competencias.trim()) {
+      setStatus({ type: "error", message: "La competencia no puede quedar vacia." });
+      return;
+    }
+    setSaving(true);
+    try {
+      const created = await createTrainingCourse({ nombre_curso: nombreCurso.trim(), competencias: competencias.trim() });
+      setNombreCurso("");
+      setCompetencias("");
+      setStatus({ type: "success", message: `${created.id_curso} creado correctamente.` });
+      onCreated(created);
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="form-grid" onSubmit={handleCreate}>
+      <TextInput label="Curso" value={nombreCurso} onChange={setNombreCurso} placeholder="Nombre de la capacitacion" maxLength={200} />
+      <TextInput label="Competencia" value={competencias} onChange={setCompetencias} placeholder="Ej. OBLIGATORIO" maxLength={150} />
+      <div className="form-span">
+        <StatusAlert status={status} />
+        <FormActions saving={saving} saveLabel="Agregar capacitacion" />
+      </div>
+    </form>
   );
 }
 
@@ -953,13 +1146,21 @@ function CoursesEditor({ courses, loading, error, onReload }) {
 
   return (
     <div className="stack">
-      <Alert>Edita la duracion y el encargado de cada capacitacion. Los cambios se aplican para todos los trabajadores.</Alert>
+      <Alert>
+        Agrega, edita o desactiva capacitaciones. La duracion y el encargado ya no son globales: se ajustan por
+        trabajador desde su perfil en la tabla de arriba.
+      </Alert>
+      <article className="document-card">
+        <h3>Nueva capacitacion</h3>
+        <CourseCreateForm onCreated={onReload} />
+      </article>
       <div className="documents-grid">
         {courses.map((course) => (
-          <CourseEditCard
+          <CourseCard
             key={course.id_curso}
             course={courseOverrides[course.id_curso] || course}
             onSaved={handleSaved}
+            onDeleted={onReload}
           />
         ))}
       </div>
@@ -1284,7 +1485,7 @@ function PenaltiesSection() {
         <StatusAlert status={status} />
         <Alert>
           Define cuantos puntos resta cada ocurrencia. Ingresa el valor como numero positivo: se descuenta esa cantidad
-          por cada amonestacion, inasistencia o tardanza.
+          por cada carta de amonestacion, memorandum, inasistencia o tardanza.
         </Alert>
 
         <form className="stack" onSubmit={handleSubmit} noValidate>
@@ -1641,11 +1842,14 @@ const attendanceStateOptions = [
   { value: "AUSENTE", label: "Ausente" },
   { value: "PUNTUAL", label: "Puntual" },
   { value: "TARDANZA", label: "Tardanza" },
+  { value: "ASISTIO_MEDIO_DIA", label: "Asistió medio día" },
+  { value: "SALIDA_MEDIODIA", label: "Salida mediodía" },
+  { value: "APOYO", label: "Apoyo" },
   { value: "PERMISO", label: "Permiso" },
   { value: "DESCANSO_MEDICO", label: "Descanso Médico" },
   { value: "SUSPENSION", label: "Suspensión" }
 ];
-const ATTENDANCE_PRESENT_STATES = new Set(["PUNTUAL", "TARDANZA"]);
+const ATTENDANCE_PRESENT_STATES = new Set(["PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO"]);
 
 function attendanceStateLabel(value) {
   return attendanceStateOptions.find((option) => option.value === value)?.label || "Ausente";
@@ -1658,9 +1862,6 @@ function AttendancePanel() {
   const [attendanceValues, setAttendanceValues] = useState({});
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [editingAttendanceId, setEditingAttendanceId] = useState(null);
-  const [attendanceEdit, setAttendanceEdit] = useState({ estado: "PUNTUAL", retiro_anticipado: false, tipo_retiro: "personal", motivo_retiro: "" });
-  const [savingAttendanceId, setSavingAttendanceId] = useState(null);
   const todayRef = useRef(todayLimaISO());
 
   // Si la pestana se queda abierta y pasa la medianoche (Lima), la marcacion
@@ -1680,16 +1881,15 @@ function AttendancePanel() {
 
   const { data, loading, error, reload } = useAsyncData(
     async () => {
-      const [workers, current, attendances, todayRows] = await Promise.all([
+      const [workers, current, attendances] = await Promise.all([
         listWorkers(),
         getAttendanceForDate(selectedDate),
-        listAttendances(),
-        selectedDate === todayLimaISO() ? Promise.resolve(null) : getAttendanceForDate(todayLimaISO())
+        listAttendances()
       ]);
-      return { workers, current, attendances, today: todayRows || current };
+      return { workers, current, attendances };
     },
     [selectedDate],
-    { workers: [], current: [], today: [], attendances: [] }
+    { workers: [], current: [], attendances: [] }
   );
 
   useEffect(() => {
@@ -1758,7 +1958,6 @@ function AttendancePanel() {
 
   const workerNameById = Object.fromEntries((data.workers || []).map((worker) => [worker.id, worker.nombre || worker.email]));
   const workerEmailById = Object.fromEntries((data.workers || []).map((worker) => [worker.id, worker.email]));
-  const todayAttendances = (data.today || []).filter((item) => String(item.estado || "AUSENTE").toUpperCase() !== "AUSENTE");
   const attendanceRows = (data.attendances || []).map((item) => ({
     Fecha: item.fecha,
     Trabajador: workerNameById[item.usuario_id],
@@ -1770,42 +1969,6 @@ function AttendancePanel() {
     "Retirado en": item.retirado_en ? formatDateTimeLima(item.retirado_en) : "",
     "Marcado en": ATTENDANCE_PRESENT_STATES.has(String(item.estado || "").toUpperCase()) ? formatDateTimeLima(item.created_at) : ""
   }));
-
-  function openAttendanceEditor(item) {
-    setEditingAttendanceId(item.id);
-    setAttendanceEdit({
-      estado: String(item.estado || "PUNTUAL").toUpperCase(),
-      retiro_anticipado: Boolean(item.retiro_anticipado),
-      tipo_retiro: item.tipo_retiro || "personal",
-      motivo_retiro: item.motivo_retiro || ""
-    });
-    setStatus(null);
-  }
-
-  async function saveAttendanceEdit(item) {
-    const validation = validateAttendanceEdit(attendanceEdit);
-    if (validation) {
-      setStatus({ type: "error", message: validation });
-      return;
-    }
-    setSavingAttendanceId(item.id);
-    setStatus(null);
-    try {
-      await markAttendance(item.usuario_id, todayLimaISO(), ATTENDANCE_PRESENT_STATES.has(attendanceEdit.estado), "", {
-        estado: attendanceEdit.estado,
-        retiro_anticipado: attendanceEdit.retiro_anticipado,
-        tipo_retiro: attendanceEdit.retiro_anticipado ? attendanceEdit.tipo_retiro : null,
-        motivo_retiro: attendanceEdit.retiro_anticipado ? attendanceEdit.motivo_retiro.trim() : null
-      });
-      setEditingAttendanceId(null);
-      setStatus({ type: "success", message: "Asistencia del día actualizada correctamente." });
-      reload();
-    } catch (err) {
-      setStatus({ type: "error", message: friendlyError(err) });
-    } finally {
-      setSavingAttendanceId(null);
-    }
-  }
 
   function exportAttendance() {
     const columns = ["Fecha", "Trabajador", "Email", "Estado", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro", "Retirado en", "Marcado en"];
@@ -1829,7 +1992,7 @@ function AttendancePanel() {
         {loading ? <LoadingBlock /> : null}
         {error ? <Alert type="error">{error}</Alert> : null}
         {!loading && !workers.length ? <Alert>No hay trabajadores registrados.</Alert> : null}
-        <Alert>Elige el estado de cada trabajador (Ausente, Puntual, Tardanza, Permiso, Descanso Médico o Suspensión) y guarda los cambios.</Alert>
+        <Alert>Elige un estado para cada trabajador y guarda. El estado quedará seleccionado; si luego eliges otro y vuelves a guardar, se actualizará.</Alert>
         <div className="attendance-search-row">
           <label className="field attendance-search-field">
             <span className="field-label">Buscar trabajador</span>
@@ -1874,96 +2037,6 @@ function AttendancePanel() {
         </div>
         <div className="form-actions">
           <Button icon={Save} loading={saving} onClick={handleSave}>Guardar asistencia</Button>
-        </div>
-      </Panel>
-
-      <Panel title="Asistencias del día de hoy" eyebrow={`Registros editables · ${todayLimaISO()}`}>
-        {!loading && !todayAttendances.length ? <Alert>Todavía no hay trabajadores marcados para este día.</Alert> : null}
-        <div className="attendance-today-list">
-          {todayAttendances.map((item) => {
-            const editing = editingAttendanceId === item.id;
-            return (
-              <article key={item.id} className={`attendance-today-card${editing ? " editing" : ""}`}>
-                <div className="attendance-today-header">
-                  <div>
-                    <strong>{workerNameById[item.usuario_id] || `Usuario ${item.usuario_id}`}</strong>
-                    <small>{workerEmailById[item.usuario_id] || ""}</small>
-                  </div>
-                  <div className="attendance-today-badges">
-                    <span className="notification-status-badge active">{attendanceStateLabel(String(item.estado).toUpperCase())}</span>
-                    {item.retiro_anticipado ? (
-                      <span className="attendance-withdrawal-badge">
-                        Retiro anticipado{item.tipo_retiro === "apoyo" ? " · Apoyo" : " · Personal"}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="attendance-today-meta">
-                  <span><b>Entrada:</b> {formatDateTimeLima(item.created_at) || "Sin hora"}</span>
-                  {item.retiro_anticipado ? <span><b>Retiro:</b> {formatDateTimeLima(item.retirado_en)} · {item.motivo_retiro}</span> : null}
-                </div>
-                {editing ? (
-                  <div className="attendance-edit-grid">
-                    <SelectInput
-                      label="Estado"
-                      value={attendanceEdit.estado}
-                      onChange={(estado) => setAttendanceEdit((current) => ({
-                        ...current,
-                        estado,
-                        ...(ATTENDANCE_PRESENT_STATES.has(estado) ? {} : { retiro_anticipado: false, tipo_retiro: "personal", motivo_retiro: "" })
-                      }))}
-                      options={attendanceStateOptions.filter((option) => option.value !== "AUSENTE")}
-                    />
-                    {ATTENDANCE_PRESENT_STATES.has(attendanceEdit.estado) ? (
-                      <SelectInput
-                        label="Salida"
-                        value={!attendanceEdit.retiro_anticipado ? "normal" : attendanceEdit.tipo_retiro === "apoyo" ? "retiro_apoyo" : "retiro_personal"}
-                        onChange={(value) => setAttendanceEdit((current) => {
-                          if (value === "normal") return { ...current, retiro_anticipado: false, tipo_retiro: "personal", motivo_retiro: "" };
-                          if (value === "retiro_apoyo") {
-                            return {
-                              ...current,
-                              retiro_anticipado: true,
-                              tipo_retiro: "apoyo",
-                              motivo_retiro: current.tipo_retiro === "apoyo" ? current.motivo_retiro : "Apoyo a otra area"
-                            };
-                          }
-                          return {
-                            ...current,
-                            retiro_anticipado: true,
-                            tipo_retiro: "personal",
-                            motivo_retiro: current.tipo_retiro === "apoyo" ? "" : current.motivo_retiro
-                          };
-                        })}
-                        options={[
-                          { value: "normal", label: "Asistencia normal" },
-                          { value: "retiro_apoyo", label: "Retiro anticipado · Fue a apoyar a otra area" },
-                          { value: "retiro_personal", label: "Retiro anticipado · Motivo personal" }
-                        ]}
-                      />
-                    ) : null}
-                    {attendanceEdit.retiro_anticipado ? (
-                      <TextArea
-                        label="Motivo del retiro"
-                        value={attendanceEdit.motivo_retiro}
-                        onChange={(motivo_retiro) => setAttendanceEdit((current) => ({ ...current, motivo_retiro }))}
-                        maxLength={500}
-                        placeholder={attendanceEdit.tipo_retiro === "apoyo" ? "Ej. Apoyo a otra area - Tienda X" : "Indica por qué se retiró antes de tiempo"}
-                      />
-                    ) : null}
-                    <div className="attendance-edit-actions">
-                      <Button variant="secondary" type="button" onClick={() => setEditingAttendanceId(null)}>Cancelar</Button>
-                      <Button type="button" icon={Save} loading={savingAttendanceId === item.id} onClick={() => saveAttendanceEdit(item)}>Guardar cambios</Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="attendance-edit-actions">
-                    <Button variant="secondary" type="button" icon={Pencil} onClick={() => openAttendanceEditor(item)}>Editar asistencia</Button>
-                  </div>
-                )}
-              </article>
-            );
-          })}
         </div>
       </Panel>
 

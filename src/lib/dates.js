@@ -37,6 +37,19 @@ export function formatDateTimeLima(value) {
   }).format(date);
 }
 
+export function formatDateLima(value) {
+  if (!value) return "";
+  const date = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(date.getTime())) return String(value);
+
+  return new Intl.DateTimeFormat("es-PE", {
+    timeZone: LIMA_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(date);
+}
+
 export function birthdayMaxISO() {
   const now = new Date();
   return `${now.getFullYear() - 1}-12-31`;

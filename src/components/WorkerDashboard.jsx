@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BadgeCheck, CheckCircle2, Minus, Plus, RefreshCcw, Save, Timer, X } from "lucide-react";
+import { BadgeCheck, CheckCircle2, FileSpreadsheet, Minus, Plus, RefreshCcw, Save, Search, Timer, X } from "lucide-react";
 import {
   createWorkerActivityLog,
   friendlyError,
@@ -12,6 +12,7 @@ import {
   loadWorkerLiveProgress
 } from "../lib/repository";
 import { formatDateTimeLima, todayLimaISO } from "../lib/dates";
+import { downloadCsv } from "../lib/csv";
 import {
   calculatePoints,
   displayShiftFromQuantity,
@@ -23,6 +24,7 @@ import {
   isFullShift,
   NO_TASK_OPTION,
   normalizeMeasurementType,
+  normalizeText,
   SIMPLE_SHIFT
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
@@ -747,8 +749,16 @@ function TodayLeaderTaskCard({ user }) {
   );
 }
 
+const WORKER_HISTORY_EXPORT_COLUMNS = [
+  "Fecha", "Hora inicio", "Hora fin", "Tarea", "Cantidad", "Tiempo (min)", "Turno",
+  "Cumplimiento", "Puntos", "Tienda", "Guia", "Lote", "Marcas", "Registrado por", "Detalle"
+];
+
 export function WorkerHistory({ user }) {
   const [sortOrder, setSortOrder] = useState("desc");
+  const [taskFilter, setTaskFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [search, setSearch] = useState("");
   const { data, loading, error, reload } = useAsyncData(
     async () => {
       const [logs, tasks, stores] = await Promise.all([listWorkerActivityLogs(user.id), listTasks(), listTiendas()]);
@@ -760,11 +770,37 @@ export function WorkerHistory({ user }) {
 
   const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || `Tarea ${task.id}`]));
   const storeNameById = Object.fromEntries((data.stores || []).map((store) => [store.id, store.nombre]));
-  const sortedLogs = [...(data.logs || [])].sort((a, b) => {
+  const allLogs = data.logs || [];
+  // Se calcula sobre el total sin filtrar, no sobre lo visible: si el
+  // operante filtra "Registrado por: Yo" el aviso no debe desaparecer.
+  const hasLeaderRecords = allLogs.some((log) => log.origen === "jefe_equipo");
+
+  const loggedTaskOptions = [];
+  const seenTaskIds = new Set();
+  allLogs.forEach((log) => {
+    const id = log.tarea_id;
+    if (id === undefined || id === null || seenTaskIds.has(id)) return;
+    seenTaskIds.add(id);
+    loggedTaskOptions.push({ value: String(id), label: taskNameById[id] || log.actividad_nombre || `Tarea ${id}` });
+  });
+  loggedTaskOptions.sort((a, b) => a.label.localeCompare(b.label));
+
+  const filteredLogs = allLogs.filter((log) => {
+    if (taskFilter && String(log.tarea_id) !== taskFilter) return false;
+    if (sourceFilter === "propio" && log.origen === "jefe_equipo") return false;
+    if (sourceFilter === "jefe_equipo" && log.origen !== "jefe_equipo") return false;
+    if (!search.trim()) return true;
+    const taskName = taskNameById[log.tarea_id] || log.actividad_nombre || "";
+    const term = normalizeText(search);
+    return normalizeText(
+      [taskName, log.detalle, log.observacion, log.numero_guia, log.lote, storeNameById[log.tienda_id], log.encargado_nombre].join(" ")
+    ).includes(term);
+  });
+
+  const sortedLogs = [...filteredLogs].sort((a, b) => {
     const diff = logSortTime(a) - logSortTime(b);
     return sortOrder === "asc" ? diff : -diff;
   });
-  const hasLeaderRecords = sortedLogs.some((log) => log.origen === "jefe_equipo");
   const rows = sortedLogs.map((log) => {
     const taskName = taskNameById[log.tarea_id] || log.actividad_nombre || "";
     const [tipoAct] = getActivityCaptureMode(taskName);
@@ -788,13 +824,42 @@ export function WorkerHistory({ user }) {
     };
   });
 
+  function exportToCsv() {
+    downloadCsv(`historial-actividad-${todayLimaISO()}.csv`, WORKER_HISTORY_EXPORT_COLUMNS, rows);
+  }
+
   return (
     <Panel
       title="Historial"
       eyebrow="Registros"
-      actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}
+      actions={
+        <>
+          <Button variant="secondary" icon={FileSpreadsheet} disabled={!rows.length} onClick={exportToCsv}>
+            Exportar a Excel
+          </Button>
+          <Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>
+        </>
+      }
     >
       <div className="toolbar">
+        <SelectInput
+          label="Tarea"
+          value={taskFilter}
+          onChange={setTaskFilter}
+          options={[{ value: "", label: "Todas" }, ...loggedTaskOptions]}
+        />
+        {hasLeaderRecords ? (
+          <SelectInput
+            label="Registrado por"
+            value={sourceFilter}
+            onChange={setSourceFilter}
+            options={[
+              { value: "", label: "Todos" },
+              { value: "propio", label: "Yo" },
+              { value: "jefe_equipo", label: "Jefe de equipo" }
+            ]}
+          />
+        ) : null}
         <SelectInput
           label="Ordenar por fecha"
           value={sortOrder}
@@ -804,10 +869,23 @@ export function WorkerHistory({ user }) {
             { value: "asc", label: "Más antigua primero" }
           ]}
         />
+        <label className="field search-field">
+          <span className="field-label">Buscar</span>
+          <span className="search-input">
+            <Search />
+            <input
+              className="input"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Tarea, tienda, guía, lote, detalle"
+            />
+          </span>
+        </label>
       </div>
       {loading ? <LoadingBlock /> : null}
       {error ? <Alert type="error">{error}</Alert> : null}
-      {!loading && !rows.length ? <Alert>Aun no tienes registros.</Alert> : null}
+      {!loading && !allLogs.length ? <Alert>Aun no tienes registros.</Alert> : null}
+      {!loading && allLogs.length > 0 && !rows.length ? <Alert>Ningun registro coincide con los filtros actuales.</Alert> : null}
       {hasLeaderRecords ? (
         <Alert>Los registros marcados como "Registrado por" un jefe de equipo fueron cargados por tu encargado a nombre tuyo.</Alert>
       ) : null}

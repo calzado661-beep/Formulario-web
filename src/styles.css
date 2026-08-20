@@ -2159,22 +2159,13 @@ tbody tr:hover {
   color: var(--muted);
 }
 
-.training-meta {
+.training-detail-fields {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.training-detail-fields .form-grid {
   gap: 0.55rem;
-}
-
-.training-meta span {
-  padding: 0.48rem 0.58rem;
-  border-radius: 7px;
-  background: rgba(0, 0, 0, 0.18);
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
-.training-meta strong {
-  color: var(--text);
 }
 
 .training-content small {
@@ -2580,64 +2571,176 @@ tbody tr:hover {
   color: var(--muted-2);
 }
 
-/* Ranking: barras horizontales de una sola metrica por tarea. */
+/* Ranking visual por tarea: podio, identidad y progreso relativo al lider. */
 .ranking-chart {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  margin-bottom: 1.15rem;
+  display: grid;
+  gap: 0.65rem;
+  margin: 0.2rem 0 1.3rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(45, 212, 191, 0.18);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 92% 0%, rgba(244, 183, 94, 0.1), transparent 32%),
+    linear-gradient(145deg, rgba(45, 212, 191, 0.055), rgba(7, 18, 15, 0.22));
 }
 
 .ranking-chart-row {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(110px, 0.85fr) 1fr auto;
+  grid-template-columns: 34px 42px minmax(130px, 0.75fr) minmax(150px, 1.25fr) minmax(104px, auto);
   align-items: center;
-  gap: 0.7rem;
-  padding: 0.3rem 0.45rem;
-  border-radius: 8px;
+  gap: 0.75rem;
+  min-height: 66px;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid rgba(222, 238, 226, 0.08);
+  border-radius: 13px;
+  background: rgba(222, 238, 226, 0.025);
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .ranking-chart-row:hover,
 .ranking-chart-row:focus-visible {
-  background: rgba(45, 212, 191, 0.08);
+  z-index: 4;
+  transform: translateY(-2px);
+  border-color: rgba(45, 212, 191, 0.3);
+  background: rgba(45, 212, 191, 0.075);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
   outline: none;
 }
 
+.ranking-chart-rank,
+.ranking-chart-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  font-weight: 950;
+}
+
+.ranking-chart-rank {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(222, 238, 226, 0.13);
+  border-radius: 50%;
+  color: var(--muted-2);
+  background: rgba(222, 238, 226, 0.055);
+  font-size: 0.78rem;
+}
+
+.ranking-chart-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(45, 212, 191, 0.2), rgba(45, 212, 191, 0.07));
+  color: var(--accent);
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+
+.ranking-chart-position-1 {
+  border-color: rgba(244, 183, 94, 0.32);
+  background: linear-gradient(90deg, rgba(244, 183, 94, 0.095), rgba(244, 183, 94, 0.018));
+}
+
+.ranking-chart-position-1 .ranking-chart-rank {
+  border-color: rgba(244, 183, 94, 0.52);
+  background: linear-gradient(145deg, #f6cf79, #c98b31);
+  color: #241504;
+  box-shadow: 0 0 18px rgba(244, 183, 94, 0.2);
+}
+
+.ranking-chart-position-2 .ranking-chart-rank {
+  background: linear-gradient(145deg, #e4ece9, #879a94);
+  color: #13201c;
+}
+
+.ranking-chart-position-3 .ranking-chart-rank {
+  background: linear-gradient(145deg, #db9e6b, #90502d);
+  color: #fff6ef;
+}
+
+.ranking-chart-person,
+.ranking-chart-value {
+  min-width: 0;
+}
+
 .ranking-chart-label {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.82rem;
-  font-weight: 850;
-  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 900;
+  color: var(--text-strong);
+}
+
+.ranking-chart-person small,
+.ranking-chart-measure > small,
+.ranking-chart-value small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.67rem;
+  font-weight: 750;
+}
+
+.ranking-chart-measure {
+  display: grid;
+  gap: 0.28rem;
 }
 
 .ranking-chart-track {
   position: relative;
-  height: 16px;
-  background: rgba(222, 238, 226, 0.06);
-  border-radius: 3px;
+  height: 12px;
+  border: 1px solid rgba(222, 238, 226, 0.06);
+  background: rgba(3, 10, 8, 0.5);
+  border-radius: 999px;
   overflow: hidden;
 }
 
 .ranking-chart-bar {
+  position: relative;
   display: block;
   height: 100%;
   min-width: 4px;
-  background: var(--accent);
-  border-radius: 0 4px 4px 0;
-  transition: width 0.25s ease;
+  overflow: hidden;
+  background: linear-gradient(90deg, #1b9f8d, #43e0c5);
+  border-radius: inherit;
+  box-shadow: 0 0 14px rgba(45, 212, 191, 0.28);
+  transition: width 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ranking-chart-position-1 .ranking-chart-bar {
+  background: linear-gradient(90deg, #bd7928, #f4b75e, #ffd98d);
+  box-shadow: 0 0 16px rgba(244, 183, 94, 0.3);
+}
+
+.ranking-chart-bar i {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 20%, rgba(255, 255, 255, 0.38) 45%, transparent 68%);
+  transform: translateX(-100%);
+  animation: ranking-shine 3.6s ease-in-out infinite;
+}
+
+@keyframes ranking-shine {
+  0%, 55% { transform: translateX(-100%); }
+  85%, 100% { transform: translateX(120%); }
 }
 
 .ranking-chart-value {
-  min-width: 68px;
+  min-width: 104px;
   font-variant-numeric: tabular-nums;
-  font-weight: 900;
-  font-size: 0.8rem;
+  font-weight: 950;
+  font-size: 0.92rem;
   color: var(--text-strong);
   text-align: right;
   white-space: nowrap;
+}
+
+.ranking-chart-value small {
+  margin-bottom: 0.08rem;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .ranking-chart-tooltip {
@@ -2678,9 +2781,43 @@ tbody tr:hover {
 }
 
 @media (max-width: 640px) {
+  .ranking-chart {
+    padding: 0.55rem;
+  }
+
   .ranking-chart-row {
-    grid-template-columns: minmax(90px, 0.8fr) 1fr auto;
-    gap: 0.4rem;
+    grid-template-columns: 30px 38px minmax(0, 1fr) auto;
+    gap: 0.55rem;
+    padding: 0.55rem;
+  }
+
+  .ranking-chart-avatar {
+    width: 38px;
+    height: 38px;
+  }
+
+  .ranking-chart-measure {
+    grid-column: 2 / -1;
+  }
+
+  .ranking-chart-value {
+    min-width: 82px;
+    font-size: 0.82rem;
+  }
+
+  .ranking-chart-value small {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ranking-chart-bar,
+  .ranking-chart-row {
+    transition: none;
+  }
+
+  .ranking-chart-bar i {
+    animation: none;
   }
 }
 
@@ -3719,7 +3856,7 @@ tbody tr:hover {
   }
 
   .training-summary,
-  .training-meta {
+  .training-detail-fields .form-grid {
     grid-template-columns: 1fr;
   }
 

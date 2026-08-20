@@ -21,7 +21,8 @@ import {
   updateGroupLeaderActivity,
   updateGroupLeaderRecord
 } from "../lib/repository";
-import { formatDateTimeLima, limaDateTimeToISO, todayLimaISO, yesterdayLimaISO } from "../lib/dates";
+import { formatDateLima, formatDateTimeLima, limaDateTimeToISO, todayLimaISO, yesterdayLimaISO } from "../lib/dates";
+import { downloadCsv } from "../lib/csv";
 import {
   getGroupLeaderTaskMode,
   getTaskFieldFlags,
@@ -163,6 +164,7 @@ function RankingDashboard({ user }) {
   const [topLimit, setTopLimit] = useState("5");
   const [period, setPeriod] = useState("mes");
   const [metric, setMetric] = useState("rendimiento");
+  const [peopleScope, setPeopleScope] = useState("operantes");
   const [includeInactive, setIncludeInactive] = useState(false);
   const { data, loading, error, reload } = useAsyncData(
     loadGroupLeaderContext,
@@ -213,6 +215,8 @@ function RankingDashboard({ user }) {
       const person = peopleById.get(String(record.trabajador_id));
       if (!person) continue;
       if (!includeInactive && !person.activo) continue;
+      const personRole = normalizeRole(person.rol);
+      if (peopleScope === "operantes" && !["operante", "jefe de equipo", "jefe de grupo"].includes(personRole)) continue;
       const cantidad = Number(record.cantidad || 0);
       const minutos = Number(record.tiempo_minutos || 0);
       if (cantidad <= 0 || minutos <= 0) continue;
@@ -222,7 +226,7 @@ function RankingDashboard({ user }) {
       const workerKey = String(record.trabajador_id);
       const current = workersMap.get(workerKey) || {
         nombre: person.nombre || person.email || `ID ${record.trabajador_id}`,
-        rol: normalizeRole(person.rol),
+        rol: personRole,
         activo: Boolean(person.activo),
         cantidad: 0,
         minutos: 0,
@@ -251,7 +255,7 @@ function RankingDashboard({ user }) {
       return { id: task.id, nombre: getTaskTitle(task) || `Tarea ${task.id}`, ranked };
     }).filter(Boolean);
     return { rankingByTask, hangtagAverages };
-  }, [records, tasks, peopleById, period, includeInactive, currentMonth, today, yesterday, taskId, taskFlagsById]);
+  }, [records, tasks, peopleById, period, peopleScope, includeInactive, currentMonth, today, yesterday, taskId, taskFlagsById]);
   const visibleRanking = taskId ? rankingByTask.filter((item) => String(item.id) === String(taskId)) : rankingByTask;
   const limit = Number(topLimit);
   return (
@@ -295,7 +299,7 @@ function RankingDashboard({ user }) {
         <Alert>
           El rendimiento se calcula como cantidad total entre tiempo total, expresado por hora, sobre las tareas de
           jefe de equipo que registran cantidad y tiempo. Incluye a jefes que hicieron la tarea ellos mismos. Por
-          defecto se muestra el mes actual y solo trabajadores activos: ajusta los filtros para verlo distinto.
+          defecto se muestra el mes actual, operantes y jefes activos: ajusta los filtros para verlo distinto.
         </Alert>
         <div className="history-toolbar">
           <SelectInput
@@ -335,6 +339,15 @@ function RankingDashboard({ user }) {
               { value: "0", label: "Todos" }
             ]}
           />
+          <SelectInput
+            label="Personal"
+            value={peopleScope}
+            onChange={setPeopleScope}
+            options={[
+              { value: "operantes", label: "Operantes y jefes" },
+              { value: "todos", label: "Todos (incluye Otros)" }
+            ]}
+          />
           <CheckboxInput
             label="Incluir inactivos"
             checked={includeInactive}
@@ -351,7 +364,7 @@ function RankingDashboard({ user }) {
         );
         const limited = limit ? ordered.slice(0, limit) : ordered;
         return (
-          <Panel key={item.id} title={item.nombre} eyebrow="Top operantes">
+          <Panel key={item.id} title={item.nombre} eyebrow={peopleScope === "todos" ? "Top de todo el personal" : "Top operantes y jefes"}>
             <RankingBarChart entries={limited} metric={metric} />
             <DataTable
               rows={limited.map((entry, index) => ({
@@ -374,9 +387,8 @@ function RankingDashboard({ user }) {
   );
 }
 
-// Barras horizontales de una sola serie: la longitud compara la metrica
-// elegida entre trabajadores. El hover/foco de cada fila muestra las otras
-// dos metricas sin tener que cambiar el filtro para verlas.
+// Ranking visual: combina posicion, identidad y una barra relativa al lider.
+// El hover/foco conserva el detalle de todas las metricas.
 function RankingBarChart({ entries, metric }) {
   const [hoveredKey, setHoveredKey] = useState(null);
   if (!entries.length) return null;
@@ -386,14 +398,21 @@ function RankingBarChart({ entries, metric }) {
     <div className="ranking-chart" role="list" aria-label={`Ranking por ${spec.label.toLowerCase()}`}>
       {entries.map((entry, index) => {
         const value = spec.getValue(entry);
-        const widthPct = Math.max(2, Math.round((value / maxValue) * 100));
+        const widthPct = Math.max(3, Math.round((value / maxValue) * 100));
         const key = `${entry.nombre}-${index}`;
         const hovered = hoveredKey === key;
+        const initials = String(entry.nombre || "?")
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part[0])
+          .join("")
+          .toUpperCase();
         const clearIfSelf = () => setHoveredKey((current) => (current === key ? null : current));
         return (
           <div
             key={key}
-            className="ranking-chart-row"
+            className={`ranking-chart-row ranking-chart-position-${Math.min(index + 1, 4)}`}
             role="listitem"
             tabIndex={0}
             onMouseEnter={() => setHoveredKey(key)}
@@ -401,11 +420,21 @@ function RankingBarChart({ entries, metric }) {
             onFocus={() => setHoveredKey(key)}
             onBlur={clearIfSelf}
           >
-            <span className="ranking-chart-label" title={entry.nombre}>{entry.nombre}</span>
-            <span className="ranking-chart-track">
-              <span className="ranking-chart-bar" style={{ width: `${widthPct}%` }} />
+            <span className="ranking-chart-rank" aria-label={`Posición ${index + 1}`}>{index + 1}</span>
+            <span className="ranking-chart-avatar" aria-hidden="true">{initials}</span>
+            <span className="ranking-chart-person">
+              <strong className="ranking-chart-label" title={entry.nombre}>{entry.nombre}</strong>
+              <small>{entry.registros} {entry.registros === 1 ? "registro" : "registros"}</small>
             </span>
-            <span className="ranking-chart-value">{spec.format(value)}</span>
+            <span className="ranking-chart-measure">
+              <span className="ranking-chart-track">
+                <span className="ranking-chart-bar" style={{ width: `${widthPct}%` }}>
+                  <i />
+                </span>
+              </span>
+              <small>{widthPct}% del líder</small>
+            </span>
+            <span className="ranking-chart-value"><small>{spec.label}</small>{spec.format(value)}</span>
             {hovered ? (
               <div className="ranking-chart-tooltip" role="tooltip">
                 <strong>{entry.nombre}</strong>
@@ -439,8 +468,10 @@ function HangtagStatTile({ label, value, unit }) {
     </div>
   );
 }
+const INCIDENT_AREAS = ["Textil", "Hogar", "Importaciones", "Almacén 1", "Operaciones", "Sistemas", "Tiendas", "Marketing"];
 var initialIncidentForm = {
   usuario_id: "",
+  area: "",
   turno: "turno regular",
   tarea_id: "",
   tienda_id: "",
@@ -471,8 +502,13 @@ function IncidentDashboard({ user }) {
   async function handleSubmit(event) {
     event.preventDefault();
     setStatus(null);
-    if (!workers.some((worker) => String(worker.id) === String(form.usuario_id))) {
+    const isAreaIncident = form.turno === "incidencia";
+    if (!isAreaIncident && !workers.some((worker) => String(worker.id) === String(form.usuario_id))) {
       setStatus({ type: "error", message: "Selecciona un operante." });
+      return;
+    }
+    if (isAreaIncident && !INCIDENT_AREAS.includes(form.area)) {
+      setStatus({ type: "error", message: "Selecciona un área." });
       return;
     }
     if (!tasks.some((task) => String(task.id) === String(form.tarea_id))) {
@@ -494,7 +530,8 @@ function IncidentDashboard({ user }) {
     setSaving(true);
     try {
       await createIncident({
-        usuario_id: Number(form.usuario_id),
+        usuario_id: isAreaIncident ? null : Number(form.usuario_id),
+        area: isAreaIncident ? form.area : null,
         turno: form.turno,
         tarea_id: Number(form.tarea_id),
         tienda_id: Number(form.tienda_id),
@@ -512,15 +549,14 @@ function IncidentDashboard({ user }) {
     }
   }
   const rows = incidents.map((incident) => ({
-    ID: incident.id,
-    Fecha: formatDateTimeLima(incident.created_at),
-    Turno: incident.turno,
-    Operante: incident.nombre,
+    Fecha: formatDateLima(incident.created_at),
+    "Operante / Área": incident.turno === "incidencia" ? incident.area : incident.nombre,
     Tarea: incident.tarea_nombre,
-    Tienda: incident.tienda_nombre || storeNames.get(Number(incident.tienda_id)) || incident.tienda_id,
     "N\xFAmero de gu\xEDa": incident.numero_guia,
+    Tienda: incident.tienda_nombre || storeNames.get(Number(incident.tienda_id)) || incident.tienda_id,
     "Tipo de error": incident.tipo_error,
-    Observaci\u00F3n: incident.observacion
+    Observaci\u00F3n: incident.observacion,
+    Turno: incident.turno
   }));
   return /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(
     Panel,
@@ -532,9 +568,17 @@ function IncidentDashboard({ user }) {
     loading ? /* @__PURE__ */ React.createElement(LoadingBlock, null) : null,
     error ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, error) : null,
     status ? /* @__PURE__ */ React.createElement(Alert, { type: status.type }, status.message) : null,
-    !loading && !workers.length ? /* @__PURE__ */ React.createElement(Alert, null, "No hay operantes activos.") : null,
+    !loading && !workers.length && form.turno !== "incidencia" ? /* @__PURE__ */ React.createElement(Alert, null, "No hay operantes activos.") : null,
     !loading && !stores.length ? /* @__PURE__ */ React.createElement(Alert, null, "No hay tiendas activas registradas.") : null,
-    /* @__PURE__ */ React.createElement("form", { className: "form-grid", onSubmit: handleSubmit }, /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("form", { className: "form-grid", onSubmit: handleSubmit }, form.turno === "incidencia" ? /* @__PURE__ */ React.createElement(
+      SelectInput,
+      {
+        label: "Área",
+        value: form.area,
+        onChange: (area) => updateForm({ area }),
+        options: [{ value: "", label: "Selecciona un área" }, ...INCIDENT_AREAS]
+      }
+    ) : /* @__PURE__ */ React.createElement(
       SelectInput,
       {
         label: "Operante",
@@ -553,7 +597,7 @@ function IncidentDashboard({ user }) {
       {
         label: "Turno",
         value: form.turno,
-        onChange: (turno) => updateForm({ turno }),
+        onChange: (turno) => updateForm({ turno, usuario_id: turno === "incidencia" ? "" : form.usuario_id, area: turno === "incidencia" ? form.area : "" }),
         options: ["turno regular", "incidencia", "turno extra"]
       }
     ), /* @__PURE__ */ React.createElement(
@@ -1740,10 +1784,6 @@ function isValidTime(value) {
 function isPendingRecord(record) {
   return !record?.hora_fin;
 }
-function csvCell(value) {
-  const text = value === null || value === undefined ? "" : String(value);
-  return /["\n,;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
 // Misma forma para una fila cerrada (record) y una pendiente (activity): los
 // campos vacios de una fila "Sin cerrar" quedan en blanco en vez de mostrar
 // "Pendiente", que solo tiene sentido en pantalla.
@@ -1776,22 +1816,11 @@ const GROUP_HISTORY_EXPORT_COLUMNS = [
 // Exporta exactamente las filas que se ven en la tabla (ya filtradas por
 // operante, tarea, categoria, busqueda y alcance), en el mismo orden.
 function exportGroupHistoryToCsv(rows) {
-  const lines = [GROUP_HISTORY_EXPORT_COLUMNS.map(csvCell).join(",")];
-  rows.forEach((row) => {
+  const exportRows = rows.map((row) => {
     const pending = row.kind === "pending";
-    const exportRow = groupHistoryExportRow(pending ? row.activity : row.record, pending);
-    lines.push(GROUP_HISTORY_EXPORT_COLUMNS.map((column) => csvCell(exportRow[column])).join(","));
+    return groupHistoryExportRow(pending ? row.activity : row.record, pending);
   });
-  // BOM inicial para que Excel detecte UTF-8 y no rompa tildes/enies.
-  const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `historial-tareas-jefe-equipo-${todayLimaISO()}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  downloadCsv(`historial-tareas-jefe-equipo-${todayLimaISO()}.csv`, GROUP_HISTORY_EXPORT_COLUMNS, exportRows);
 }
 function hangtagLabel(value) {
   if (!value) return "-";
