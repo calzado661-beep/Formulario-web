@@ -106,6 +106,18 @@ function boolValue(value) {
   return !["false", "0", "no"].includes(String(value ?? true).trim().toLowerCase());
 }
 
+function calculateAge(birthISO) {
+  if (!birthISO || !/^\d{4}-\d{2}-\d{2}$/.test(birthISO)) return "";
+  const birth = new Date(`${birthISO}T00:00:00`);
+  if (Number.isNaN(birth.getTime())) return "";
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const beforeBirthday = today.getMonth() < birth.getMonth() ||
+    (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate());
+  if (beforeBirthday) age -= 1;
+  return age >= 0 ? String(age) : "";
+}
+
 const sexoOptions = ["Masculino", "Femenino", "Otro"];
 const estadoCivilOptions = ["Soltero(a)", "Casado(a)", "Conviviente", "Divorciado(a)", "Viudo(a)"];
 const gradoAcademicoOptions = ["Primaria", "Secundaria", "Tecnico", "Universitario", "Postgrado"];
@@ -393,9 +405,9 @@ function UsersPanel() {
 
         {tab === "Crear" ? (
           <form className="form-grid" onSubmit={handleCreate}>
-            <TextInput label="Nombre" value={createForm.nombre} onChange={(nombre) => setCreateForm({ ...createForm, nombre })} />
+            <TextInput label="Nombres" value={createForm.nombre} onChange={(nombre) => setCreateForm({ ...createForm, nombre })} />
             <TextInput label="Usuario o correo" value={createForm.email} onChange={(email) => setCreateForm({ ...createForm, email })} />
-            <TextInput label="Nombres completos" value={createForm.nombres_completos} onChange={(nombres_completos) => setCreateForm({ ...createForm, nombres_completos })} maxLength={200} />
+            <TextInput label="Nombres y Apellidos" value={createForm.nombres_completos} onChange={(nombres_completos) => setCreateForm({ ...createForm, nombres_completos })} maxLength={200} />
             <TextInput
               label="Contrasena"
               type="password"
@@ -410,6 +422,7 @@ function UsersPanel() {
               value={createForm.fecha_cumpleanos}
               onChange={(fecha_cumpleanos) => setCreateForm({ ...createForm, fecha_cumpleanos })}
             />
+            <TextInput label="Edad" value={calculateAge(createForm.fecha_cumpleanos)} onChange={() => {}} disabled hint="Se calcula segun la fecha de nacimiento" />
             <TextInput
               label="Sueldo"
               type="number"
@@ -441,9 +454,9 @@ function UsersPanel() {
             />
             {tab === "Editar" && selectedUser ? (
               <form className="form-grid" onSubmit={handleEdit}>
-                <TextInput label="Nombre" value={editForm.nombre} onChange={(nombre) => setEditForm({ ...editForm, nombre })} />
+                <TextInput label="Nombres" value={editForm.nombre} onChange={(nombre) => setEditForm({ ...editForm, nombre })} />
                 <TextInput label="Usuario o correo" value={editForm.email} onChange={(email) => setEditForm({ ...editForm, email })} />
-                <TextInput label="Nombres completos" value={editForm.nombres_completos} onChange={(nombres_completos) => setEditForm({ ...editForm, nombres_completos })} maxLength={200} />
+                <TextInput label="Nombres y Apellidos" value={editForm.nombres_completos} onChange={(nombres_completos) => setEditForm({ ...editForm, nombres_completos })} maxLength={200} />
                 <TextInput
                   label="Fecha de nacimiento"
                   type="date"
@@ -452,6 +465,7 @@ function UsersPanel() {
                   value={editForm.fecha_cumpleanos || ""}
                   onChange={(fecha_cumpleanos) => setEditForm({ ...editForm, fecha_cumpleanos })}
                 />
+                <TextInput label="Edad" value={calculateAge(editForm.fecha_cumpleanos)} onChange={() => {}} disabled hint="Se calcula segun la fecha de nacimiento" />
                 <TextInput
                   label="Sueldo"
                   type="number"
