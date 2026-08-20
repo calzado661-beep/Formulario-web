@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Clock3, Eye, EyeOff, FileSpreadsheet, GraduationCap, LockKeyhole, Mail, Pencil, Plus, RefreshCcw, Save, Search, Send, Trash2, UsersRound, X } from "lucide-react";
+import { AlertTriangle, CalendarCheck2, CheckCircle2, ClipboardCheck, Clock3, Eye, EyeOff, FileSpreadsheet, GraduationCap, LockKeyhole, Mail, Pencil, Plus, RefreshCcw, Save, Search, Send, Trash2, UsersRound, X } from "lucide-react";
 import {
   bulkSetTrainingStatus,
   createActivityReportSettings,
   createAmonestacion,
   createAttendanceReportSettings,
+  createEncargado,
   createTask,
   createTienda,
   createTrainingCourse,
@@ -26,6 +27,7 @@ import {
   listAllActivityLogs,
   listAmonestaciones,
   listAttendances,
+  listEncargados,
   listPenalizaciones,
   listTasks,
   listTiendas,
@@ -37,11 +39,13 @@ import {
   selectUsers,
   sendAttendanceReportNow,
   sendActivityReportNow,
+  setUserTrainingDetails,
   setUserTrainingStatus,
   setTaskScoringRules,
   updateTask,
   updateAttendanceReportSettings,
   updateActivityReportSettings,
+  updateEncargado,
   updateTienda,
   updateTrainingCourse,
   updateUser
@@ -529,7 +533,7 @@ function UsersPanel() {
   );
 }
 
-function TrainingDetailFields({ training, onSaved }) {
+function TrainingDetailFields({ userId, training, encargados, onSaved }) {
   const [nroHoras, setNroHoras] = useState(training.nro_horas || "");
   const [encargado, setEncargado] = useState(training.inversion_curso || "");
   const [saving, setSaving] = useState(false);
@@ -549,12 +553,14 @@ function TrainingDetailFields({ training, onSaved }) {
       return;
     }
     if (!encargado.trim()) {
-      setStatus({ type: "error", message: "El encargado no puede quedar vacio." });
+      setStatus({ type: "error", message: "Selecciona un encargado." });
       return;
     }
     setSaving(true);
     try {
-      await updateTrainingCourse(training.id_curso, {
+      // Esto guarda la duracion/encargado de ESTE trabajador para este
+      // curso (usuario_capacitaciones), no del catalogo global de cursos.
+      await setUserTrainingDetails(userId, training.id_curso, {
         nro_horas: nroHoras.trim(),
         encargado: encargado.trim()
       });
@@ -571,7 +577,16 @@ function TrainingDetailFields({ training, onSaved }) {
     <div className="training-detail-fields">
       <div className="form-grid">
         <TextInput label="Duracion" value={nroHoras} onChange={setNroHoras} placeholder="Ej. 1 Hora" maxLength={60} />
-        <TextInput label="Encargado" value={encargado} onChange={setEncargado} placeholder="Nombre del encargado" maxLength={150} />
+        <SelectInput
+          label="Encargado"
+          value={encargado}
+          onChange={setEncargado}
+          options={[
+            { value: "", label: "Selecciona un encargado" },
+            ...encargados.map((item) => ({ value: item.nombre, label: item.nombre })),
+            ...(encargado && !encargados.some((item) => item.nombre === encargado) ? [{ value: encargado, label: `${encargado} (inactivo)` }] : [])
+          ]}
+        />
       </div>
       {status ? <StatusAlert status={status} /> : null}
       <div className="form-actions">
@@ -587,6 +602,7 @@ function WorkerTrainingProfile({ user, onClose }) {
     [user.id],
     null
   );
+  const { data: encargados = [] } = useAsyncData(listEncargados, [], []);
   const [savingCourse, setSavingCourse] = useState("");
   const [status, setStatus] = useState(null);
 
@@ -691,7 +707,7 @@ function WorkerTrainingProfile({ user, onClose }) {
                         {locked ? "Pendiente · bloqueada" : trainingStatusLabel(trainingStatus)}
                       </span>
                     </div>
-                    <TrainingDetailFields training={training} onSaved={reload} />
+                    <TrainingDetailFields userId={user.id} training={training} encargados={encargados} onSaved={reload} />
                     {finalized && training.completado_en ? (
                       <small>Completada el {formatDateTimeLima(training.completado_en)}</small>
                     ) : null}
@@ -1133,6 +1149,119 @@ function CourseCreateForm({ onCreated }) {
   );
 }
 
+function EncargadoCard({ encargado, onSaved }) {
+  const [nombre, setNombre] = useState(encargado.nombre || "");
+  const [activo, setActivo] = useState(boolValue(encargado.activo));
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    setNombre(encargado.nombre || "");
+    setActivo(boolValue(encargado.activo));
+  }, [encargado.nombre, encargado.activo]);
+
+  const dirty = nombre !== (encargado.nombre || "") || activo !== boolValue(encargado.activo);
+
+  async function handleSave() {
+    setStatus(null);
+    if (!nombre.trim()) {
+      setStatus({ type: "error", message: "El nombre no puede quedar vacio." });
+      return;
+    }
+    setSaving(true);
+    try {
+      const updated = await updateEncargado(encargado.id, { nombre: nombre.trim(), activo });
+      setStatus({ type: "success", message: "Encargado actualizado." });
+      onSaved(updated);
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <article className="document-card">
+      <TextInput label="Nombre" value={nombre} onChange={setNombre} maxLength={150} />
+      <CheckboxInput label="Encargado activo" checked={activo} onChange={setActivo} />
+      <StatusAlert status={status} />
+      <div className="form-actions">
+        <Button icon={Save} loading={saving} disabled={!dirty} onClick={handleSave}>Guardar</Button>
+      </div>
+    </article>
+  );
+}
+
+function EncargadoCreateForm({ onCreated }) {
+  const [nombre, setNombre] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  async function handleCreate(event) {
+    event.preventDefault();
+    setStatus(null);
+    if (!nombre.trim()) {
+      setStatus({ type: "error", message: "El nombre no puede quedar vacio." });
+      return;
+    }
+    setSaving(true);
+    try {
+      const created = await createEncargado(nombre.trim());
+      setNombre("");
+      setStatus({ type: "success", message: `${created.nombre} agregado correctamente.` });
+      onCreated(created);
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="form-grid" onSubmit={handleCreate}>
+      <TextInput label="Nombre del encargado" value={nombre} onChange={setNombre} placeholder="Ej. Gisell Tejada" maxLength={150} />
+      <div className="form-span">
+        <StatusAlert status={status} />
+        <FormActions saving={saving} saveLabel="Agregar encargado" />
+      </div>
+    </form>
+  );
+}
+
+function EncargadosManager() {
+  const { data: encargados = [], loading, error, reload } = useAsyncData(() => listEncargados(true), [], []);
+  const [overrides, setOverrides] = useState({});
+
+  function handleSaved(updated) {
+    setOverrides((current) => ({ ...current, [updated.id]: updated }));
+    reload();
+  }
+
+  return (
+    <div className="stack">
+      <Alert>
+        Administra la lista de encargados disponibles. Al asignar capacitaciones en lote es obligatorio elegir uno de
+        esta lista.
+      </Alert>
+      {error ? <Alert type="error">{error}</Alert> : null}
+      <article className="document-card">
+        <h3>Nuevo encargado</h3>
+        <EncargadoCreateForm onCreated={reload} />
+      </article>
+      {loading ? (
+        <LoadingBlock />
+      ) : (
+        <div className="documents-grid">
+          {encargados.map((item) => (
+            <EncargadoCard key={item.id} encargado={overrides[item.id] || item} onSaved={handleSaved} />
+          ))}
+          {!encargados.length ? <Alert>Todavia no hay encargados registrados.</Alert> : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CoursesEditor({ courses, loading, error, onReload }) {
   const [courseOverrides, setCourseOverrides] = useState({});
 
@@ -1148,7 +1277,7 @@ function CoursesEditor({ courses, loading, error, onReload }) {
     <div className="stack">
       <Alert>
         Agrega, edita o desactiva capacitaciones. La duracion y el encargado ya no son globales: se ajustan por
-        trabajador desde su perfil en la tabla de arriba.
+        trabajador desde su perfil en la tabla de arriba, o se fijan al asignar en lote.
       </Alert>
       <article className="document-card">
         <h3>Nueva capacitacion</h3>
@@ -1164,6 +1293,10 @@ function CoursesEditor({ courses, loading, error, onReload }) {
           />
         ))}
       </div>
+
+      <Panel title="Encargados" eyebrow="Catalogo para asignar capacitaciones">
+        <EncargadosManager />
+      </Panel>
     </div>
   );
 }
@@ -1180,8 +1313,11 @@ const BULK_SOURCE_STATUS_BY_TARGET = {
 
 function BulkTrainingPanel({ users }) {
   const { data: courses = [], loading: coursesLoading, error: coursesError } = useAsyncData(listTrainingCourses, [], []);
+  const { data: encargados = [], loading: encargadosLoading, error: encargadosError } = useAsyncData(listEncargados, [], []);
   const [courseId, setCourseId] = useState("");
   const [estado, setEstado] = useState("finalizado");
+  const [encargado, setEncargado] = useState("");
+  const [nroHoras, setNroHoras] = useState("");
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("activos");
@@ -1235,16 +1371,23 @@ function BulkTrainingPanel({ users }) {
       setStatus({ type: "error", message: "Selecciona una capacitacion." });
       return;
     }
+    if (!encargado) {
+      setStatus({ type: "error", message: "Selecciona un encargado." });
+      return;
+    }
     if (!selectedIds.size) {
       setStatus({ type: "error", message: "Selecciona al menos un trabajador." });
       return;
     }
     setSaving(true);
     try {
-      const result = await bulkSetTrainingStatus([...selectedIds].map(Number), courseId, estado);
+      const result = await bulkSetTrainingStatus([...selectedIds].map(Number), courseId, estado, {
+        encargado,
+        nroHoras: nroHoras.trim()
+      });
       setStatus({
         type: "success",
-        message: `${result.updated} trabajador(es) quedaron con ${courseId} en "${trainingStatusLabel(estado).toLowerCase()}".`
+        message: `${result.updated} trabajador(es) quedaron con ${courseId} en "${trainingStatusLabel(estado).toLowerCase()}" (encargado: ${encargado}).`
       });
       setSelectedIds(new Set());
     } catch (err) {
@@ -1261,6 +1404,7 @@ function BulkTrainingPanel({ users }) {
         ya no son secuenciales: se pueden completar en cualquier orden, sin depender de las anteriores.
       </Alert>
       {coursesError ? <Alert type="error">{coursesError}</Alert> : null}
+      {encargadosError ? <Alert type="error">{encargadosError}</Alert> : null}
       <div className="form-grid">
         <SelectInput
           label="Capacitacion"
@@ -1272,6 +1416,17 @@ function BulkTrainingPanel({ users }) {
           ]}
         />
         <SelectInput label="Nuevo estado" value={estado} onChange={setEstado} options={trainingStatusOptions} />
+        <SelectInput
+          label="Encargado (obligatorio)"
+          value={encargado}
+          onChange={setEncargado}
+          options={[
+            { value: "", label: encargadosLoading ? "Cargando..." : "Selecciona un encargado" },
+            ...encargados.map((item) => ({ value: item.nombre, label: item.nombre }))
+          ]}
+          hint={!encargadosLoading && !encargados.length ? "No hay encargados registrados. Agrega uno en la pestana Cursos." : undefined}
+        />
+        <TextInput label="Duracion (opcional)" value={nroHoras} onChange={setNroHoras} placeholder="Ej. 1 Hora" maxLength={60} />
       </div>
       <div className="attendance-search-row">
         <label className="field attendance-search-field">
@@ -3924,17 +4079,23 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
   ));
 
   const datasets = [
-    { key: "usuarios", label: "Usuarios", description: `${userRows.length} trabajador(es) registrados`, filename: "usuarios.xls", columns: userColumns, rows: userRows },
-    { key: "asistencias", label: "Asistencias", description: `${attendanceRows.length} registro(s) de asistencia`, filename: "asistencias.xls", columns: attendanceColumns, rows: attendanceRows },
-    { key: "actividades", label: "Actividades y puntos", description: `${activityRows.length} registro(s) de actividad`, filename: "actividades.xls", columns: activityColumns, rows: activityRows },
-    { key: "amonestaciones", label: "Amonestaciones", description: `${warningRows.length} documento(s)`, filename: "amonestaciones.xls", columns: warningColumns, rows: warningRows },
-    { key: "capacitaciones", label: "Capacitaciones", description: `${trainingRows.length} registro(s)`, filename: "capacitaciones.xls", columns: trainingColumns, rows: trainingRows }
+    { key: "usuarios", label: "Usuarios", Icon: UsersRound, description: `${userRows.length} trabajador(es) registrados`, filename: "usuarios.xls", columns: userColumns, rows: userRows },
+    { key: "asistencias", label: "Asistencias", Icon: CalendarCheck2, description: `${attendanceRows.length} registro(s) de asistencia`, filename: "asistencias.xls", columns: attendanceColumns, rows: attendanceRows },
+    { key: "actividades", label: "Actividades y puntos", Icon: ClipboardCheck, description: `${activityRows.length} registro(s) de actividad`, filename: "actividades.xls", columns: activityColumns, rows: activityRows },
+    { key: "amonestaciones", label: "Amonestaciones", Icon: AlertTriangle, description: `${warningRows.length} documento(s)`, filename: "amonestaciones.xls", columns: warningColumns, rows: warningRows },
+    { key: "capacitaciones", label: "Capacitaciones", Icon: GraduationCap, description: `${trainingRows.length} registro(s)`, filename: "capacitaciones.xls", columns: trainingColumns, rows: trainingRows }
   ];
+  const totalRows = datasets.reduce((sum, dataset) => sum + dataset.rows.length, 0);
 
   return (
     <div className="stack">
-      <Alert>Descarga la informacion del sistema en Excel, por area o todo junto en un solo clic.</Alert>
-      <div className="form-actions">
+      <div className="documents-hero">
+        <div className="documents-hero-icon"><FileSpreadsheet /></div>
+        <div className="documents-hero-copy">
+          <span className="documents-hero-eyebrow">Exportacion completa</span>
+          <h3>Exporta toda la informacion en Excel</h3>
+          <p>{totalRows} registros listos, repartidos en {datasets.length} archivos: usuarios, asistencias, actividades, amonestaciones y capacitaciones.</p>
+        </div>
         <Button icon={FileSpreadsheet} loading={exporting} onClick={() => onExportAll(datasets)}>
           Exportar todo en Excel
         </Button>
@@ -3942,6 +4103,7 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
       <div className="documents-grid">
         {datasets.map((dataset) => (
           <article key={dataset.key} className="document-card">
+            <div className="document-card-icon"><dataset.Icon /></div>
             <h3>{dataset.label}</h3>
             <p>{dataset.description}</p>
             <Button

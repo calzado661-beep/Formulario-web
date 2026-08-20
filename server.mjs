@@ -699,7 +699,7 @@ async function selectUserTrainingProfile(userId) {
       .order("orden", { ascending: true }),
     supabase
       .from("usuario_capacitaciones")
-      .select("capacitacion_id,curso_id,estado,completado,completado_en,completado_por")
+      .select("capacitacion_id,curso_id,estado,completado,completado_en,completado_por,duracion,encargado")
       .eq("usuario_id", userId)
   ]);
 
@@ -725,7 +725,9 @@ async function selectUserTrainingProfile(userId) {
   const progressByCourse = new Map((progressResult.data || []).map((item) => [item.curso_id, item]));
   // Las capacitaciones ya no son secuenciales: cualquier curso esta siempre
   // disponible y se puede cambiar de estado en cualquier orden. La duracion y
-  // el encargado se leen del catalogo existente de capacitaciones.
+  // el encargado se fijan por trabajador (usuario_capacitaciones.duracion /
+  // .encargado); si el trabajador no tiene su propio valor, se usa el del
+  // catalogo de capacitaciones como base.
   const trainings = courses.map((course) => {
     const progress = progressByCourse.get(course.id_curso);
     const estado = trainingStateFromProgress(progress);
@@ -738,8 +740,8 @@ async function selectUserTrainingProfile(userId) {
       completado: completed,
       completado_en: progress?.completado_en || null,
       completado_por: progress?.completado_por || null,
-      nro_horas: course.nro_horas,
-      inversion_curso: course.inversion_curso,
+      nro_horas: progress?.duracion || course.nro_horas,
+      inversion_curso: progress?.encargado || course.inversion_curso,
       disponible: true,
       puede_cambiar_estado: true,
       puede_desmarcar: completed
@@ -833,7 +835,10 @@ async function handleUpdateUserTraining(request, response, userId, courseId) {
       progressPayload.completado_en = completed ? new Date().toISOString() : null;
       progressPayload.completado_por = completed ? Number(session.id) : null;
     }
-    if (hasNroHoras) progressPayload.nro_horas = String(body.nro_horas).trim();
+    // La tabla usuario_capacitaciones guarda la duracion en la columna
+    // "duracion" (no "nro_horas": ese nombre solo existe en la tabla
+    // capacitaciones, que es el catalogo global).
+    if (hasNroHoras) progressPayload.duracion = String(body.nro_horas).trim();
     if (hasEncargado) progressPayload.encargado = String(body.encargado ?? body.inversion_curso).trim();
 
     const result = await supabase
@@ -1025,6 +1030,91 @@ async function handleDeleteTrainingCourse(request, response, courseId) {
   }
 }
 
+async function handleReadEncargados(request, response, includeInactive) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    let query = supabase.from("capacitacion_encargados").select("id,nombre,activo,created_at").order("nombre", { ascending: true });
+    if (!includeInactive) query = query.eq("activo", true);
+    const result = await query;
+    if (result.error) throw result.error;
+    sendJson(response, 200, { encargados: result.data || [] });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudieron cargar los encargados." });
+  }
+}
+
+async function handleCreateEncargado(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const nombre = String(body.nombre || "").trim();
+    if (!nombre) {
+      sendJson(response, 400, { error: "El nombre del encargado no puede quedar vacio." });
+      return;
+    }
+    const result = await supabase
+      .from("capacitacion_encargados")
+      .insert({ nombre, activo: true })
+      .select("id,nombre,activo,created_at")
+      .single();
+    if (result.error) {
+      if (result.error.code === "23505") {
+        sendJson(response, 409, { error: "Ya existe un encargado con ese nombre." });
+        return;
+      }
+      throw result.error;
+    }
+    sendJson(response, 201, { encargado: result.data });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo crear el encargado." });
+  }
+}
+
+async function handleUpdateEncargado(request, response, encargadoId) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    if (!Number.isInteger(encargadoId) || encargadoId <= 0) {
+      sendJson(response, 400, { error: "Encargado invalido." });
+      return;
+    }
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const payload = {};
+    if (body.nombre !== undefined) {
+      const nombre = String(body.nombre || "").trim();
+      if (!nombre) {
+        sendJson(response, 400, { error: "El nombre del encargado no puede quedar vacio." });
+        return;
+      }
+      payload.nombre = nombre;
+    }
+    if (body.activo !== undefined) payload.activo = Boolean(body.activo);
+    if (!Object.keys(payload).length) {
+      sendJson(response, 400, { error: "No hay cambios para guardar." });
+      return;
+    }
+    const result = await supabase
+      .from("capacitacion_encargados")
+      .update(payload)
+      .eq("id", encargadoId)
+      .select("id,nombre,activo,created_at")
+      .maybeSingle();
+    if (result.error) {
+      if (result.error.code === "23505") {
+        sendJson(response, 409, { error: "Ya existe un encargado con ese nombre." });
+        return;
+      }
+      throw result.error;
+    }
+    if (!result.data) {
+      sendJson(response, 404, { error: "Encargado no encontrado." });
+      return;
+    }
+    sendJson(response, 200, { encargado: result.data });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo actualizar el encargado." });
+  }
+}
+
 async function handleReadTrainingStatus(request, response, courseId) {
   try {
     if (!requireAdministrator(request, response)) return;
@@ -1039,7 +1129,7 @@ async function handleReadTrainingStatus(request, response, courseId) {
       supabase.from("usuarios").select("id,nombre,email,rol,activo").order("nombre", { ascending: true }),
       supabase
         .from("usuario_capacitaciones")
-        .select("id,usuario_id,capacitacion_id,curso_id,estado,completado,completado_en,completado_por,created_at,updated_at")
+        .select("id,usuario_id,capacitacion_id,curso_id,estado,completado,completado_en,completado_por,created_at,updated_at,duracion,encargado")
         .eq("curso_id", normalizedCourseId)
     ]);
     const firstError = [courseResult.error, usersResult.error, progressResult.error].find(Boolean);
@@ -1067,8 +1157,8 @@ async function handleReadTrainingStatus(request, response, courseId) {
         completado: estado === "finalizado",
         completado_en: progress?.completado_en || null,
         completado_por: progress?.completado_por || null,
-        nro_horas: courseResult.data.nro_horas || null,
-        encargado: courseResult.data.inversion_curso || null,
+        nro_horas: progress?.duracion || courseResult.data.nro_horas || null,
+        encargado: progress?.encargado || courseResult.data.inversion_curso || null,
         registro_creado_en: progress?.created_at || null,
         registro_actualizado_en: progress?.updated_at || null,
         tiene_registro: Boolean(progress)
@@ -1088,6 +1178,8 @@ async function handleBulkUpdateTraining(request, response) {
     const body = JSON.parse((await readBody(request)) || "{}");
     const courseId = String(body.curso_id || "").trim().toUpperCase().replace(/\s+/g, " ");
     const requestedState = normalizeTrainingState(body.estado);
+    const encargado = String(body.encargado || "").trim();
+    const nroHoras = String(body.nro_horas || "").trim();
     const userIds = Array.from(new Set((Array.isArray(body.usuario_ids) ? body.usuario_ids : [])
       .map((id) => Number(id))
       .filter((id) => Number.isInteger(id) && id > 0)));
@@ -1104,16 +1196,23 @@ async function handleBulkUpdateTraining(request, response) {
       sendJson(response, 400, { error: "Selecciona al menos un trabajador." });
       return;
     }
+    if (!encargado) {
+      sendJson(response, 400, { error: "Selecciona un encargado." });
+      return;
+    }
 
-    const courseResult = await supabase
-      .from("capacitaciones")
-      .select("id,id_curso")
-      .eq("id_curso", courseId)
-      .eq("activo", true)
-      .maybeSingle();
+    const [courseResult, encargadoResult] = await Promise.all([
+      supabase.from("capacitaciones").select("id,id_curso").eq("id_curso", courseId).eq("activo", true).maybeSingle(),
+      supabase.from("capacitacion_encargados").select("id").eq("nombre", encargado).eq("activo", true).maybeSingle()
+    ]);
     if (courseResult.error) throw courseResult.error;
+    if (encargadoResult.error) throw encargadoResult.error;
     if (!courseResult.data) {
       sendJson(response, 404, { error: "Capacitacion no encontrada." });
+      return;
+    }
+    if (!encargadoResult.data) {
+      sendJson(response, 404, { error: "El encargado seleccionado no existe o esta inactivo." });
       return;
     }
 
@@ -1131,7 +1230,9 @@ async function handleBulkUpdateTraining(request, response) {
       estado: requestedState,
       completado: completed,
       completado_en: completed ? nowIso : null,
-      completado_por: completed ? Number(session.id) : null
+      completado_por: completed ? Number(session.id) : null,
+      encargado,
+      ...(nroHoras ? { duracion: nroHoras } : {})
     }));
 
     if (rows.length) {
@@ -4140,6 +4241,7 @@ export async function handleRequest(request, response, { serveFiles = true } = {
   const trainingCourseMatch = apiPath.match(/^\/api\/users\/(\d+)\/trainings\/(CAP\s+\d+)\/?$/i);
   const trainingStatusMatch = apiPath.match(/^\/api\/trainings\/status\/(CAP\s+\d+)\/?$/i);
   const trainingCourseUpdateMatch = apiPath.match(/^\/api\/trainings\/courses\/(CAP\s+\d+)\/?$/i);
+  const encargadoUpdateMatch = apiPath.match(/^\/api\/trainings\/encargados\/(\d+)\/?$/);
   const attendanceReportSettingMatch = apiPath.match(/^\/api\/attendance-report\/settings\/(\d+)\/?$/);
   const attendanceReportSendMatch = apiPath.match(/^\/api\/attendance-report\/settings\/(\d+)\/send\/?$/);
   const activityReportSettingMatch = apiPath.match(/^\/api\/activity-report\/settings\/(\d+)\/?$/);
@@ -4211,6 +4313,22 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (trainingStatusMatch && request.method === "GET") {
     await handleReadTrainingStatus(request, response, trainingStatusMatch[1]);
+    return;
+  }
+
+  if (/^\/api\/trainings\/encargados\/?$/.test(apiPath) && request.method === "GET") {
+    const includeInactive = apiUrl.searchParams.get("all") === "1";
+    await handleReadEncargados(request, response, includeInactive);
+    return;
+  }
+
+  if (/^\/api\/trainings\/encargados\/?$/.test(apiPath) && request.method === "POST") {
+    await handleCreateEncargado(request, response);
+    return;
+  }
+
+  if (encargadoUpdateMatch && request.method === "PATCH") {
+    await handleUpdateEncargado(request, response, Number(encargadoUpdateMatch[1]));
     return;
   }
 

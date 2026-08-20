@@ -398,10 +398,16 @@ export async function deleteTrainingCourse(courseId) {
   return apiResult;
 }
 
-export async function bulkSetTrainingStatus(userIds, courseId, status) {
+export async function bulkSetTrainingStatus(userIds, courseId, status, { encargado, nroHoras } = {}) {
   const apiResult = await requestLocalApi("/api/trainings/bulk", {
     method: "PUT",
-    body: JSON.stringify({ usuario_ids: userIds, curso_id: courseId, estado: status })
+    body: JSON.stringify({
+      usuario_ids: userIds,
+      curso_id: courseId,
+      estado: status,
+      encargado,
+      nro_horas: nroHoras
+    })
   }, { requiredBackend: true });
   if (typeof apiResult?.updated !== "number") {
     throw new Error("No se pudo actualizar la capacitacion para el grupo seleccionado.");
@@ -426,6 +432,40 @@ export async function updateTrainingCourse(courseId, changes) {
     throw new Error("No se pudo actualizar la capacitacion.");
   }
   return apiResult.course;
+}
+
+export async function listEncargados(includeInactive = false) {
+  const apiResult = await requestLocalApi(
+    includeInactive ? "/api/trainings/encargados?all=1" : "/api/trainings/encargados",
+    {},
+    { requiredBackend: true }
+  );
+  if (!Array.isArray(apiResult?.encargados)) {
+    throw new Error("No se pudieron cargar los encargados.");
+  }
+  return apiResult.encargados;
+}
+
+export async function createEncargado(nombre) {
+  const apiResult = await requestLocalApi("/api/trainings/encargados", {
+    method: "POST",
+    body: JSON.stringify({ nombre })
+  }, { requiredBackend: true });
+  if (!apiResult?.encargado) {
+    throw new Error("No se pudo crear el encargado.");
+  }
+  return apiResult.encargado;
+}
+
+export async function updateEncargado(encargadoId, changes) {
+  const apiResult = await requestLocalApi(`/api/trainings/encargados/${encodeURIComponent(encargadoId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes)
+  }, { requiredBackend: true });
+  if (!apiResult?.encargado) {
+    throw new Error("No se pudo actualizar el encargado.");
+  }
+  return apiResult.encargado;
 }
 
 export async function listTasks() {
