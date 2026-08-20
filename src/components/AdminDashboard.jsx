@@ -873,6 +873,16 @@ function TrainingsPanel() {
   );
 }
 
+// El nuevo estado que se va a aplicar determina que grupo tiene sentido
+// mostrar: solo tiene sentido pasar a "completado" a quienes ya estan "en
+// curso", y a "en curso" a quienes siguen "pendiente". Al elegir
+// "pendiente" no se filtra por estado actual (lista general).
+const BULK_SOURCE_STATUS_BY_TARGET = {
+  finalizado: "en_curso",
+  en_curso: "pendiente",
+  pendiente: ""
+};
+
 function BulkTrainingPanel({ users }) {
   const { data: courses = [], loading: coursesLoading, error: coursesError } = useAsyncData(listTrainingCourses, [], []);
   const [courseId, setCourseId] = useState("");
@@ -883,9 +893,25 @@ function BulkTrainingPanel({ users }) {
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
 
+  const { data: courseStatusData, loading: courseStatusLoading } = useAsyncData(
+    () => (courseId ? getTrainingStatusByCourse(courseId) : Promise.resolve(null)),
+    [courseId],
+    null
+  );
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [courseId, estado]);
+  const statusByUserId = new Map((courseStatusData?.users || []).map((item) => [Number(item.id), item.estado]));
+  const sourceStatus = BULK_SOURCE_STATUS_BY_TARGET[estado] ?? "";
+
   const filteredUsers = users.filter((item) => {
     if (statusFilter === "activos" && !boolValue(item.activo)) return false;
     if (statusFilter === "inactivos" && boolValue(item.activo)) return false;
+    if (courseId && sourceStatus) {
+      const currentStatus = statusByUserId.get(Number(item.id)) || "pendiente";
+      if (currentStatus !== sourceStatus) return false;
+    }
     if (!search.trim()) return true;
     return normalizeText(`${item.nombre || ""} ${item.email || ""}`).includes(normalizeText(search));
   });
@@ -983,15 +1009,25 @@ function BulkTrainingPanel({ users }) {
         <span className="attendance-marked-count">{selectedIds.size} seleccionados</span>
       </div>
       <StatusAlert status={status} />
+      {courseId ? (
+        <Alert>
+          Lista: {sourceStatus ? trainingStatusLabel(sourceStatus) : "Todos"} ({filteredUsers.length})
+          {courseStatusLoading ? " · Cargando estado actual..." : ""}
+        </Alert>
+      ) : null}
       {!filteredUsers.length ? <Alert>No se encontraron trabajadores para estos filtros.</Alert> : null}
       <div className="attendance-list">
         {filteredUsers.map((item) => {
           const checked = selectedIds.has(String(item.id));
+          const currentStatus = courseId ? (statusByUserId.get(Number(item.id)) || "pendiente") : null;
           return (
             <label key={item.id} className={`attendance-row${checked ? " marked" : ""}`}>
               <span>
                 <strong>{item.nombre || "Sin nombre"}</strong>
-                <small>{item.email} · {boolValue(item.activo) ? "Activo" : "Inactivo"}</small>
+                <small>
+                  {item.email} · {boolValue(item.activo) ? "Activo" : "Inactivo"}
+                  {currentStatus ? ` · ${trainingStatusLabel(currentStatus)}` : ""}
+                </small>
               </span>
               <input type="checkbox" checked={checked} onChange={() => toggleUser(item.id)} />
             </label>
