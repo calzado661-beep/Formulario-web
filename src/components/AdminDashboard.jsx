@@ -656,33 +656,36 @@ function WorkerTrainingProfile({ user, onClose }) {
 }
 
 function TrainingBarChart({ completed, pending, ariaLabel, onSelectGroup }) {
-  const maxValue = Math.max(completed, pending, 1);
-  const trackHeight = 168;
-  const bars = [
-    { key: "completado", label: "Hicieron", value: completed, tone: "done" },
-    { key: "pendiente", label: "No hicieron", value: pending, tone: "pending" }
+  const total = completed + pending;
+  const donePercent = total ? Math.round((completed / total) * 100) : 0;
+  const pendingPercent = total ? 100 - donePercent : 0;
+  const rows = [
+    { key: "completado", label: "Hicieron la capacitacion", value: completed, percent: donePercent, tone: "done", Icon: CheckCircle2 },
+    { key: "pendiente", label: "No hicieron la capacitacion", value: pending, percent: pendingPercent, tone: "pending", Icon: AlertTriangle }
   ];
 
   return (
     <div className="training-chart" role="group" aria-label={ariaLabel}>
-      {bars.map((bar) => {
-        const barHeight = Math.round((bar.value / maxValue) * trackHeight);
-        return (
-          <button
-            key={bar.key}
-            type="button"
-            className={`training-chart-bar training-chart-bar--${bar.tone}`}
-            onClick={() => onSelectGroup(bar.key)}
-            aria-label={`${bar.label}: ${bar.value}. Presiona para ver el listado.`}
-          >
-            <span className="training-chart-bar-value">{bar.value}</span>
-            <span className="training-chart-bar-track" style={{ height: trackHeight }}>
-              <span className="training-chart-bar-fill" style={{ height: `${Math.max(barHeight, bar.value ? 6 : 2)}px` }} />
+      {rows.map((row) => (
+        <button
+          key={row.key}
+          type="button"
+          className={`training-chart-row training-chart-row--${row.tone}`}
+          onClick={() => onSelectGroup(row.key)}
+          aria-label={`${row.label}: ${row.value} trabajador(es), ${row.percent}%. Presiona para ver el listado.`}
+        >
+          <span className="training-chart-row-icon"><row.Icon aria-hidden="true" /></span>
+          <span className="training-chart-row-body">
+            <span className="training-chart-row-head">
+              <span className="training-chart-row-label">{row.label}</span>
+              <span className="training-chart-row-value">{row.value} <small>({row.percent}%)</small></span>
             </span>
-            <span className="training-chart-bar-label">{bar.label}</span>
-          </button>
-        );
-      })}
+            <span className="training-chart-row-track">
+              <span className="training-chart-row-fill" style={{ width: `${Math.max(row.percent, row.value ? 3 : 0)}%` }} />
+            </span>
+          </span>
+        </button>
+      ))}
     </div>
   );
 }

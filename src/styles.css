@@ -1885,81 +1885,118 @@ tbody tr:hover {
 }
 
 .training-chart {
-  display: flex;
-  gap: 2.5rem;
-  align-items: flex-end;
-  justify-content: center;
-  flex-wrap: wrap;
-  padding: 1.5rem 1.5rem 1.15rem;
+  display: grid;
+  gap: 0.9rem;
+  padding: 1.25rem;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface-solid);
 }
 
-.training-chart-bar {
+.training-chart-row {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 0.6rem;
-  width: 150px;
-  border: none;
-  background: none;
-  padding: 0.5rem 0.5rem 0;
+  gap: 1rem;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
   border-radius: 10px;
+  padding: 0.9rem 1.1rem;
   color: var(--text);
   font: inherit;
+  text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease, transform 0.15s ease;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
 
-.training-chart-bar:hover,
-.training-chart-bar:focus-visible {
-  background: var(--surface-soft);
-  transform: translateY(-2px);
+.training-chart-row:hover,
+.training-chart-row:focus-visible {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  background: rgba(222, 238, 226, 0.1);
   outline: none;
 }
 
-.training-chart-bar-value {
-  font-size: 1.4rem;
+.training-chart-row-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+}
+
+.training-chart-row-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.training-chart-row--done .training-chart-row-icon {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.training-chart-row--pending .training-chart-row-icon {
+  color: var(--coral);
+  background: var(--coral-soft);
+}
+
+.training-chart-row-body {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 0.5rem;
+}
+
+.training-chart-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.training-chart-row-label {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.training-chart-row-value {
+  font-size: 1.05rem;
   font-weight: 800;
   color: var(--text-strong);
+  white-space: nowrap;
 }
 
-.training-chart-bar-track {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  width: 100%;
-}
-
-.training-chart-bar-fill {
-  width: 72%;
-  min-height: 2px;
-  border-radius: 10px 10px 4px 4px;
-  transition: height 0.3s ease, filter 0.15s ease;
-}
-
-.training-chart-bar--done .training-chart-bar-fill {
-  background: linear-gradient(180deg, var(--success), var(--accent-dark));
-  box-shadow: 0 0 18px rgba(52, 211, 153, 0.28);
-}
-
-.training-chart-bar--pending .training-chart-bar-fill {
-  background: linear-gradient(180deg, var(--coral), var(--danger));
-  box-shadow: 0 0 18px rgba(244, 63, 94, 0.24);
-}
-
-.training-chart-bar:hover .training-chart-bar-fill,
-.training-chart-bar:focus-visible .training-chart-bar-fill {
-  filter: brightness(1.15);
-}
-
-.training-chart-bar-label {
-  font-size: 0.82rem;
+.training-chart-row-value small {
+  font-size: 0.78rem;
+  font-weight: 600;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  text-align: center;
+}
+
+.training-chart-row-track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.32);
+  overflow: hidden;
+}
+
+.training-chart-row-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width 0.35s ease;
+}
+
+.training-chart-row--done .training-chart-row-fill {
+  background: linear-gradient(90deg, var(--accent-dark), var(--success));
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.35);
+}
+
+.training-chart-row--pending .training-chart-row-fill {
+  background: linear-gradient(90deg, var(--danger), var(--coral));
+  box-shadow: 0 0 12px rgba(244, 63, 94, 0.3);
 }
 
 .training-detail-dialog {
