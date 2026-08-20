@@ -378,6 +378,17 @@ export async function getTrainingStatusByCourse(courseId) {
   return apiResult;
 }
 
+export async function updateTrainingCourse(courseId, changes) {
+  const apiResult = await requestLocalApi(`/api/trainings/courses/${encodeURIComponent(courseId)}`, {
+    method: "PUT",
+    body: JSON.stringify(changes)
+  }, { requiredBackend: true });
+  if (!apiResult?.course) {
+    throw new Error("No se pudo actualizar la capacitacion.");
+  }
+  return apiResult.course;
+}
+
 export async function listTasks() {
   const apiResult = await requestLocalApi("/api/tasks");
   let tasks = apiResult?.tasks;

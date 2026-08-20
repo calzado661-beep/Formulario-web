@@ -849,6 +849,54 @@ async function handleReadTrainingCourses(request, response) {
   }
 }
 
+async function handleUpdateTrainingCourse(request, response, courseId) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const normalizedCourseId = String(courseId || "").trim().toUpperCase().replace(/\s+/g, " ");
+    if (!normalizedCourseId) {
+      sendJson(response, 400, { error: "Capacitacion invalida." });
+      return;
+    }
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const payload = {};
+    if (body.nro_horas !== undefined) {
+      const nroHoras = String(body.nro_horas || "").trim();
+      if (!nroHoras) {
+        sendJson(response, 400, { error: "La duracion no puede quedar vacia." });
+        return;
+      }
+      payload.nro_horas = nroHoras;
+    }
+    if (body.encargado !== undefined || body.inversion_curso !== undefined) {
+      const encargado = String(body.encargado ?? body.inversion_curso ?? "").trim();
+      if (!encargado) {
+        sendJson(response, 400, { error: "El encargado no puede quedar vacio." });
+        return;
+      }
+      payload.inversion_curso = encargado;
+    }
+    if (!Object.keys(payload).length) {
+      sendJson(response, 400, { error: "No hay cambios para guardar." });
+      return;
+    }
+
+    const result = await supabase
+      .from("capacitaciones")
+      .update(payload)
+      .eq("id_curso", normalizedCourseId)
+      .select("id,id_curso,orden,nombre_curso,competencias,nro_horas,inversion_curso,activo")
+      .maybeSingle();
+    if (result.error) throw result.error;
+    if (!result.data) {
+      sendJson(response, 404, { error: "Capacitacion no encontrada." });
+      return;
+    }
+    sendJson(response, 200, { course: result.data });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo actualizar la capacitacion." });
+  }
+}
+
 async function handleReadTrainingStatus(request, response, courseId) {
   try {
     if (!requireAdministrator(request, response)) return;
@@ -3935,6 +3983,7 @@ export async function handleRequest(request, response, { serveFiles = true } = {
   const trainingProfileMatch = apiPath.match(/^\/api\/users\/(\d+)\/trainings\/?$/);
   const trainingCourseMatch = apiPath.match(/^\/api\/users\/(\d+)\/trainings\/(CAP\s+\d+)\/?$/i);
   const trainingStatusMatch = apiPath.match(/^\/api\/trainings\/status\/(CAP\s+\d+)\/?$/i);
+  const trainingCourseUpdateMatch = apiPath.match(/^\/api\/trainings\/courses\/(CAP\s+\d+)\/?$/i);
   const attendanceReportSettingMatch = apiPath.match(/^\/api\/attendance-report\/settings\/(\d+)\/?$/);
   const attendanceReportSendMatch = apiPath.match(/^\/api\/attendance-report\/settings\/(\d+)\/send\/?$/);
   const activityReportSettingMatch = apiPath.match(/^\/api\/activity-report\/settings\/(\d+)\/?$/);
@@ -3980,6 +4029,11 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (/^\/api\/trainings\/courses\/?$/.test(apiPath) && request.method === "GET") {
     await handleReadTrainingCourses(request, response);
+    return;
+  }
+
+  if (trainingCourseUpdateMatch && request.method === "PUT") {
+    await handleUpdateTrainingCourse(request, response, trainingCourseUpdateMatch[1]);
     return;
   }
 

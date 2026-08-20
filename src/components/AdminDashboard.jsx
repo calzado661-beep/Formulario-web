@@ -41,6 +41,7 @@ import {
   updateAttendanceReportSettings,
   updateActivityReportSettings,
   updateTienda,
+  updateTrainingCourse,
   updateUser
 } from "../lib/repository";
 import { birthdayMaxISO, formatDateTimeLima, todayLimaISO } from "../lib/dates";
@@ -635,7 +636,7 @@ function WorkerTrainingProfile({ user, onClose }) {
                       <span><strong>ID capacitacion:</strong> {training.capacitacion_id}</span>
                       <span><strong>Competencia:</strong> {training.competencias}</span>
                       <span><strong>Duracion:</strong> {training.nro_horas}</span>
-                      <span><strong>Inversion:</strong> {training.inversion_curso}</span>
+                      <span><strong>Encargado:</strong> {training.inversion_curso}</span>
                     </div>
                     {finalized && training.completado_en ? (
                       <small>Completada el {formatDateTimeLima(training.completado_en)}</small>
@@ -767,7 +768,7 @@ function TrainingDetailModal({ course, groupLabel, users, onClose }) {
 
 function TrainingsPanel() {
   const { data: users = [], loading: usersLoading, error: usersError, reload: reloadUsers } = useAsyncData(selectUsers, [], []);
-  const { data: courses = [], loading: coursesLoading, error: coursesError } = useAsyncData(listTrainingCourses, [], []);
+  const { data: courses = [], loading: coursesLoading, error: coursesError, reload: reloadCourses } = useAsyncData(listTrainingCourses, [], []);
   const [courseId, setCourseId] = useState("");
   const [tab, setTab] = useState("Resumen");
   const [modalGroup, setModalGroup] = useState("");
@@ -806,7 +807,7 @@ function TrainingsPanel() {
           </Button>
         }
       >
-        <Tabs tabs={["Resumen", "Asignar capacitacion"]} active={tab} onChange={setTab} />
+        <Tabs tabs={["Resumen", "Asignar capacitacion", "Cursos"]} active={tab} onChange={setTab} />
 
         {tab === "Resumen" ? (
           <div className="stack">
@@ -853,6 +854,10 @@ function TrainingsPanel() {
             </>
           )
         ) : null}
+
+        {tab === "Cursos" ? (
+          <CoursesEditor courses={courses} loading={coursesLoading} error={coursesError} onReload={reloadCourses} />
+        ) : null}
       </Panel>
 
       {modalGroup ? (
@@ -869,6 +874,81 @@ function TrainingsPanel() {
           onClose={() => setModalGroup("")}
         />
       ) : null}
+    </div>
+  );
+}
+
+function CourseEditCard({ course, onSaved }) {
+  const [nroHoras, setNroHoras] = useState(course.nro_horas || "");
+  const [encargado, setEncargado] = useState(course.inversion_curso || "");
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  const dirty = nroHoras !== (course.nro_horas || "") || encargado !== (course.inversion_curso || "");
+
+  async function handleSave() {
+    setStatus(null);
+    if (!nroHoras.trim()) {
+      setStatus({ type: "error", message: "La duracion no puede quedar vacia." });
+      return;
+    }
+    if (!encargado.trim()) {
+      setStatus({ type: "error", message: "Ingresa el nombre del encargado." });
+      return;
+    }
+    setSaving(true);
+    try {
+      const updated = await updateTrainingCourse(course.id_curso, {
+        nro_horas: nroHoras.trim(),
+        encargado: encargado.trim()
+      });
+      setStatus({ type: "success", message: "Capacitacion actualizada." });
+      onSaved(updated);
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <article className="document-card">
+      <h3>{course.id_curso} - {course.nombre_curso}</h3>
+      <div className="form-grid">
+        <TextInput label="Duracion" value={nroHoras} onChange={setNroHoras} placeholder="Ej. 1 Hora" maxLength={60} />
+        <TextInput label="Encargado" value={encargado} onChange={setEncargado} placeholder="Nombre del encargado" maxLength={150} />
+      </div>
+      <StatusAlert status={status} />
+      <div className="form-actions">
+        <Button icon={Save} loading={saving} disabled={!dirty} onClick={handleSave}>Guardar</Button>
+      </div>
+    </article>
+  );
+}
+
+function CoursesEditor({ courses, loading, error, onReload }) {
+  const [courseOverrides, setCourseOverrides] = useState({});
+
+  function handleSaved(updated) {
+    setCourseOverrides((current) => ({ ...current, [updated.id_curso]: updated }));
+    onReload();
+  }
+
+  if (loading) return <LoadingBlock />;
+  if (error) return <Alert type="error">{error}</Alert>;
+
+  return (
+    <div className="stack">
+      <Alert>Edita la duracion y el encargado de cada capacitacion. Los cambios se aplican para todos los trabajadores.</Alert>
+      <div className="documents-grid">
+        {courses.map((course) => (
+          <CourseEditCard
+            key={course.id_curso}
+            course={courseOverrides[course.id_curso] || course}
+            onSaved={handleSaved}
+          />
+        ))}
+      </div>
     </div>
   );
 }
