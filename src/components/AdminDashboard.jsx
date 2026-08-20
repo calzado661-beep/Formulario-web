@@ -141,9 +141,6 @@ function PersonalDataFields({ form, setForm }) {
   const withBlank = (options) => [{ value: "", label: "Sin especificar" }, ...options];
   return (
     <>
-      <div className="form-span">
-        <TextInput label="Nombres completos" value={form.nombres_completos} onChange={(nombres_completos) => setForm({ ...form, nombres_completos })} maxLength={200} />
-      </div>
       <TextInput label="DNI" value={form.dni} onChange={(dni) => setForm({ ...form, dni })} maxLength={20} />
       <SelectInput label="Sexo" value={form.sexo} onChange={(sexo) => setForm({ ...form, sexo })} options={withBlank(sexoOptions)} />
       <TextInput label="Telefono" value={form.telefono} onChange={(telefono) => setForm({ ...form, telefono })} maxLength={30} />
@@ -397,6 +394,7 @@ function UsersPanel() {
           <form className="form-grid" onSubmit={handleCreate}>
             <TextInput label="Nombre" value={createForm.nombre} onChange={(nombre) => setCreateForm({ ...createForm, nombre })} />
             <TextInput label="Usuario o correo" value={createForm.email} onChange={(email) => setCreateForm({ ...createForm, email })} />
+            <TextInput label="Nombres completos" value={createForm.nombres_completos} onChange={(nombres_completos) => setCreateForm({ ...createForm, nombres_completos })} maxLength={200} />
             <TextInput
               label="Contrasena"
               type="password"
@@ -444,6 +442,7 @@ function UsersPanel() {
               <form className="form-grid" onSubmit={handleEdit}>
                 <TextInput label="Nombre" value={editForm.nombre} onChange={(nombre) => setEditForm({ ...editForm, nombre })} />
                 <TextInput label="Usuario o correo" value={editForm.email} onChange={(email) => setEditForm({ ...editForm, email })} />
+                <TextInput label="Nombres completos" value={editForm.nombres_completos} onChange={(nombres_completos) => setEditForm({ ...editForm, nombres_completos })} maxLength={200} />
                 <TextInput
                   label="Fecha de nacimiento"
                   type="date"
