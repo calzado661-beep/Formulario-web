@@ -5,6 +5,7 @@ import {
   BellRing,
   CalendarCheck2,
   ClipboardList,
+  FileSpreadsheet,
   GraduationCap,
   LayoutDashboard,
   LogOut,
@@ -30,6 +31,7 @@ const adminItems = [
   { key: "Notificaciones", icon: BellRing },
   { key: "Tiendas", icon: Store },
   { key: "Amonestaciones", icon: AlertTriangle },
+  { key: "Documentos", icon: FileSpreadsheet },
   { key: "Puntos", icon: BarChart3 }
 ];
 

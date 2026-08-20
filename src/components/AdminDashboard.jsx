@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Clock3, Eye, EyeOff, GraduationCap, LockKeyhole, Mail, Pencil, Plus, RefreshCcw, Save, Search, Send, Trash2, UsersRound, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ClipboardCheck, Clock3, Eye, EyeOff, FileSpreadsheet, GraduationCap, LockKeyhole, Mail, Pencil, Plus, RefreshCcw, Save, Search, Send, Trash2, UsersRound, X } from "lucide-react";
 import {
   bulkSetTrainingStatus,
   createActivityReportSettings,
@@ -97,6 +97,7 @@ export default function AdminDashboard({ section }) {
   if (section === "Notificaciones") return <NotificationsPanel />;
   if (section === "Tiendas") return <StoresPanel />;
   if (section === "Amonestaciones") return <WarningsPanel />;
+  if (section === "Documentos") return <DocumentsPanel />;
   return <WorkerPointsPanel />;
 }
 
@@ -109,9 +110,11 @@ const estadoCivilOptions = ["Soltero(a)", "Casado(a)", "Conviviente", "Divorciad
 const gradoAcademicoOptions = ["Primaria", "Secundaria", "Tecnico", "Universitario", "Postgrado"];
 const tallaPoloOptions = ["S", "M", "L", "XL", "XXL"];
 const personalDataFieldKeys = [
+  "nombres_completos",
   "dni",
   "sexo",
   "telefono",
+  "telefono_emergencia",
   "direccion",
   "distrito",
   "grado_academico",
@@ -138,9 +141,13 @@ function PersonalDataFields({ form, setForm }) {
   const withBlank = (options) => [{ value: "", label: "Sin especificar" }, ...options];
   return (
     <>
+      <div className="form-span">
+        <TextInput label="Nombres completos" value={form.nombres_completos} onChange={(nombres_completos) => setForm({ ...form, nombres_completos })} maxLength={200} />
+      </div>
       <TextInput label="DNI" value={form.dni} onChange={(dni) => setForm({ ...form, dni })} maxLength={20} />
       <SelectInput label="Sexo" value={form.sexo} onChange={(sexo) => setForm({ ...form, sexo })} options={withBlank(sexoOptions)} />
       <TextInput label="Telefono" value={form.telefono} onChange={(telefono) => setForm({ ...form, telefono })} maxLength={30} />
+      <TextInput label="Telefono de emergencia" value={form.telefono_emergencia} onChange={(telefono_emergencia) => setForm({ ...form, telefono_emergencia })} maxLength={30} />
       <TextInput label="Distrito" value={form.distrito} onChange={(distrito) => setForm({ ...form, distrito })} maxLength={120} />
       <div className="form-span">
         <TextArea label="Direccion" value={form.direccion} onChange={(direccion) => setForm({ ...form, direccion })} rows={2} />
@@ -344,11 +351,13 @@ function UsersPanel() {
   const rows = visibleUsers.map((user) => ({
     id: user.id,
     Nombre: user.nombre,
+    "Nombres completos": user.nombres_completos || "",
     Usuario: user.email,
     Rol: normalizeRole(user.rol),
     Sueldo: Number(user.sueldo || 0).toLocaleString("es-PE", { style: "currency", currency: "PEN" }),
     Activo: boolValue(user.activo),
-    "Fecha nacimiento": user.fecha_cumpleanos || ""
+    "Fecha nacimiento": user.fecha_cumpleanos || "",
+    "Telefono emergencia": user.telefono_emergencia || ""
   }));
 
   return (
@@ -372,7 +381,7 @@ function UsersPanel() {
         ) : (
           <DataTable
             rows={rows}
-            columns={["Nombre", "Usuario", "Rol", "Activo", "Fecha nacimiento"]}
+            columns={["Nombre", "Nombres completos", "Usuario", "Rol", "Activo", "Fecha nacimiento", "Telefono emergencia"]}
             onRowClick={(row) => setProfileUserId(String(row.id))}
             empty={showInactive ? "No hay usuarios registrados." : "No hay usuarios activos. Presiona \"Mostrar inactivos\" para verlos."}
           />
@@ -1671,20 +1680,7 @@ function AttendancePanel() {
 
   function exportAttendance() {
     const columns = ["Fecha", "Trabajador", "Email", "Estado", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro", "Retirado en", "Marcado en"];
-    const header = columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("");
-    const body = attendanceRows
-      .map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>`)
-      .join("");
-    const html = `<!doctype html><html><head><meta charset="UTF-8"></head><body><table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></body></html>`;
-    const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `asistencia_${selectedDate}.xls`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    downloadExcelTable(`asistencia_${selectedDate}.xls`, columns, attendanceRows);
   }
 
   return (
@@ -3078,6 +3074,23 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function downloadExcelTable(filename, columns, rows) {
+  const header = columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("");
+  const body = rows
+    .map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>`)
+    .join("");
+  const html = `<!doctype html><html><head><meta charset="UTF-8"></head><body><table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></body></html>`;
+  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function StoresPanel() {
   const { data: stores = [], loading, error, reload } = useAsyncData(listTiendas, [], []);
   const [tab, setTab] = useState("Crear");
@@ -3583,6 +3596,163 @@ function WorkerPointsPanel() {
         rows={rows}
         emptyMessage="No hay usuarios inactivos para mostrar."
       />
+    </div>
+  );
+}
+
+function DocumentsPanel() {
+  const { data, loading, error, reload } = useAsyncData(
+    async () => {
+      const [users, attendances, logs, tasks, warnings, courses] = await Promise.all([
+        selectUsers(),
+        listAttendances(),
+        listAllActivityLogs(),
+        listTasks(),
+        listAmonestaciones(),
+        listTrainingCourses()
+      ]);
+      const trainingStatuses = await Promise.all(
+        courses.map(async (course) => {
+          try {
+            const result = await getTrainingStatusByCourse(course.id_curso);
+            return { course, users: result.users || [] };
+          } catch {
+            return { course, users: [] };
+          }
+        })
+      );
+      return { users, attendances, logs, tasks, warnings, trainingStatuses };
+    },
+    [],
+    null
+  );
+  const [exporting, setExporting] = useState(false);
+
+  async function exportAll(datasets) {
+    setExporting(true);
+    try {
+      for (const dataset of datasets) {
+        downloadExcelTable(dataset.filename, dataset.columns, dataset.rows);
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <Panel
+        title="Documentos"
+        eyebrow="Exportacion de datos"
+        actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}
+      >
+        {loading ? <LoadingBlock /> : null}
+        {error ? <Alert type="error">{error}</Alert> : null}
+        {!loading && !error ? <DocumentsExporter data={data} exporting={exporting} onExportAll={exportAll} /> : null}
+      </Panel>
+    </div>
+  );
+}
+
+function DocumentsExporter({ data, exporting, onExportAll }) {
+  const users = data.users || [];
+  const workerNameById = Object.fromEntries(users.map((user) => [user.id, user.nombre || user.email]));
+  const workerEmailById = Object.fromEntries(users.map((user) => [user.id, user.email]));
+  const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || `Tarea ${task.id}`]));
+
+  const userColumns = ["Nombre", "Nombres completos", "Usuario", "Rol", "Activo", "DNI", "Telefono", "Telefono emergencia", "Direccion", "Distrito", "Fecha nacimiento", "Sueldo"];
+  const userRows = users.map((user) => ({
+    Nombre: user.nombre,
+    "Nombres completos": user.nombres_completos || "",
+    Usuario: user.email,
+    Rol: normalizeRole(user.rol),
+    Activo: boolValue(user.activo) ? "Si" : "No",
+    DNI: user.dni || "",
+    Telefono: user.telefono || "",
+    "Telefono emergencia": user.telefono_emergencia || "",
+    Direccion: user.direccion || "",
+    Distrito: user.distrito || "",
+    "Fecha nacimiento": user.fecha_cumpleanos || "",
+    Sueldo: Number(user.sueldo || 0).toFixed(2)
+  }));
+
+  const attendanceColumns = ["Fecha", "Trabajador", "Email", "Estado", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro"];
+  const attendanceRows = (data.attendances || []).map((item) => ({
+    Fecha: item.fecha,
+    Trabajador: workerNameById[item.usuario_id] || "",
+    Email: workerEmailById[item.usuario_id] || "",
+    Estado: attendanceStateLabel(String(item.estado || "AUSENTE").toUpperCase()),
+    "Retiro anticipado": item.retiro_anticipado ? "Si" : "No",
+    "Tipo de retiro": item.retiro_anticipado ? (item.tipo_retiro === "apoyo" ? "Apoyo a otra area" : "Personal") : "",
+    "Motivo del retiro": item.motivo_retiro || ""
+  }));
+
+  const activityColumns = ["Fecha", "Trabajador", "Email", "Tarea", "Cantidad", "Turno", "Tiempo (min)", "Cumplimiento", "Puntos"];
+  const activityRows = (data.logs || []).map((log) => ({
+    Fecha: formatDateTimeLima(log.created_at) || log.fecha_registro,
+    Trabajador: workerNameById[log.trabajador_id] || "",
+    Email: workerEmailById[log.trabajador_id] || "",
+    Tarea: taskNameById[log.tarea_id] || log.actividad_nombre || "",
+    Cantidad: log.cantidad ?? "",
+    Turno: log.turno || "",
+    "Tiempo (min)": log.tiempo_minutos ?? "",
+    Cumplimiento: log.cumplimiento ? "Si" : "No",
+    Puntos: Number(log.puntaje || 0)
+  }));
+
+  const warningColumns = ["Fecha", "Trabajador", "Usuario", "Tipo de documento", "Descripcion"];
+  const warningRows = (data.warnings || []).map((warning) => ({
+    Fecha: formatWarningDate(warning),
+    Trabajador: workerNameById[warning.usuario_id] || "",
+    Usuario: workerEmailById[warning.usuario_id] || "",
+    "Tipo de documento": warning.tipo_documento || "",
+    Descripcion: warning.descripcion || ""
+  }));
+
+  const trainingColumns = ["Capacitacion", "Trabajador", "Usuario", "Rol", "Estado"];
+  const trainingRows = (data.trainingStatuses || []).flatMap((entry) => (
+    (entry.users || []).map((user) => ({
+      Capacitacion: entry.course ? `${entry.course.id_curso} - ${entry.course.nombre_curso}` : "",
+      Trabajador: user.nombre || "",
+      Usuario: user.email || "",
+      Rol: normalizeRole(user.rol),
+      Estado: trainingStatusLabel(user.estado)
+    }))
+  ));
+
+  const datasets = [
+    { key: "usuarios", label: "Usuarios", description: `${userRows.length} trabajador(es) registrados`, filename: "usuarios.xls", columns: userColumns, rows: userRows },
+    { key: "asistencias", label: "Asistencias", description: `${attendanceRows.length} registro(s) de asistencia`, filename: "asistencias.xls", columns: attendanceColumns, rows: attendanceRows },
+    { key: "actividades", label: "Actividades y puntos", description: `${activityRows.length} registro(s) de actividad`, filename: "actividades.xls", columns: activityColumns, rows: activityRows },
+    { key: "amonestaciones", label: "Amonestaciones", description: `${warningRows.length} documento(s)`, filename: "amonestaciones.xls", columns: warningColumns, rows: warningRows },
+    { key: "capacitaciones", label: "Capacitaciones", description: `${trainingRows.length} registro(s)`, filename: "capacitaciones.xls", columns: trainingColumns, rows: trainingRows }
+  ];
+
+  return (
+    <div className="stack">
+      <Alert>Descarga la informacion del sistema en Excel, por area o todo junto en un solo clic.</Alert>
+      <div className="form-actions">
+        <Button icon={FileSpreadsheet} loading={exporting} onClick={() => onExportAll(datasets)}>
+          Exportar todo en Excel
+        </Button>
+      </div>
+      <div className="documents-grid">
+        {datasets.map((dataset) => (
+          <article key={dataset.key} className="document-card">
+            <h3>{dataset.label}</h3>
+            <p>{dataset.description}</p>
+            <Button
+              variant="secondary"
+              icon={FileSpreadsheet}
+              disabled={!dataset.rows.length}
+              onClick={() => downloadExcelTable(dataset.filename, dataset.columns, dataset.rows)}
+            >
+              Descargar Excel
+            </Button>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }

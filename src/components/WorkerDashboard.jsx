@@ -39,7 +39,6 @@ import {
   TextArea,
   TextInput
 } from "./ui";
-import { BrandDistribution, brandTotal, emptyBrandShare } from "./BrandDistribution";
 import { emptyGuideShare, GuideDistribution, guideTotal } from "./GuideDistribution";
 
 export const HANGTAG_OPTIONS = [
@@ -72,7 +71,6 @@ function emptyRecord() {
   return {
     taskKey: "",
     cantidad: "",
-    usaMarcas: false,
     marcaId: "",
     numeroGuia: "",
     lote: "",
@@ -80,7 +78,6 @@ function emptyRecord() {
     tiendaId: "",
     usaGuias: false,
     guias: [emptyGuideShare()],
-    marcas: [emptyBrandShare()],
     cumplimiento: true,
     turno: SIMPLE_SHIFT,
     detalle: ""
@@ -143,7 +140,6 @@ function RegisterActivity({ user }) {
           ? {
               ...emptyRecord(),
               taskKey,
-              usaMarcas: recordFieldFlags(task).marca && taskSplitsQuantity(task),
               usaGuias: recordFieldFlags(task).guia && taskSplitsQuantity(task)
             }
           : record
@@ -181,14 +177,12 @@ function RegisterActivity({ user }) {
     const unit = task?.unidad_medida || task?.unidad_base || task?.unidad || fallbackUnit;
     const flags = recordFieldFlags(task);
     const splitsQuantity = taskSplitsQuantity(task);
-    const marcas = flags.marca && splitsQuantity && record.usaMarcas
-      ? record.marcas.map((item) => ({ marca_id: Number(item.marca_id), cantidad: Number(item.cantidad) }))
-      : [];
     const guias = flags.guia && splitsQuantity && record.usaGuias
       ? record.guias.map((item) => ({ numero_guia: String(item.numero_guia || "").trim(), cantidad: Number(item.cantidad) }))
       : [];
-    // Sin cantidad que repartir se guarda un unico valor por registro.
-    const marcaId = flags.marca && !splitsQuantity && record.marcaId ? Number(record.marcaId) : null;
+    // La marca siempre es un unico valor por registro; ya no se reparte la
+    // cantidad total entre varias marcas.
+    const marcaId = flags.marca && record.marcaId ? Number(record.marcaId) : null;
     const numeroGuia = flags.guia && !splitsQuantity ? String(record.numeroGuia || "").trim() || null : null;
     const tiendaId = flags.tienda && record.tiendaId ? Number(record.tiendaId) : null;
     const lote = flags.lote ? String(record.lote || "").trim().toUpperCase() || null : null;
@@ -200,9 +194,9 @@ function RegisterActivity({ user }) {
     let cumplimiento = record.cumplimiento;
     let turno = null;
 
-    // Con marcas o guias la cantidad total es la suma de sus filas: no se pide
-    // aparte para no tener que cuadrar dos numeros a mano.
-    const splitTotal = marcas.length ? brandTotal(marcas) : guias.length ? guideTotal(guias) : null;
+    // Con guias la cantidad total es la suma de sus filas: no se pide aparte
+    // para no tener que cuadrar dos numeros a mano.
+    const splitTotal = guias.length ? guideTotal(guias) : null;
     if (type === "cantidad") {
       cantidad = splitTotal ?? (record.cantidad === "" ? null : Number(record.cantidad));
       cumplimiento = true;
@@ -231,7 +225,6 @@ function RegisterActivity({ user }) {
       tiempoMinutos,
       cumplimiento,
       turno,
-      marcas,
       guias,
       flags,
       splitsQuantity,
@@ -270,18 +263,10 @@ function RegisterActivity({ user }) {
       if (shape.flags.hangtag && !shape.tipoEtiquetado) {
         return `Indica si ${shape.title} va con hangtag o sin hangtag.`;
       }
-      if (shape.flags.marca && shape.splitsQuantity && record.usaMarcas) {
-        if (!record.marcas.length || record.marcas.some((item) => !item.marca_id || Number(item.cantidad) <= 0)) {
-          return `Completa cada marca y su cantidad para ${shape.title}.`;
-        }
-        if (new Set(record.marcas.map((item) => String(item.marca_id))).size !== record.marcas.length) {
-          return `No puedes repetir una marca en ${shape.title}.`;
-        }
-      }
-      if (shape.type === "cantidad" && !shape.marcas.length && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) < 0)) {
+      if (shape.type === "cantidad" && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) < 0)) {
         return `Ingresa una cantidad valida para ${shape.title}.`;
       }
-      if (shape.type === "tiempo" && !shape.marcas.length && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) <= 0)) {
+      if (shape.type === "tiempo" && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) <= 0)) {
         return `Ingresa la cantidad realizada para ${shape.title}.`;
       }
     }
@@ -354,7 +339,7 @@ function RegisterActivity({ user }) {
             marca_id: shape.marcaId,
             numero_guia: shape.numeroGuia,
             puntaje: points,
-            marcas: shape.marcas,
+            marcas: [],
             guias: shape.guias
           };
           if (shape.tiempoMinutos !== null && shape.tiempoMinutos !== undefined) {
@@ -500,7 +485,7 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
   if (type === "cantidad") {
     return (
       <div className="form-grid">
-        {(usesGuideBreakdown && record.usaGuias) || (flags.marca && record.usaMarcas) ? null : (
+        {usesGuideBreakdown && record.usaGuias ? null : (
           <TextInput
             label={`Cantidad (${unit})`}
             type="number"
@@ -510,7 +495,7 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
           />
         )}
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
-        {flags.marca ? <BrandFields record={record} brands={brands} onChange={onChange} /> : null}
+        {flags.marca ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
         {usesGuideBreakdown ? <GuideFields record={record} onChange={onChange} /> : null}
         {flags.lote ? <LoteField record={record} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
@@ -522,7 +507,7 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
   if (type === "tiempo") {
     return (
       <div className="form-grid">
-        {(usesGuideBreakdown && record.usaGuias) || (flags.marca && record.usaMarcas) ? null : (
+        {usesGuideBreakdown && record.usaGuias ? null : (
           <TextInput
             label="Cantidad realizada"
             type="number"
@@ -533,7 +518,7 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
           />
         )}
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
-        {flags.marca ? <BrandFields record={record} brands={brands} onChange={onChange} /> : null}
+        {flags.marca ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
         {usesGuideBreakdown ? <GuideFields record={record} onChange={onChange} /> : null}
         {flags.lote ? <LoteField record={record} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
@@ -667,32 +652,6 @@ function HangtagField({ record, onChange }) {
       onChange={(tipoEtiquetado) => onChange({ tipoEtiquetado })}
       options={HANGTAG_OPTIONS}
     />
-  );
-}
-
-function BrandFields({ record, brands, onChange }) {
-  return (
-    <>
-      <CheckboxInput
-        label="Añadir marcas"
-        checked={record.usaMarcas}
-        onChange={(usaMarcas) =>
-          onChange({
-            usaMarcas,
-            usaGuias: usaMarcas ? false : record.usaGuias,
-            marcas: record.marcas?.length ? record.marcas : [emptyBrandShare()]
-          })
-        }
-        hint="Actívalo para cargar la cantidad de cada marca por separado."
-      />
-      {record.usaMarcas ? (
-        <BrandDistribution
-          brands={brands}
-          items={record.marcas}
-          onChange={(marcas) => onChange({ marcas })}
-        />
-      ) : null}
-    </>
   );
 }
 

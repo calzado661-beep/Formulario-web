@@ -374,7 +374,7 @@ async function selectUsers() {
   const [usersResult, movementsResult] = await Promise.all([
     supabase
       .from("usuarios")
-      .select("id,nombre,email,rol,activo,created_at,fecha_cumpleanos,sueldo,dni,sexo,telefono,direccion,distrito,grado_academico,ciclo_semestre,puesto,estado_civil,hijos,talla_zapatillas,talla_polo")
+      .select("id,nombre,email,rol,activo,created_at,fecha_cumpleanos,sueldo,dni,sexo,telefono,telefono_emergencia,direccion,distrito,grado_academico,ciclo_semestre,puesto,estado_civil,hijos,talla_zapatillas,talla_polo,nombres_completos")
       .order("id", { ascending: true }),
     supabase
       .from("movimientos_personal")
@@ -509,6 +509,7 @@ const OPTIONAL_TEXT_USER_FIELDS = [
   "dni",
   "sexo",
   "telefono",
+  "telefono_emergencia",
   "direccion",
   "distrito",
   "grado_academico",
@@ -516,7 +517,8 @@ const OPTIONAL_TEXT_USER_FIELDS = [
   "puesto",
   "estado_civil",
   "talla_zapatillas",
-  "talla_polo"
+  "talla_polo",
+  "nombres_completos"
 ];
 
 function userPayloadForDb(body, { creating = false } = {}) {

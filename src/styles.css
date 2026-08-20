@@ -470,6 +470,34 @@ h2 {
   justify-content: flex-end;
 }
 
+.documents-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.document-card {
+  display: grid;
+  gap: 0.6rem;
+  align-content: start;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.document-card h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-strong);
+}
+
+.document-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .toolbar .field,
 .record-toolbar .field {
   min-width: min(240px, 100%);
