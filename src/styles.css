@@ -1936,6 +1936,11 @@ tbody tr:hover {
   background: var(--success-soft);
 }
 
+.training-chart-row--progress .training-chart-row-icon {
+  color: var(--gold);
+  background: var(--gold-soft);
+}
+
 .training-chart-row--pending .training-chart-row-icon {
   color: var(--coral);
   background: var(--coral-soft);
@@ -1992,6 +1997,11 @@ tbody tr:hover {
 .training-chart-row--done .training-chart-row-fill {
   background: linear-gradient(90deg, var(--accent-dark), var(--success));
   box-shadow: 0 0 12px rgba(52, 211, 153, 0.35);
+}
+
+.training-chart-row--progress .training-chart-row-fill {
+  background: linear-gradient(90deg, var(--gold-dark, #c9a800), var(--gold));
+  box-shadow: 0 0 12px rgba(244, 183, 94, 0.32);
 }
 
 .training-chart-row--pending .training-chart-row-fill {

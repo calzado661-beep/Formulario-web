@@ -655,13 +655,13 @@ function WorkerTrainingProfile({ user, onClose }) {
   );
 }
 
-function TrainingBarChart({ completed, pending, ariaLabel, onSelectGroup }) {
-  const total = completed + pending;
-  const donePercent = total ? Math.round((completed / total) * 100) : 0;
-  const pendingPercent = total ? 100 - donePercent : 0;
+function TrainingBarChart({ completed, inProgress, pending, ariaLabel, onSelectGroup }) {
+  const total = completed + inProgress + pending;
+  const percentOf = (value) => (total ? Math.round((value / total) * 100) : 0);
   const rows = [
-    { key: "completado", label: "Hicieron la capacitacion", value: completed, percent: donePercent, tone: "done", Icon: CheckCircle2 },
-    { key: "pendiente", label: "No hicieron la capacitacion", value: pending, percent: pendingPercent, tone: "pending", Icon: AlertTriangle }
+    { key: "completado", label: "Hicieron la capacitacion", value: completed, percent: percentOf(completed), tone: "done", Icon: CheckCircle2 },
+    { key: "en_curso", label: "En curso", value: inProgress, percent: percentOf(inProgress), tone: "progress", Icon: Clock3 },
+    { key: "pendiente", label: "No hicieron la capacitacion", value: pending, percent: percentOf(pending), tone: "pending", Icon: AlertTriangle }
   ];
 
   return (
@@ -781,10 +781,11 @@ function TrainingsPanel() {
   const selectedCourse = courses.find((course) => course.id_curso === courseId);
   const statusUsers = statusData?.users || [];
   const activeUsers = statusUsers.filter((item) => boolValue(item.activo) && normalizeRole(item.rol) !== "administrador");
-  const completedUsers = activeUsers.filter((item) => item.completado);
-  const pendingUsers = activeUsers.filter((item) => !item.completado);
+  const completedUsers = activeUsers.filter((item) => item.estado === "finalizado");
+  const inProgressUsers = activeUsers.filter((item) => item.estado === "en_curso");
+  const pendingUsers = activeUsers.filter((item) => item.estado !== "finalizado" && item.estado !== "en_curso");
   const percent = activeUsers.length ? Math.round((completedUsers.length / activeUsers.length) * 100) : 0;
-  const modalUsers = modalGroup === "completado" ? completedUsers : modalGroup === "pendiente" ? pendingUsers : [];
+  const modalUsers = modalGroup === "completado" ? completedUsers : modalGroup === "en_curso" ? inProgressUsers : modalGroup === "pendiente" ? pendingUsers : [];
 
   return (
     <div className="stack">
@@ -817,13 +818,15 @@ function TrainingsPanel() {
               <>
                 <div className="metrics-row">
                   <Metric label="Hicieron la capacitacion" value={completedUsers.length} tone="accent" />
+                  <Metric label="En curso" value={inProgressUsers.length} />
                   <Metric label="No la hicieron" value={pendingUsers.length} />
                   <Metric label="% completado" value={`${percent}%`} />
                 </div>
                 <TrainingBarChart
                   completed={completedUsers.length}
+                  inProgress={inProgressUsers.length}
                   pending={pendingUsers.length}
-                  ariaLabel={`Trabajadores activos que hicieron o no la capacitacion ${selectedCourse?.nombre_curso || courseId}`}
+                  ariaLabel={`Trabajadores activos que hicieron, estan en curso o no hicieron la capacitacion ${selectedCourse?.nombre_curso || courseId}`}
                   onSelectGroup={setModalGroup}
                 />
                 <Alert>Haz clic en una barra para ver el listado de trabajadores en una ventana flotante.</Alert>
@@ -847,7 +850,13 @@ function TrainingsPanel() {
       {modalGroup ? (
         <TrainingDetailModal
           course={selectedCourse ? `${selectedCourse.id_curso} - ${selectedCourse.nombre_curso}` : courseId}
-          groupLabel={modalGroup === "completado" ? "Hicieron la capacitacion" : "No hicieron la capacitacion"}
+          groupLabel={
+            modalGroup === "completado"
+              ? "Hicieron la capacitacion"
+              : modalGroup === "en_curso"
+                ? "En curso"
+                : "No hicieron la capacitacion"
+          }
           users={modalUsers}
           onClose={() => setModalGroup("")}
         />
