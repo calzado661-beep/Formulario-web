@@ -21,11 +21,7 @@ export function dashboardDateParts(value = new Date(), timeZone = DEFAULT_TIME_Z
   };
 }
 
-export function dashboardActive(value) {
-  return !["false", "0", "no"].includes(String(value ?? true).trim().toLowerCase());
-}
-
-export function buildDashboardPayroll(users, years, {
+export function buildDashboardPayroll(users, movements, years, {
   today = new Date(),
   timeZone = DEFAULT_TIME_ZONE,
   normalizeRole = (role) => String(role || "otros").trim().toLowerCase()
@@ -33,37 +29,76 @@ export function buildDashboardPayroll(users, years, {
   const todayParts = dashboardDateParts(today, timeZone);
   const byRole = {};
   const byWorker = {};
+  const workersByMonth = {};
+  const movementsByUser = new Map();
+
+  for (const movement of movements || []) {
+    const userId = Number(movement.usuario_id ?? movement.workerId);
+    const date = dashboardIsoDate(movement.fecha_movimiento ?? movement.date);
+    const type = String(movement.tipo_movimiento ?? movement.type ?? "").trim().toLowerCase();
+    if (!userId || !date || !["ingreso", "salida"].includes(type)) continue;
+    if (!movementsByUser.has(userId)) movementsByUser.set(userId, []);
+    movementsByUser.get(userId).push({ id: Number(movement.id) || 0, date, type });
+  }
+
+  const periodsByUser = new Map();
+  movementsByUser.forEach((items, userId) => {
+    items.sort((left, right) => left.date.localeCompare(right.date) || left.id - right.id);
+    const periods = [];
+    let openStart = null;
+    for (const item of items) {
+      if (item.type === "ingreso") {
+        if (!openStart) openStart = item.date;
+      } else if (openStart && item.date >= openStart) {
+        periods.push({ start: openStart, end: item.date });
+        openStart = null;
+      }
+    }
+    if (openStart) periods.push({ start: openStart, end: null });
+    periodsByUser.set(userId, periods);
+  });
 
   for (const rawYear of years) {
     const year = Number(rawYear);
     byRole[year] = Array.from({ length: 12 }, () => ({}));
     byWorker[year] = Array.from({ length: 12 }, () => ({}));
+    workersByMonth[year] = Array.from({ length: 12 }, () => 0);
 
     for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
       const monthNumber = monthIndex + 1;
-      if (year > todayParts.year || (year === todayParts.year && monthNumber > todayParts.month)) continue;
+      // Un mes solo entra a la estimacion cuando ya termino por completo.
+      if (year > todayParts.year || (year === todayParts.year && monthNumber >= todayParts.month)) continue;
 
       const monthStart = `${year}-${String(monthNumber).padStart(2, "0")}-01`;
       const monthEnd = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
       const monthEndIso = `${year}-${String(monthNumber).padStart(2, "0")}-${String(monthEnd).padStart(2, "0")}`;
 
       for (const user of users) {
-        if (!dashboardActive(user.activo)) continue;
         const salary = Number(user.sueldo || 0);
         const workerId = Number(user.id);
-        const joined = dashboardIsoDate(user.fecha_ingreso) || dashboardIsoDate(user.created_at);
-        const left = dashboardIsoDate(user.fecha_salida);
         if (!workerId || !Number.isFinite(salary) || salary <= 0) continue;
-        if ((joined && joined > monthEndIso) || (left && left < monthStart)) continue;
+        const periods = periodsByUser.get(workerId) || [];
+        const workedDays = new Set();
+        for (const period of periods) {
+          const overlapStart = period.start > monthStart ? period.start : monthStart;
+          const overlapEnd = period.end && period.end < monthEndIso ? period.end : monthEndIso;
+          if (overlapStart > overlapEnd) continue;
+          const startDay = Number(overlapStart.slice(8, 10));
+          const endDay = Number(overlapEnd.slice(8, 10));
+          for (let day = startDay; day <= endDay; day += 1) workedDays.add(day);
+        }
+        if (!workedDays.size) continue;
 
         const role = normalizeRole(user.rol) || "otros";
-        byRole[year][monthIndex][role] = (byRole[year][monthIndex][role] || 0) + salary;
-        byWorker[year][monthIndex][workerId] = salary;
+        const proratedSalary = Math.round((salary * workedDays.size / monthEnd) * 100) / 100;
+        byRole[year][monthIndex][role] = (byRole[year][monthIndex][role] || 0) + proratedSalary;
+        byWorker[year][monthIndex][workerId] = proratedSalary;
+        workersByMonth[year][monthIndex] += 1;
       }
     }
   }
 
-  return { byRole, byWorker };
+  return { byRole, byWorker, workersByMonth };
 }
 
 function normalizedTaskName(value) {

@@ -1122,6 +1122,41 @@ h2.pbi-section-heading {
   min-height: 250px;
 }
 
+.pbi-card--payroll {
+  min-height: clamp(390px, 32vw, 540px);
+}
+
+.pbi-payroll-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(330px, 0.85fr);
+  min-height: 0;
+  align-items: stretch;
+  gap: clamp(0.9rem, 1.35vw, 1.4rem);
+}
+
+.pbi-payroll-chart,
+.pbi-payroll-table {
+  min-width: 0;
+}
+
+.pbi-payroll-chart {
+  display: grid;
+  align-items: center;
+  min-height: 300px;
+  padding-right: clamp(0.75rem, 1.2vw, 1.25rem);
+  border-right: 1px solid rgba(9, 71, 128, 0.16);
+}
+
+.pbi-payroll-table {
+  display: grid;
+  align-content: start;
+  overflow: auto;
+}
+
+.pbi-payroll-table .pbi-table-wrap {
+  max-height: 360px;
+}
+
 .pbi-card--featured {
   border-color: var(--pbi-blue);
 }
@@ -3782,6 +3817,22 @@ button.pbi-legend-item:focus-visible,
 
   .pbi-card--table {
     min-height: 240px;
+  }
+
+  .pbi-payroll-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pbi-payroll-chart {
+    min-height: 280px;
+    padding-right: 0;
+    padding-bottom: 1rem;
+    border-right: 0;
+    border-bottom: 1px solid rgba(9, 71, 128, 0.16);
+  }
+
+  .pbi-payroll-table .pbi-table-wrap {
+    max-height: none;
   }
 
   .pbi-card-header {

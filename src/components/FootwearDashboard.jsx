@@ -980,6 +980,8 @@ function HorizontalBars({ data, ariaLabel, color = "#0a4f87", valueFormatter = (
         const selectionValue = item.selectionName || item.workerName || item.name;
         const selected = selectedNames.includes(selectionValue);
         const dimmed = selectedNames.length > 0 && !selected;
+        const barDetail = item.tooltipDetail || (onSelect ? "Haz clic para filtrar" : "");
+        const barDetailFocus = item.tooltipDetail || (onSelect ? "Presiona Enter para filtrar" : "");
         return (
         <div
           className={`pbi-bar-row${selected ? " is-selected" : ""}${dimmed ? " is-dimmed" : ""}`}
@@ -994,8 +996,8 @@ function HorizontalBars({ data, ariaLabel, color = "#0a4f87", valueFormatter = (
               onSelect(item);
             }
           }}
-          onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, valueFormatter(item.value), onSelect ? "Haz clic para filtrar" : "")}
-          onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, valueFormatter(item.value), onSelect ? "Presiona Enter para filtrar" : "")}
+          onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, valueFormatter(item.value), barDetail)}
+          onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, valueFormatter(item.value), barDetailFocus)}
           onBlur={() => setTooltip(null)}
           onMouseLeave={() => setTooltip(null)}
         >
@@ -1042,6 +1044,24 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
         {data.map((item, index) => {
           const selected = selectedNames.includes(item.name);
           const dimmed = selectedNames.length > 0 && !selected;
+          const tooltipLabel = item.year ? `${item.name} ${item.year}` : item.name;
+          const hasSplitDetail = Boolean(item.primaryDetail || item.secondaryDetail);
+          const primaryDetail = item.primaryDetail || (onSelect ? "Haz clic para filtrar" : "");
+          const secondaryDetail = item.secondaryDetail || (onSelect ? "Haz clic para filtrar" : "");
+          const rowDetail = hasSplitDetail
+            ? [item.primaryDetail, item.secondaryDetail].filter(Boolean).join(" · ")
+            : (onSelect ? "Haz clic para filtrar" : "");
+          const rowDetailFocus = hasSplitDetail
+            ? [item.primaryDetail, item.secondaryDetail].filter(Boolean).join(" · ")
+            : (onSelect ? "Presiona Enter para filtrar" : "");
+          const showPrimaryTooltip = (event) => {
+            event.stopPropagation();
+            tooltipAt(event, setTooltip, tooltipLabel, `${primaryLabel}: ${item.primary}`, primaryDetail);
+          };
+          const showSecondaryTooltip = (event) => {
+            event.stopPropagation();
+            tooltipAt(event, setTooltip, tooltipLabel, `${secondaryLabel}: ${item.secondary}`, secondaryDetail);
+          };
           return (
           <div
             className={`pbi-comparison-row${selected ? " is-selected" : ""}${dimmed ? " is-dimmed" : ""}`}
@@ -1056,20 +1076,20 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
                 onSelect(item);
               }
             }}
-            onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `${primaryLabel}: ${item.primary} · ${secondaryLabel}: ${item.secondary}`, onSelect ? "Haz clic para filtrar" : "")}
-            onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `${primaryLabel}: ${item.primary} · ${secondaryLabel}: ${item.secondary}`, onSelect ? "Presiona Enter para filtrar" : "")}
+            onPointerMove={(event) => tooltipAt(event, setTooltip, tooltipLabel, `${primaryLabel}: ${item.primary} · ${secondaryLabel}: ${item.secondary}`, rowDetail)}
+            onFocus={(event) => tooltipAtFocus(event, setTooltip, tooltipLabel, `${primaryLabel}: ${item.primary} · ${secondaryLabel}: ${item.secondary}`, rowDetailFocus)}
             onBlur={() => setTooltip(null)}
             onMouseLeave={() => setTooltip(null)}
           >
             <strong>{item.name}</strong>
-            <span className="pbi-comparison-track" aria-hidden="true">
+            <span className="pbi-comparison-track" aria-hidden="true" onPointerMove={showPrimaryTooltip}>
               <i style={{ width: visibleSeries.primary ? `${(item.primary / maximum) * 100}%` : "0%", backgroundColor: primaryColor, "--pbi-index": index }} />
             </span>
-            <span>{visibleSeries.primary ? item.primary : "—"}</span>
-            <span className="pbi-comparison-track" aria-hidden="true">
+            <span onPointerMove={showPrimaryTooltip}>{visibleSeries.primary ? item.primary : "—"}</span>
+            <span className="pbi-comparison-track" aria-hidden="true" onPointerMove={showSecondaryTooltip}>
               <i style={{ width: visibleSeries.secondary ? `${(item.secondary / maximum) * 100}%` : "0%", backgroundColor: secondaryColor, "--pbi-index": index }} />
             </span>
-            <span>{visibleSeries.secondary ? item.secondary : "—"}</span>
+            <span onPointerMove={showSecondaryTooltip}>{visibleSeries.secondary ? item.secondary : "—"}</span>
           </div>
         );})}
       </div>
@@ -1109,6 +1129,12 @@ function AttendanceBars({ data, onSelect, selectedNames = [] }) {
           const selectionValue = item.workerName || item.name;
           const selected = selectedNames.includes(selectionValue);
           const dimmed = selectedNames.length > 0 && !selected;
+          const attendanceDates = [
+            item.late ? `Última tardanza: ${formatCalendarDate(item.lastLate)}` : null,
+            item.absent ? `Última falta: ${formatCalendarDate(item.lastAbsent)}` : null
+          ].filter(Boolean).join(" · ");
+          const attendanceDetail = attendanceDates || (onSelect ? "Haz clic para filtrar" : "");
+          const attendanceDetailFocus = attendanceDates || (onSelect ? "Presiona Enter para filtrar" : "");
           return (
           <div
             className={`pbi-attendance-row${selected ? " is-selected" : ""}${dimmed ? " is-dimmed" : ""}`}
@@ -1123,8 +1149,8 @@ function AttendanceBars({ data, onSelect, selectedNames = [] }) {
                 onSelect(item);
               }
             }}
-            onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `Asistencia ${item.punctual} · Tardanza ${item.late} · Ausente ${item.absent}`, onSelect ? "Haz clic para filtrar" : "")}
-            onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `Asistencia ${item.punctual} · Tardanza ${item.late} · Ausente ${item.absent}`, onSelect ? "Presiona Enter para filtrar" : "")}
+            onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `Asistencia ${item.punctual} · Tardanza ${item.late} · Ausente ${item.absent}`, attendanceDetail)}
+            onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `Asistencia ${item.punctual} · Tardanza ${item.late} · Ausente ${item.absent}`, attendanceDetailFocus)}
             onBlur={() => setTooltip(null)}
             onMouseLeave={() => setTooltip(null)}
           >
@@ -1334,6 +1360,9 @@ function DonutChart({ id, data, ariaLabel, unit = "pares", onSelect, selectedNam
             offset += percent;
             const selected = selectedNames.includes(item.name);
             const dimmed = hiddenNames.includes(item.name) || (selectedNames.length > 0 && !selected);
+            const donutDetail = item.lastDate
+              ? `${percent.toFixed(1)}% del total · Más reciente: ${formatCalendarDate(item.lastDate)}`
+              : `${percent.toFixed(1)}% del total`;
             return (
               <circle
                 className={`pbi-donut-segment${selected ? " is-selected" : ""}${dimmed ? " is-dimmed" : ""}`}
@@ -1357,8 +1386,8 @@ function DonutChart({ id, data, ariaLabel, unit = "pares", onSelect, selectedNam
                     onSelect(item);
                   }
                 }}
-                onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `${item.value} ${unit}`, `${percent.toFixed(1)}% del total`)}
-                onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `${item.value} ${unit}`, `${percent.toFixed(1)}% del total`)}
+                onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `${item.value} ${unit}`, donutDetail)}
+                onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `${item.value} ${unit}`, donutDetail)}
                 onBlur={() => setTooltip(null)}
                 onMouseLeave={() => setTooltip(null)}
               >
@@ -1455,6 +1484,15 @@ function taskMonthlySeries(task, year) {
     || distributeTotal(task.yearly[year] || 0, YEAR_MONTHLY_TASKS[year]);
 }
 
+// Formatea una fecha "AAAA-MM-DD" (sin hora) a "DD/MM/AAAA" para los
+// tooltips con detalle; se evita Date/timezone porque el valor ya es un dia
+// de calendario puro.
+function formatCalendarDate(dateStr) {
+  const [year, month, day] = String(dateStr || "").split("-");
+  if (!year || !month || !day) return dateStr || "";
+  return `${day}/${month}/${year}`;
+}
+
 function selectedLabel(options, values, fallback) {
   if (!values.length) return fallback;
   const labels = values.map((value) => options.find((option) => option.value === value)?.label).filter(Boolean);
@@ -1470,6 +1508,7 @@ export default function FootwearDashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedWorkerIds, setSelectedWorkerIds] = useState([]);
   const [selectedRoles, setSelectedRoles] = useState([]);
+  const [selectedWorkerStatus, setSelectedWorkerStatus] = useState([]);
   const [selectedBrands, setSelectedBrands] = useState([]);
   const [selectedYears, setSelectedYears] = useState([]);
   const [dateParts, setDateParts] = useState({});
@@ -1569,7 +1608,8 @@ export default function FootwearDashboard() {
   function matchesWorker(workerId) {
     const worker = workerById.get(Number(workerId));
     return (!selectedWorkerIds.length || selectedWorkerIds.includes(Number(workerId)))
-      && (!selectedRoles.length || (worker && selectedRoles.includes(worker.role)));
+      && (!selectedRoles.length || (worker && selectedRoles.includes(worker.role)))
+      && (!selectedWorkerStatus.length || (worker && selectedWorkerStatus.includes(worker.active ? "activo" : "inactivo")));
   }
 
   const tasksAllowedByFilters = TASK_CATALOG.filter((task) => (
@@ -1591,7 +1631,10 @@ export default function FootwearDashboard() {
     && allowedTaskIds.has(row.taskId)
   ));
 
-  const workerOptions = WORKERS.filter((worker) => !selectedRoles.length || selectedRoles.includes(worker.role)).map((worker) => ({
+  const workerOptions = WORKERS.filter((worker) => (
+    (!selectedRoles.length || selectedRoles.includes(worker.role))
+    && (!selectedWorkerStatus.length || selectedWorkerStatus.includes(worker.active ? "activo" : "inactivo"))
+  )).map((worker) => ({
     value: worker.id,
     label: worker.name,
     count: (dashboardData?.activities || []).filter((row) => row.workerId === worker.id && matchesDashboardDate(row.date)).reduce((sum, row) => sum + row.points, 0)
@@ -1603,6 +1646,10 @@ export default function FootwearDashboard() {
     value, active, label: value.replace(/\b\w/g, (letter) => letter.toUpperCase())
   }));
   const roleOptions = ROLE_OPTIONS.map((role) => ({ value: role.value, label: role.label, count: role.active }));
+  const statusOptions = [
+    { value: "activo", label: "Activo", count: WORKERS.filter((worker) => worker.active).length },
+    { value: "inactivo", label: "Inactivo", count: WORKERS.filter((worker) => !worker.active).length }
+  ];
   const brandOptions = BRAND_NAMES.map((name) => ({
     value: name, label: name,
     count: (dashboardData?.activities || []).filter((row) => brandById.get(row.brandId) === name && matchesDashboardDate(row.date)).length
@@ -1639,13 +1686,17 @@ export default function FootwearDashboard() {
     && (!incident.taskId || allowedTaskIds.has(incident.taskId))
   ));
   const incidentCountByTask = visibleIncidentRecords.reduce((counts, incident) => {
-    counts.set(incident.taskId, (counts.get(incident.taskId) || 0) + 1);
+    const item = counts.get(incident.taskId) || { value: 0, lastDate: null };
+    item.value += 1;
+    if (!item.lastDate || incident.date > item.lastDate) item.lastDate = incident.date;
+    counts.set(incident.taskId, item);
     return counts;
   }, new Map());
-  const filteredErrorsByTask = [...incidentCountByTask.entries()].map(([taskId, value]) => ({
+  const filteredErrorsByTask = [...incidentCountByTask.entries()].map(([taskId, { value, lastDate }]) => ({
     id: taskId,
     name: taskById.get(taskId)?.shortName || `Tarea ${taskId}`,
-    value
+    value,
+    tooltipDetail: lastDate ? `Más reciente: ${formatCalendarDate(lastDate)}` : ""
   })).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
   const filteredErrorRates = filteredErrorsByTask.map((item) => {
     const taskItem = taskById.get(item.id);
@@ -1671,14 +1722,22 @@ export default function FootwearDashboard() {
   const filteredAttendance = [...(dashboardData?.attendances || []).filter((row) => matchesDashboardDate(row.date) && matchesWorker(row.workerId)).reduce((totals, row) => {
     const worker = workerById.get(row.workerId);
     if (!worker) return totals;
-    const item = totals.get(row.workerId) || { name: worker.alias, workerName: worker.name, workerId: worker.id, absent: 0, punctual: 0, late: 0 };
+    const item = totals.get(row.workerId) || {
+      name: worker.alias, workerName: worker.name, workerId: worker.id,
+      absent: 0, punctual: 0, late: 0, lastLate: null, lastAbsent: null
+    };
     // Agrupado en tres categorias para contabilizar facil: "asistencia"
     // (Asistencia, Medio turno, Apoyo), "tardanza" (aparte) y "ausente"
     // (Falta, Suspension, Descanso medico, Permiso).
     const group = attendanceGroup(row.state);
     if (group === "asistencia") item.punctual += 1;
-    else if (group === "tardanza") item.late += 1;
-    else item.absent += 1;
+    else if (group === "tardanza") {
+      item.late += 1;
+      if (!item.lastLate || row.date > item.lastLate) item.lastLate = row.date;
+    } else {
+      item.absent += 1;
+      if (!item.lastAbsent || row.date > item.lastAbsent) item.lastAbsent = row.date;
+    }
     totals.set(row.workerId, item);
     return totals;
   }, new Map()).values()];
@@ -1730,24 +1789,36 @@ export default function FootwearDashboard() {
     && (!movementYear || Number(row.date.slice(0, 4)) === Number(movementYear))
     && matchesWorker(row.workerId)
   ));
-  const filteredRotation = MONTHLY_TASKS.map((month, monthIndex) => ({
-    name: month.label,
-    primary: visibleMovements.filter((row) => Number(row.date.slice(5, 7)) === monthIndex + 1 && /ingreso/i.test(row.type)).length,
-    secondary: visibleMovements.filter((row) => Number(row.date.slice(5, 7)) === monthIndex + 1 && /salida/i.test(row.type)).length
-  }));
+  const filteredRotation = MONTHLY_TASKS.map((month, monthIndex) => {
+    const monthMovements = visibleMovements.filter((row) => Number(row.date.slice(5, 7)) === monthIndex + 1);
+    const entries = monthMovements.filter((row) => /ingreso/i.test(row.type));
+    const exits = monthMovements.filter((row) => /salida/i.test(row.type));
+    const formatDates = (rows) => rows.map((row) => formatCalendarDate(row.date)).join(", ");
+    return {
+      name: month.label,
+      year: movementYear || null,
+      primary: entries.length,
+      secondary: exits.length,
+      primaryDetail: entries.length ? `Fechas de ingreso: ${formatDates(entries)}` : "Sin ingresos registrados",
+      secondaryDetail: exits.length ? `Fechas de salida: ${formatDates(exits)}` : "Sin salidas registradas"
+    };
+  });
   const EXIT_REASONS = [...visibleMovements.filter((row) => /salida/i.test(row.type) && (!selectedMovementMonths.length || selectedMovementMonths.includes(MONTHLY_TASKS[Number(row.date.slice(5, 7)) - 1].label))).reduce((totals, row) => {
     const name = row.reason || "Sin especificar";
-    totals.set(name, (totals.get(name) || 0) + 1);
+    const item = totals.get(name) || { value: 0, lastDate: null };
+    item.value += 1;
+    if (!item.lastDate || row.date > item.lastDate) item.lastDate = row.date;
+    totals.set(name, item);
     return totals;
-  }, new Map()).entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  }, new Map()).entries()].map(([name, { value, lastDate }]) => ({ name, value, lastDate })).sort((a, b) => b.value - a.value);
 
   const nowParts = dashboardDateParts();
-  const payrollCandidateYears = selectedYears.length ? selectedYears : dashboardYears;
-  const payrollYear = payrollCandidateYears.includes(nowParts.year) ? nowParts.year : payrollCandidateYears.at(-1);
-  const payrollLastMonth = payrollYear < nowParts.year ? 12 : payrollYear === nowParts.year ? nowParts.month : 0;
+  // La planilla siempre muestra el año actual: el slicer "Año" no la afecta,
+  // solo sirve para acotar el resto del dashboard.
+  const payrollYear = nowParts.year;
+  const payrollLastMonth = Math.max(nowParts.month - 1, 0);
   const allowedPayrollWorkers = new Set(workersAllowedByFilters.map((worker) => Number(worker.id)));
-  const payrollMonthIndexes = Array.from({ length: payrollLastMonth }, (_, index) => index)
-    .filter((monthIndex) => !Object.keys(dateParts).length || Object.prototype.hasOwnProperty.call(dateParts, monthIndex + 1));
+  const payrollMonthIndexes = Array.from({ length: payrollLastMonth }, (_, index) => index);
   const filteredPayroll = payrollMonthIndexes.map((monthIndex) => {
     const byWorker = dashboardData?.payrollByWorker?.[payrollYear]?.[monthIndex];
     const value = byWorker
@@ -1757,7 +1828,10 @@ export default function FootwearDashboard() {
       : Object.entries(dashboardData?.payrollByRole?.[payrollYear]?.[monthIndex] || {}).reduce((sum, [role, amount]) => (
         !selectedRoles.length || selectedRoles.includes(role) ? sum + Number(amount || 0) : sum
       ), 0);
-    return { ...MONTHLY_TASKS[monthIndex], value };
+    const workers = byWorker
+      ? Object.keys(byWorker).filter((workerId) => allowedPayrollWorkers.has(Number(workerId))).length
+      : Number(dashboardData?.payrollWorkersByMonth?.[payrollYear]?.[monthIndex] || 0);
+    return { ...MONTHLY_TASKS[monthIndex], value, workers };
   });
   const payrollTotal = filteredPayroll.reduce((sum, item) => sum + item.value, 0);
   const payrollPeriodLabel = payrollMonthIndexes.length
@@ -1765,7 +1839,12 @@ export default function FootwearDashboard() {
       ? `ene–${MONTHLY_TASKS[payrollMonthIndexes.at(-1)].label.toLowerCase()}`
       : `${payrollMonthIndexes.length} meses seleccionados`
     : "sin período";
-  const activeWorkers = workersAllowedByFilters.filter((worker) => worker.active);
+  // Sin filtro de estado, las tarjetas de personal siguen mostrando solo
+  // activos (comportamiento previo); al elegir un estado se respeta la
+  // seleccion, incluyendo ver inactivos o ambos a la vez.
+  const activeWorkers = selectedWorkerStatus.length
+    ? workersAllowedByFilters
+    : workersAllowedByFilters.filter((worker) => worker.active);
   const personnelKpis = [
     { label: "Total Trabajadores", value: activeWorkers.length },
     { label: "Total Operantes", value: activeWorkers.filter((worker) => ["operante", "jefe de equipo", "jefe de grupo"].includes(worker.role)).length },
@@ -1851,6 +1930,14 @@ export default function FootwearDashboard() {
     }));
   }
 
+  function changeWorkerStatus(nextStatus) {
+    setSelectedWorkerStatus(nextStatus);
+    setSelectedWorkerIds((current) => current.filter((id) => {
+      const worker = WORKERS.find((candidate) => candidate.id === id);
+      return worker && (!nextStatus.length || nextStatus.includes(worker.active ? "activo" : "inactivo"));
+    }));
+  }
+
   async function toggleFullscreen() {
     const element = dashboardRef.current;
     if (!element) return;
@@ -1871,6 +1958,7 @@ export default function FootwearDashboard() {
   const activeFilters = [
     selectedWorkerIds.length ? { key: "workers", label: `Trabajador: ${selectedLabel(workerOptions, selectedWorkerIds, "Todos")}`, clear: () => setSelectedWorkerIds([]) } : null,
     selectedRoles.length ? { key: "roles", label: `Cargo: ${selectedLabel(roleOptions, selectedRoles, "Todos")}`, clear: () => setSelectedRoles([]) } : null,
+    selectedWorkerStatus.length ? { key: "status", label: `Estado: ${selectedLabel(statusOptions, selectedWorkerStatus, "Todos")}`, clear: () => setSelectedWorkerStatus([]) } : null,
     selectedBrands.length ? { key: "brands", label: `Marca: ${selectedLabel(brandOptions, selectedBrands, "Todas")}`, clear: () => setSelectedBrands([]) } : null,
     selectedYears.length ? { key: "years", label: `Año: ${selectedYears.join(", ")}`, clear: () => setSelectedYears([]) } : null,
     Object.keys(dateParts).length ? { key: "date", label: `Fecha: ${Object.keys(dateParts).length} mes(es)`, clear: () => setDateParts({}) } : null,
@@ -1947,6 +2035,7 @@ export default function FootwearDashboard() {
             <div className="pbi-filter-grid">
               <MultiSlicer id="workers" label="Trabajadores" options={workerOptions} selected={selectedWorkerIds} onChange={setSelectedWorkerIds} allLabel="Todos" />
               <MultiSlicer id="roles" label="Cargos" options={roleOptions} selected={selectedRoles} onChange={changeRoles} allLabel="Todos" searchable={false} />
+              <MultiSlicer id="status" label="Estado" options={statusOptions} selected={selectedWorkerStatus} onChange={changeWorkerStatus} allLabel="Todos" searchable={false} />
               <MultiSlicer id="brands" label="Marcas" options={brandOptions} selected={selectedBrands} onChange={setSelectedBrands} allLabel="Todas" />
               <MultiSlicer
                 id="years"
@@ -2115,7 +2204,7 @@ export default function FootwearDashboard() {
                   id="pbi-brand-pairs"
                   title="Pares Etiquetados por Marca"
                   meta={`${numberFormatter.format(filteredBrands.reduce((sum, item) => sum + item.value, 0))} pares`}
-                  className="pbi-card--chart pbi-card--treemap pbi-card--span-4"
+                  className="pbi-card--chart pbi-card--treemap pbi-card--span-12"
                 >
                   <TreemapChart
                     data={filteredBrands}
@@ -2209,15 +2298,34 @@ export default function FootwearDashboard() {
                   id="pbi-payroll"
                   title={`Costo de Planilla Mensual (${payrollYear || "—"})`}
                   meta={`${currencyFormatter.format(payrollTotal)} · ${payrollPeriodLabel}`}
-                  className="pbi-card--chart pbi-card--span-6"
+                  className="pbi-card--chart pbi-card--span-12 pbi-card--payroll"
                 >
-                  <LineChart
-                    id="pbi-payroll"
-                    data={filteredPayroll}
-                    ariaLabel={`Costo mensual de planilla ${payrollYear || ""}, ${payrollPeriodLabel}, total ${currencyFormatter.format(payrollTotal)}`}
-                    valueFormatter={(value) => value >= 1000 ? `S/ ${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}k` : `S/ ${value}`}
-                    tone="blue"
-                  />
+                  <div className="pbi-payroll-layout">
+                    <div className="pbi-payroll-chart">
+                      <LineChart
+                        id="pbi-payroll"
+                        data={filteredPayroll}
+                        ariaLabel={`Costo mensual de planilla ${payrollYear || ""}, ${payrollPeriodLabel}, total ${currencyFormatter.format(payrollTotal)}`}
+                        valueFormatter={(value) => value >= 1000 ? `S/ ${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}k` : `S/ ${value}`}
+                        tone="blue"
+                      />
+                    </div>
+                    <div className="pbi-payroll-table">
+                      <DataTable
+                        caption={`Planilla mensual estimada de ${payrollYear}`}
+                        columns={[
+                          { key: "name", label: "Mes" },
+                          { key: "workers", label: "Trabajadores" },
+                          { key: "cost", label: "Costo estimado" }
+                        ]}
+                        rows={filteredPayroll.map((item) => ({
+                          name: item.name,
+                          workers: item.workers,
+                          cost: currencyFormatter.format(item.value)
+                        }))}
+                      />
+                    </div>
+                  </div>
                 </Card>
               </div>
             </section>

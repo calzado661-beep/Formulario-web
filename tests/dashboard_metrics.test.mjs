@@ -16,22 +16,31 @@ test("la fecha operativa se calcula en America/Lima", () => {
   );
 });
 
-test("la planilla excluye inactivos, respeta altas/bajas y no proyecta meses futuros", () => {
+test("la planilla usa movimientos, prorratea altas y bajas, admite reingresos y solo incluye meses terminados", () => {
   const users = [
-    { id: 1, rol: "operante", activo: true, sueldo: 1000, fecha_ingreso: "2026-01-01", fecha_salida: null },
-    { id: 2, rol: "otros", activo: false, sueldo: 9000, fecha_ingreso: "2025-01-01", fecha_salida: null },
-    { id: 3, rol: "administrador", activo: true, sueldo: 2000, fecha_ingreso: "2026-03-10", fecha_salida: "2026-06-15" }
+    { id: 1, rol: "operante", sueldo: 3100 },
+    { id: 2, rol: "otros", sueldo: 2800 }
   ];
-  const payroll = buildDashboardPayroll(users, [2026], {
+  const movements = [
+    { id: 1, usuario_id: 1, tipo_movimiento: "Ingreso", fecha_movimiento: "2026-01-16" },
+    { id: 2, usuario_id: 1, tipo_movimiento: "Salida", fecha_movimiento: "2026-02-10" },
+    { id: 3, usuario_id: 1, tipo_movimiento: "Ingreso", fecha_movimiento: "2026-02-20" },
+    { id: 4, usuario_id: 2, tipo_movimiento: "Ingreso", fecha_movimiento: "2026-01-01" },
+    // Ingreso duplicado: no debe duplicar dias ni costo.
+    { id: 5, usuario_id: 2, tipo_movimiento: "Ingreso", fecha_movimiento: "2026-01-05" }
+  ];
+  const payroll = buildDashboardPayroll(users, movements, [2026], {
     today: new Date("2026-08-13T18:00:00.000-05:00"),
     normalizeRole: (role) => role
   });
 
-  assert.deepEqual(payroll.byRole[2026][0], { operante: 1000 });
-  assert.deepEqual(payroll.byRole[2026][2], { operante: 1000, administrador: 2000 });
-  assert.deepEqual(payroll.byRole[2026][6], { operante: 1000 });
+  assert.deepEqual(payroll.byRole[2026][0], { operante: 1600, otros: 2800 });
+  assert.deepEqual(payroll.byRole[2026][1], { operante: 2103.57, otros: 2800 });
+  assert.deepEqual(payroll.byRole[2026][6], { operante: 3100, otros: 2800 });
+  assert.deepEqual(payroll.byRole[2026][7], {});
   assert.deepEqual(payroll.byRole[2026][8], {});
-  assert.deepEqual(payroll.byWorker[2026][2], { 1: 1000, 3: 2000 });
+  assert.deepEqual(payroll.byWorker[2026][0], { 1: 1600, 2: 2800 });
+  assert.equal(payroll.workersByMonth[2026][0], 2);
 });
 
 test("pares por marca usa solo Etiquetado y suma cantidades reales", () => {

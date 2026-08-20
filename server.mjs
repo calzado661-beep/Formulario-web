@@ -1402,7 +1402,8 @@ async function handleReadFootwearDashboard(request, response) {
       };
     };
 
-    const payroll = buildDashboardPayroll(users, dashboardYears, { normalizeRole });
+    const payrollYear = Number(currentLimaDate().slice(0, 4));
+    const payroll = buildDashboardPayroll(users, movements, [payrollYear], { normalizeRole });
 
     response.setHeader("cache-control", "no-store, no-cache, must-revalidate");
     sendJson(response, 200, {
@@ -1452,6 +1453,7 @@ async function handleReadFootwearDashboard(request, response) {
       })),
       payrollByRole: payroll.byRole,
       payrollByWorker: payroll.byWorker,
+      payrollWorkersByMonth: payroll.workersByMonth,
       dataQuality: {
         activitiesWithoutStoredScore: [...workerRecords, ...leaderRecords]
           .filter((row) => row.puntaje === null || row.puntaje === undefined).length
