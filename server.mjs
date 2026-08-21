@@ -2058,15 +2058,28 @@ async function handleDeleteAmonestacion(request, response, amonestacionId) {
   }
 }
 
+async function selectAttendanceCatalog() {
+  const result = await supabase.from("dato_asistencia").select("estado,nombre,sigla");
+  if (result.error) throw result.error;
+  return new Map((result.data || []).map((item) => [item.estado, item]));
+}
+
 async function handleReadAttendances(request, response) {
   try {
     if (!requireAdministrator(request, response)) return;
     const url = new URL(request.url, `http://${request.headers.host}`);
     let query = supabase.from("asistencias").select("*").order("fecha", { ascending: false });
     if (url.searchParams.get("date")) query = query.eq("fecha", url.searchParams.get("date"));
-    const result = await query;
+    const [result, catalog] = await Promise.all([query, selectAttendanceCatalog()]);
     if (result.error) throw result.error;
-    sendJson(response, 200, { attendances: result.data || [] });
+    // La sigla se saca del catalogo dato_asistencia en vez de repetirla en
+    // cada fila o en el codigo del cliente.
+    const attendances = (result.data || []).map((row) => ({
+      ...row,
+      sigla: catalog.get(row.estado)?.sigla || "",
+      estado_nombre: catalog.get(row.estado)?.nombre || row.estado
+    }));
+    sendJson(response, 200, { attendances });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo cargar la asistencia." });
   }
