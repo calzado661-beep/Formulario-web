@@ -268,10 +268,10 @@ function missingSchemaColumn(error) {
   return /Could not find the '([^']+)' column/i.exec(String(error?.message || ""))?.[1] || null;
 }
 
-async function nextTableId(tableName) {
-  const result = await supabase.from(tableName).select("id").order("id", { ascending: false }).limit(1);
+async function nextTableId(tableName, idColumn = "id") {
+  const result = await supabase.from(tableName).select(idColumn).order(idColumn, { ascending: false }).limit(1);
   if (result.error) throw result.error;
-  return Number(result.data?.[0]?.id || 0) + 1;
+  return Number(result.data?.[0]?.[idColumn] || 0) + 1;
 }
 
 async function insertCompatibleActivityRow(payload) {
@@ -1273,14 +1273,14 @@ function isMissingDashboardResource(error) {
     || /could not find (?:the table|the .* column)|does not exist/i.test(String(error?.message || ""));
 }
 
-async function selectAllDashboardRows(tableName, { optional = false } = {}) {
+async function selectAllDashboardRows(tableName, { optional = false, idColumn = "id" } = {}) {
   const pageSize = 1000;
   const rows = [];
   for (let from = 0; ; from += pageSize) {
     const result = await supabase
       .from(tableName)
       .select("*")
-      .order("id", { ascending: true })
+      .order(idColumn, { ascending: true })
       .range(from, from + pageSize - 1);
     if (result.error) {
       if (optional && isMissingDashboardResource(result.error)) return [];
@@ -1335,7 +1335,7 @@ async function handleReadFootwearDashboard(request, response) {
       selectAllDashboardRows("registros_tareas", { optional: true }),
       selectAllDashboardRows("registros_tareas_jefe_equipo", { optional: true }),
       selectAllDashboardRows("asistencias", { optional: true }),
-      selectAllDashboardRows("incidentes", { optional: true }),
+      selectAllDashboardRows("registro_errores", { optional: true, idColumn: "id_error" }),
       selectAllDashboardRows("areas_departamento", { optional: true }),
       selectAllDashboardRows("amonestaciones", { optional: true }),
       selectAllDashboardRows("movimientos_personal", { optional: true }),
@@ -1352,8 +1352,8 @@ async function handleReadFootwearDashboard(request, response) {
     workerRecords.forEach((row) => collectYear(row.fecha_registro || row.created_at));
     leaderRecords.forEach((row) => collectYear(row.fecha_registro || row.created_at));
     attendances.forEach((row) => collectYear(row.fecha || row.created_at));
-    incidents.forEach((row) => collectYear(row.fecha_incidente || row.created_at));
-    warnings.forEach((row) => collectYear(row.created_at));
+    incidents.forEach((row) => collectYear(row.fecha_error || row.created_at));
+    warnings.forEach((row) => collectYear(row.fecha || row.created_at));
     movements.forEach((row) => collectYear(row.fecha_movimiento || row.created_at));
     trainingAssignments.forEach((row) => collectYear(row.completado_en || row.created_at));
     const dashboardYears = [...years].filter(Number.isFinite).sort((a, b) => a - b);
@@ -1399,6 +1399,9 @@ async function handleReadFootwearDashboard(request, response) {
         quantity: Number(row.cantidad || 0),
         minutes,
         brandId: Number(row.marca_id) || null,
+        guideNumber: String(row.numero_guia || "").trim() || null,
+        lote: String(row.lote || (!Number.isFinite(numericExtra) ? row.dato_extra : "") || "").trim() || null,
+        observation: String(row.observacion || "").trim() || null,
         points: Number.isFinite(storedPoints) ? storedPoints : Number(fallbackPoints || 0),
         pointsStored: storedPoints !== null && Number.isFinite(storedPoints)
       };
@@ -1435,7 +1438,7 @@ async function handleReadFootwearDashboard(request, response) {
         state: String(row.estado || "FALTA").toUpperCase(), earlyExit: Boolean(row.retiro_anticipado)
       })).filter((row) => row.workerId && row.date),
       incidents: incidents.map((row) => ({
-        id: Number(row.id), workerId: Number(row.usuario_id) || null, taskId: Number(row.tarea_id),
+        id: Number(row.id_error), workerId: Number(row.usuario_id) || null, taskId: Number(row.tarea_id),
         offenderName: String(row.es_trabajador
           ? incidentUserById.get(Number(row.usuario_id))?.nombre || `Usuario ${row.usuario_id}`
           : incidentAreaById.get(Number(row.area_id))?.nombre || "Área sin identificar"),
@@ -1443,9 +1446,14 @@ async function handleReadFootwearDashboard(request, response) {
         taskName: String(taskTitle(scoredTaskById.get(Number(row.tarea_id))) || ""), errorType: String(row.tipo_error || "Sin tipo"),
         shift: String(row.turno || "Sin turno").trim().toLowerCase(),
         storeId: Number(row.tienda_id) || null,
-        date: dashboardDate(row.fecha_incidente || row.created_at)
+        date: dashboardDate(row.fecha_error || row.created_at)
       })).filter((row) => row.date),
-      warnings: warnings.map((row) => ({ id: Number(row.id), workerId: Number(row.usuario_id), date: dashboardDate(row.created_at) })),
+      warnings: warnings.map((row) => ({
+        id: Number(row.id),
+        workerId: Number(row.usuario_id),
+        date: dashboardDate(row.fecha || row.created_at),
+        documentType: String(row.tipo_documento || "").trim().toUpperCase()
+      })).filter((row) => row.workerId && row.date),
       movements: movements.map((row) => ({
         id: Number(row.id), workerId: Number(row.usuario_id), type: String(row.tipo_movimiento || ""),
         reason: String(row.motivo || "Sin especificar"), date: dashboardDate(row.fecha_movimiento || row.created_at)
@@ -1751,7 +1759,7 @@ async function handleDeleteTask(request, response, taskId) {
     const historyResults = await Promise.all([
       supabase.from("registros_tareas").select("id", { count: "exact", head: true }).eq("tarea_id", taskId),
       supabase.from("registros_tareas_jefe_equipo").select("id", { count: "exact", head: true }).eq("tarea_id", taskId),
-      supabase.from("incidentes").select("id", { count: "exact", head: true }).eq("tarea_id", taskId)
+      supabase.from("registro_errores").select("id_error", { count: "exact", head: true }).eq("tarea_id", taskId)
     ]);
     const historyError = historyResults.find((result) => result.error)?.error;
     if (historyError) throw historyError;
@@ -4087,9 +4095,9 @@ async function loadIncidentData() {
     supabase.from("tiendas").select("id,nombre,activo").order("id", { ascending: true }),
     supabase.from("areas_departamento").select("id,nombre").order("nombre", { ascending: true }),
     supabase
-      .from("incidentes")
-      .select("id,turno,tarea_id,tienda_id,numero_guia,observacion,tipo_error,usuario_id,responsable_id,fecha_incidente,es_trabajador,area_id")
-      .order("fecha_incidente", { ascending: false })
+      .from("registro_errores")
+      .select("id_error,turno,tarea_id,tienda_id,numero_guia,observacion,tipo_error,usuario_id,fecha_error,es_trabajador,area_id")
+      .order("fecha_error", { ascending: false })
   ]);
 
   if (usersResult.error) throw usersResult.error;
@@ -4143,7 +4151,7 @@ async function handleCreateIncident(request, response) {
     const guideNumber = String(body.numero_guia || "").trim();
     const errorType = String(body.tipo_error || "").trim().toUpperCase();
     const areaId = Number(body.area_id);
-    const isAreaIncident = turno === "incidencia";
+    const isAreaIncident = ["incidencia", "error"].includes(turno);
 
     if (![taskId, storeId].every((id) => Number.isInteger(id) && id > 0)) {
       sendJson(response, 400, { error: "Tarea y tienda son obligatorias." });
@@ -4157,7 +4165,7 @@ async function handleCreateIncident(request, response) {
       sendJson(response, 400, { error: "El tipo de error debe ser CONTENIDO o LIBERADO." });
       return;
     }
-    if (!["turno regular", "incidencia", "turno extra"].includes(turno)) {
+    if (!["turno regular", "incidencia", "error", "turno extra"].includes(turno)) {
       sendJson(response, 400, { error: "Selecciona un turno valido." });
       return;
     }
@@ -4200,7 +4208,7 @@ async function handleCreateIncident(request, response) {
     }
 
     const payload = {
-      turno,
+      turno: isAreaIncident ? "incidencia" : turno,
       tarea_id: task.id,
       tienda_id: store.id,
       numero_guia: guideNumber,
@@ -4209,13 +4217,13 @@ async function handleCreateIncident(request, response) {
       usuario_id: isAreaIncident ? null : worker.id,
       area_id: isAreaIncident ? area.id : null,
       es_trabajador: !isAreaIncident,
-      fecha_incidente: currentLimaDate()
+      fecha_error: currentLimaDate()
     };
-    let result = await supabase.from("incidentes").insert(payload).select("*").single();
+    let result = await supabase.from("registro_errores").insert(payload).select("*").single();
     if (isPrimaryKeySequenceConflict(result.error)) {
       result = await supabase
-        .from("incidentes")
-        .insert({ ...payload, id: await nextTableId("incidentes") })
+        .from("registro_errores")
+        .insert({ ...payload, id_error: await nextTableId("registro_errores", "id_error") })
         .select("*")
         .single();
     }

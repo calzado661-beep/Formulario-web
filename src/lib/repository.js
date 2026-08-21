@@ -193,8 +193,8 @@ export function friendlyError(error) {
   if (/numeric field overflow|precision 10, scale 2/i.test(message)) {
     return "Una cantidad supera el maximo permitido por la base de datos: 99,999,999.99.";
   }
-  if (/incidentes|usuario_id/i.test(message) && /could not find|does not exist|schema cache/i.test(message)) {
-    return "Falta ejecutar la migración de incidencias en Supabase: sql/010_incidentes_estructura.sql.";
+  if (/registro_errores|usuario_id/i.test(message) && /could not find|does not exist|schema cache/i.test(message)) {
+    return "No se encontró la estructura actual de registro_errores en Supabase.";
   }
   if (/registros_tareas_jefe_equipo|marca_id|tienda_id/i.test(message) && /could not find|does not exist|schema cache/i.test(message)) {
     return "Falta ejecutar la migración de marca/tienda en Supabase: sql/024_registros_jefe_equipo_marca_tienda.sql.";
@@ -1052,13 +1052,13 @@ export async function listAllActivityLogs() {
 }
 
 export async function listIncidentes() {
-  const result = await db().from("incidentes").select("*").order("created_at", { ascending: false });
+  const result = await db().from("registro_errores").select("*").order("fecha_error", { ascending: false });
   if (result.error) return [];
   return result.data || [];
 }
 
 export async function createIncidente(payload) {
-  ensureOk(await db().from("incidentes").insert(payload));
+  ensureOk(await db().from("registro_errores").insert(payload));
 }
 
 export async function loadIncidentContext() {

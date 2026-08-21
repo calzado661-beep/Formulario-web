@@ -189,13 +189,13 @@ def delete_tienda(supabase: Client, tienda_id: Any) -> None:
 
 def list_incidentes(supabase: Client) -> list[dict[str, Any]]:
     try:
-        return supabase.table("incidentes").select("*").order("created_at", desc=True).execute().data or []
+        return supabase.table("registro_errores").select("*").order("fecha_error", desc=True).execute().data or []
     except Exception:
         return []
 
 
 def create_incidente(supabase: Client, payload: dict[str, Any]) -> None:
-    supabase.table("incidentes").insert(payload).execute()
+    supabase.table("registro_errores").insert(payload).execute()
 
 
 def list_attendances(supabase: Client) -> list[dict[str, Any]]:

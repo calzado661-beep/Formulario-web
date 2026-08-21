@@ -502,7 +502,7 @@ function IncidentDashboard({ user }) {
   async function handleSubmit(event) {
     event.preventDefault();
     setStatus(null);
-    const isAreaIncident = form.turno === "incidencia";
+    const isAreaIncident = ["incidencia", "error"].includes(form.turno);
     if (!isAreaIncident && !workers.some((worker) => String(worker.id) === String(form.usuario_id))) {
       setStatus({ type: "error", message: "Selecciona un operante." });
       return;
@@ -549,7 +549,7 @@ function IncidentDashboard({ user }) {
     }
   }
   const rows = incidents.map((incident) => ({
-    Fecha: formatDateLima(incident.fecha_incidente),
+    Fecha: formatDateLima(incident.fecha_error),
     "Usuario / Área": incident.es_trabajador ? incident.usuario_nombre : incident.area_nombre,
     Tarea: incident.tarea_nombre,
     "N\xFAmero de gu\xEDa": incident.numero_guia,
@@ -568,9 +568,9 @@ function IncidentDashboard({ user }) {
     loading ? /* @__PURE__ */ React.createElement(LoadingBlock, null) : null,
     error ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, error) : null,
     status ? /* @__PURE__ */ React.createElement(Alert, { type: status.type }, status.message) : null,
-    !loading && !workers.length && form.turno !== "incidencia" ? /* @__PURE__ */ React.createElement(Alert, null, "No hay operantes activos.") : null,
+    !loading && !workers.length && !["incidencia", "error"].includes(form.turno) ? /* @__PURE__ */ React.createElement(Alert, null, "No hay operantes activos.") : null,
     !loading && !stores.length ? /* @__PURE__ */ React.createElement(Alert, null, "No hay tiendas activas registradas.") : null,
-    /* @__PURE__ */ React.createElement("form", { className: "form-grid", onSubmit: handleSubmit }, form.turno === "incidencia" ? /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("form", { className: "form-grid", onSubmit: handleSubmit }, ["incidencia", "error"].includes(form.turno) ? /* @__PURE__ */ React.createElement(
       SelectInput,
       {
         label: "Área",

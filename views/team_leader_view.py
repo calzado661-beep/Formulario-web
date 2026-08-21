@@ -40,7 +40,9 @@ def _render_incident_section(supabase: Client, user: dict) -> None:
         ]
         nombre_sel = st.selectbox("Nombre", nombre_options)
         nombre = ""
+        usuario_id = None
         if nombre_sel != "Selecciona un usuario":
+            usuario_id = int(nombre_sel.split(" - ", 1)[0])
             nombre = nombre_sel.split(" - ", 1)[1]
 
         turno = st.selectbox("Turno", ["turno regular", "incidencia", "turno extra"])
@@ -81,14 +83,14 @@ def _render_incident_section(supabase: Client, user: dict) -> None:
 
         payload = {
             "turno": turno,
-            "nombre": nombre.strip(),
+            "usuario_id": usuario_id,
+            "es_trabajador": True,
+            "area_id": None,
             "tarea_id": tarea_id,
-            "tarea_nombre": tarea_nombre,
             "tienda_id": tienda_id,
             "numero_guia": numero_guia.strip() or None,
             "observacion": observacion.strip() or None,
             "tipo_error": tipo_error,
-            "created_by": user.get("id"),
         }
         create_incidente(supabase, payload)
         st.success("Incidente registrado.")
@@ -104,7 +106,7 @@ def _render_incident_section(supabase: Client, user: dict) -> None:
     tienda_by_id = {t.get("id"): t.get("nombre") for t in tiendas}
     rows = []
     for item in incidents:
-        created_at = item.get("created_at")
+        created_at = item.get("fecha_error")
         created_display = created_at
         if created_at:
             try:
@@ -116,8 +118,8 @@ def _render_incident_section(supabase: Client, user: dict) -> None:
             {
                 "Fecha": created_display,
                 "Turno": item.get("turno"),
-                "Nombre": item.get("nombre"),
-                "Tarea": item.get("tarea_nombre"),
+                "Usuario": item.get("usuario_id"),
+                "Tarea": item.get("tarea_id"),
                 "Tienda": tienda_by_id.get(item.get("tienda_id")),
                 "Guia": item.get("numero_guia"),
                 "Observacion": item.get("observacion"),

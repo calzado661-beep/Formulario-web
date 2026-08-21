@@ -95,14 +95,14 @@ function IncidentPanel({ user }) {
     try {
       await createIncidente({
         turno: form.turno,
-        nombre: selectedUser.nombre || selectedUser.email,
+        usuario_id: selectedUser.id,
+        es_trabajador: true,
+        area_id: null,
         tarea_id: selectedTask.id,
-        tarea_nombre: getTaskTitle(selectedTask),
         tienda_id: selectedStore.id,
         numero_guia: form.numero_guia.trim() || null,
         observacion: form.observacion.trim() || null,
-        tipo_error: form.tipo_error,
-        created_by: user.id
+        tipo_error: form.tipo_error
       });
       setForm({
         usuarioId: "",
@@ -123,10 +123,10 @@ function IncidentPanel({ user }) {
   }
 
   const rows = (data.incidentes || []).map((item) => ({
-    Fecha: formatDateTimeLima(item.created_at),
+    Fecha: formatDateTimeLima(item.fecha_error),
     Turno: item.turno,
-    Nombre: item.nombre,
-    Tarea: item.tarea_nombre,
+    Nombre: item.usuario_id,
+    Tarea: item.tarea_id,
     Tienda: tiendaById[item.tienda_id],
     Guia: item.numero_guia,
     Observacion: item.observacion,

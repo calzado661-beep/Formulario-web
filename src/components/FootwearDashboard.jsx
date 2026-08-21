@@ -1354,7 +1354,7 @@ function TreemapChart({ data, ariaLabel, unit = "pares", onSelect, selectedNames
   );
 }
 
-function DonutChart({ id, data, ariaLabel, unit = "pares", onSelect, selectedNames = [] }) {
+function DonutChart({ id, data, ariaLabel, unit = "pares", horizontalLegend = false, onSelect, selectedNames = [] }) {
   const [tooltip, setTooltip] = useState(null);
   const [hiddenNames, setHiddenNames] = useState([]);
   const dataNamesKey = data.map((item) => item.name).join("|");
@@ -1370,7 +1370,7 @@ function DonutChart({ id, data, ariaLabel, unit = "pares", onSelect, selectedNam
   let offset = 0;
 
   return (
-    <div className="pbi-donut-layout" data-animation-key={animationKey}>
+    <div className={`pbi-donut-layout${horizontalLegend ? " pbi-donut-layout--horizontal-legend" : ""}`} data-animation-key={animationKey}>
       <div className="pbi-donut-chart">
         <svg key={animationKey} className="pbi-chart-svg" viewBox="0 0 240 240" role={onSelect ? "group" : "img"} aria-labelledby={`${id}-chart-title`}>
           <title id={`${id}-chart-title`}>{ariaLabel}</title>
@@ -1539,7 +1539,9 @@ export default function FootwearDashboard() {
   const [selectedRoles, setSelectedRoles] = useState([]);
   const [selectedWorkerStatus, setSelectedWorkerStatus] = useState([]);
   const [selectedYears, setSelectedYears] = useState([]);
-  const [dateParts, setDateParts] = useState({});
+  const [productionMonths, setProductionMonths] = useState([]);
+  const [productionDays, setProductionDays] = useState([]);
+  const [selectedBrandNames, setSelectedBrandNames] = useState([]);
   const [selectedTaskIds, setSelectedTaskIds] = useState([]);
   const [selectedTaskTypes, setSelectedTaskTypes] = useState([]);
   const [selectedIncidentTaskIds, setSelectedIncidentTaskIds] = useState([]);
@@ -1547,8 +1549,15 @@ export default function FootwearDashboard() {
   const [peopleYears, setPeopleYears] = useState([]);
   const [qualityWorkerIds, setQualityWorkerIds] = useState([]);
   const [qualityYears, setQualityYears] = useState([]);
-  const [qualityDateParts, setQualityDateParts] = useState({});
-  const [movementYear, setMovementYear] = useState("");
+  const [qualityMonths, setQualityMonths] = useState([]);
+  const [qualityDays, setQualityDays] = useState([]);
+  const [trainingYears, setTrainingYears] = useState([]);
+  const [trainingMonths, setTrainingMonths] = useState([]);
+  const [trainingDays, setTrainingDays] = useState([]);
+  const [trainingCourseIds, setTrainingCourseIds] = useState([]);
+  const [trainingStatuses, setTrainingStatuses] = useState([]);
+  const [warningMonths, setWarningMonths] = useState([]);
+  const [warningDays, setWarningDays] = useState([]);
   const [selectedMovementMonths, setSelectedMovementMonths] = useState([]);
 
   const refreshDashboard = useCallback(async ({ silent = false } = {}) => {
@@ -1618,36 +1627,104 @@ export default function FootwearDashboard() {
     ...(dashboardData?.movements || [])
   ]), [dashboardData]);
   const qualityAvailableYears = useMemo(() => yearsFromRows(dashboardData?.incidents), [dashboardData]);
+  const trainingAvailableYears = useMemo(() => yearsFromRows(dashboardData?.trainingAssignments), [dashboardData]);
   const effectiveYears = selectedYears.length ? selectedYears : productionYears;
   const workerById = useMemo(() => new Map(WORKERS.map((worker) => [worker.id, worker])), [WORKERS]);
   const taskById = useMemo(() => new Map(TASK_CATALOG.map((task) => [task.id, task])), [TASK_CATALOG]);
   const brandById = useMemo(() => new Map((dashboardData?.brands || []).map((brand) => [brand.id, brand.name])), [dashboardData]);
 
-  const dateDaysByYear = useMemo(() => {
-    const result = {};
-    const addDate = (date) => {
-      const [year, month, day] = String(date || "").split("-").map(Number);
-      if (!year || !month || !day) return;
-      result[year] ||= {};
-      result[year][month] ||= [];
-      if (!result[year][month].includes(day)) result[year][month].push(day);
-    };
-    (dashboardData?.activities || []).forEach((row) => addDate(row.date));
-    Object.values(result).forEach((months) => Object.values(months).forEach((days) => days.sort((a, b) => a - b)));
-    return result;
-  }, [dashboardData]);
-  const incidentDateDaysByYear = useMemo(() => {
-    const result = {};
-    (dashboardData?.incidents || []).forEach((row) => {
+  const productionCalendarRows = useMemo(() => (dashboardData?.activities || []).map((row) => {
       const [year, month, day] = String(row.date || "").split("-").map(Number);
-      if (!year || !month || !day) return;
-      result[year] ||= {};
-      result[year][month] ||= [];
-      if (!result[year][month].includes(day)) result[year][month].push(day);
+      return { year, month, day };
+    }).filter((row) => row.year && row.month && row.day), [dashboardData]);
+  const productionMonthOptions = [...new Set(productionCalendarRows
+    .filter((row) => !selectedYears.length || selectedYears.includes(row.year))
+    .map((row) => row.month))].sort((a, b) => a - b).map((month) => ({ value: month, label: MONTHLY_TASKS[month - 1].name }));
+  const productionDayOptions = [...new Set(productionCalendarRows
+    .filter((row) => (!selectedYears.length || selectedYears.includes(row.year)) && (!productionMonths.length || productionMonths.includes(row.month)))
+    .map((row) => row.day))].sort((a, b) => a - b).map((day) => ({ value: day, label: String(day) }));
+  const incidentCalendarRows = useMemo(() => (dashboardData?.incidents || []).map((row) => {
+      const [year, month, day] = String(row.date || "").split("-").map(Number);
+      return { year, month, day };
+    }).filter((row) => row.year && row.month && row.day), [dashboardData]);
+  const qualityMonthOptions = [...new Set(incidentCalendarRows
+    .filter((row) => !qualityYears.length || qualityYears.includes(row.year))
+    .map((row) => row.month))].sort((a, b) => a - b).map((month) => ({ value: month, label: MONTHLY_TASKS[month - 1].name }));
+  const qualityDayOptions = [...new Set(incidentCalendarRows
+    .filter((row) => (!qualityYears.length || qualityYears.includes(row.year)) && (!qualityMonths.length || qualityMonths.includes(row.month)))
+    .map((row) => row.day))].sort((a, b) => a - b).map((day) => ({ value: day, label: String(day) }));
+  const warningCalendarRows = useMemo(() => (dashboardData?.warnings || []).map((row) => {
+      const [year, month, day] = String(row.date || "").split("-").map(Number);
+      return { year, month, day };
+    }).filter((row) => row.year && row.month && row.day), [dashboardData]);
+  const warningMonthOptions = [...new Set(warningCalendarRows
+    .filter((row) => !peopleYears.length || peopleYears.includes(row.year))
+    .map((row) => row.month))].sort((a, b) => a - b).map((month) => ({ value: month, label: MONTHLY_TASKS[month - 1].name }));
+  const warningDayOptions = [...new Set(warningCalendarRows
+    .filter((row) => (!peopleYears.length || peopleYears.includes(row.year)) && (!warningMonths.length || warningMonths.includes(row.month)))
+    .map((row) => row.day))].sort((a, b) => a - b).map((day) => ({ value: day, label: String(day) }));
+  const trainingCalendarRows = useMemo(() => (dashboardData?.trainingAssignments || []).map((row) => {
+      const [year, month, day] = String(row.date || "").split("-").map(Number);
+      return { year, month, day };
+    }).filter((row) => row.year && row.month && row.day), [dashboardData]);
+  const trainingMonthOptions = [...new Set(trainingCalendarRows
+    .filter((row) => !trainingYears.length || trainingYears.includes(row.year))
+    .map((row) => row.month))].sort((a, b) => a - b).map((month) => ({ value: month, label: MONTHLY_TASKS[month - 1].name }));
+  const trainingDayOptions = [...new Set(trainingCalendarRows
+    .filter((row) => (!trainingYears.length || trainingYears.includes(row.year)) && (!trainingMonths.length || trainingMonths.includes(row.month)))
+    .map((row) => row.day))].sort((a, b) => a - b).map((day) => ({ value: day, label: String(day) }));
+
+  useEffect(() => {
+    const validMonths = new Set(productionMonthOptions.map((option) => option.value));
+    const validDays = new Set(productionDayOptions.map((option) => option.value));
+    setProductionMonths((current) => {
+      const next = current.filter((value) => validMonths.has(value));
+      return next.length === current.length ? current : next;
     });
-    Object.values(result).forEach((months) => Object.values(months).forEach((days) => days.sort((a, b) => a - b)));
-    return result;
-  }, [dashboardData]);
+    setProductionDays((current) => {
+      const next = current.filter((value) => validDays.has(value));
+      return next.length === current.length ? current : next;
+    });
+  }, [selectedYears, productionMonthOptions.map((option) => option.value).join("|"), productionDayOptions.map((option) => option.value).join("|")]);
+
+  useEffect(() => {
+    const validMonths = new Set(qualityMonthOptions.map((option) => option.value));
+    const validDays = new Set(qualityDayOptions.map((option) => option.value));
+    setQualityMonths((current) => {
+      const next = current.filter((value) => validMonths.has(value));
+      return next.length === current.length ? current : next;
+    });
+    setQualityDays((current) => {
+      const next = current.filter((value) => validDays.has(value));
+      return next.length === current.length ? current : next;
+    });
+  }, [qualityYears, qualityMonthOptions.map((option) => option.value).join("|"), qualityDayOptions.map((option) => option.value).join("|")]);
+
+  useEffect(() => {
+    const validMonths = new Set(warningMonthOptions.map((option) => option.value));
+    const validDays = new Set(warningDayOptions.map((option) => option.value));
+    setWarningMonths((current) => {
+      const next = current.filter((value) => validMonths.has(value));
+      return next.length === current.length ? current : next;
+    });
+    setWarningDays((current) => {
+      const next = current.filter((value) => validDays.has(value));
+      return next.length === current.length ? current : next;
+    });
+  }, [peopleYears, warningMonthOptions.map((option) => option.value).join("|"), warningDayOptions.map((option) => option.value).join("|")]);
+
+  useEffect(() => {
+    const validMonths = new Set(trainingMonthOptions.map((option) => option.value));
+    const validDays = new Set(trainingDayOptions.map((option) => option.value));
+    setTrainingMonths((current) => {
+      const next = current.filter((value) => validMonths.has(value));
+      return next.length === current.length ? current : next;
+    });
+    setTrainingDays((current) => {
+      const next = current.filter((value) => validDays.has(value));
+      return next.length === current.length ? current : next;
+    });
+  }, [trainingYears, trainingMonthOptions.map((option) => option.value).join("|"), trainingDayOptions.map((option) => option.value).join("|")]);
 
   function matchesSectionDate(date, years, availableYears, parts = {}) {
     const [year, month, day] = String(date || "").split("-").map(Number);
@@ -1658,9 +1735,19 @@ export default function FootwearDashboard() {
     return parts[month] === null || parts[month].includes(day);
   }
 
-  const matchesProductionDate = (date) => matchesSectionDate(date, selectedYears, productionYears, dateParts);
+  const matchesProductionDate = (date) => {
+    const [year, month, day] = String(date || "").split("-").map(Number);
+    return (!selectedYears.length || selectedYears.includes(year))
+      && (!productionMonths.length || productionMonths.includes(month))
+      && (!productionDays.length || productionDays.includes(day));
+  };
   const matchesPeopleDate = (date) => matchesSectionDate(date, peopleYears, peopleAvailableYears);
-  const matchesQualityDate = (date) => matchesSectionDate(date, qualityYears, qualityAvailableYears, qualityDateParts);
+  const matchesQualityDate = (date) => {
+    const [year, month, day] = String(date || "").split("-").map(Number);
+    return (!qualityYears.length || qualityYears.includes(year))
+      && (!qualityMonths.length || qualityMonths.includes(month))
+      && (!qualityDays.length || qualityDays.includes(day));
+  };
 
   function matchesPeopleWorker(workerId) {
     const worker = workerById.get(Number(workerId));
@@ -1695,6 +1782,12 @@ export default function FootwearDashboard() {
     label: worker.name,
     count: (dashboardData?.activities || []).filter((row) => row.workerId === worker.id && matchesProductionDate(row.date)).reduce((sum, row) => sum + row.points, 0)
   }));
+  const operationalTaskTypeOptions = [...new Set(OPERATIONAL_TASKS.map((task) => task.type))]
+    .sort((a, b) => a.localeCompare(b, "es"))
+    .map((type) => ({ value: type, label: type }));
+  const operationalTaskOptions = OPERATIONAL_TASKS
+    .filter((task) => !selectedTaskTypes.length || selectedTaskTypes.includes(task.type))
+    .map((task) => ({ value: task.id, label: task.shortName }));
   const peopleWorkerOptions = WORKERS.filter((worker) => (
     (!selectedRoles.length || selectedRoles.includes(worker.role))
     && (!selectedWorkerStatus.length || selectedWorkerStatus.includes(worker.active ? "activo" : "inactivo"))
@@ -1704,6 +1797,12 @@ export default function FootwearDashboard() {
     count: (dashboardData?.attendances || []).filter((row) => row.workerId === worker.id && matchesPeopleDate(row.date)).length
   }));
   const qualityWorkerOptions = WORKERS.map((worker) => ({ value: worker.id, label: worker.name }));
+  const trainingCourseOptions = (dashboardData?.trainings || []).map((course) => ({ value: course.id, label: course.course }));
+  const trainingStatusOptions = [
+    { value: "completado", label: "Completado" },
+    { value: "en_curso", label: "En curso" },
+    { value: "pendiente", label: "Pendiente" }
+  ];
   const ROLE_OPTIONS = [...WORKERS.reduce((roles, worker) => {
     if (worker.active) roles.set(worker.role, (roles.get(worker.role) || 0) + 1);
     return roles;
@@ -1729,14 +1828,37 @@ export default function FootwearDashboard() {
       year,
       label: monthlySeriesYears.length > 1 ? `${month.label} ${String(year).slice(-2)}` : month.label,
       value: visibleActivities.filter((row) => Number(row.date.slice(0, 4)) === year && Number(row.date.slice(5, 7)) === monthIndex + 1).length
-    })).filter((month, monthIndex) => !Object.keys(dateParts).length || Object.prototype.hasOwnProperty.call(dateParts, monthIndex + 1))
+    })).filter((month) => !productionMonths.length || productionMonths.includes(month.monthNumber))
   ));
   const allFilteredTaskRows = taskVolumeRows(tasksAllowedByFilters, visibleActivities);
   const filteredTaskVolume = (!selectedTaskIds.length && !selectedTaskTypes.length)
     ? allFilteredTaskRows.slice(0, 10) : allFilteredTaskRows;
-  const filteredBrands = buildTaggedPairsByBrand(visibleActivities, taskById, brandById);
+  const allTaggedBrands = buildTaggedPairsByBrand(dashboardData?.activities || [], taskById, brandById);
+  const brandOptions = allTaggedBrands.map((brand) => ({ value: brand.name, label: brand.name, count: brand.value }));
+  const filteredBrands = allTaggedBrands.filter((brand) => !selectedBrandNames.length || selectedBrandNames.includes(brand.name));
   const selectedTaskTotal = visibleActivities.length;
   const taskVolumeTotal = allFilteredTaskRows.reduce((sum, item) => sum + item.value, 0);
+  const taskDetailRows = [...visibleActivities]
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)))
+    .map((row) => {
+      const task = taskById.get(row.taskId);
+      const worker = workerById.get(Number(row.workerId));
+      return {
+        id: row.id,
+        date: formatCalendarDate(row.date),
+        worker: worker?.alias || worker?.name || "Sin trabajador",
+        task: task?.shortName || `Tarea ${row.taskId}`,
+        quantity: numberFormatter.format(row.quantity || 0),
+        unit: String(task?.unit || "").trim() || productionUnit(task),
+        guideNumber: row.guideNumber || "—",
+        lote: row.lote || "—",
+        brand: row.brandId ? brandById.get(Number(row.brandId)) || `Marca ${row.brandId}` : "—",
+        minutes: Number(row.minutes) > 0 ? numberFormatter.format(row.minutes) : "—",
+        points: numberFormatter.format(row.points || 0),
+        observation: row.observation || "—",
+        source: row.source === "jefe-equipo" ? "Jefe de equipo" : "Operante"
+      };
+    });
   const averageActivities = (dashboardData?.activities || []).filter((row) => (
     !selectedWorkerIds.length || selectedWorkerIds.includes(Number(row.workerId))
   ));
@@ -1782,12 +1904,19 @@ export default function FootwearDashboard() {
     counts.set(key, (counts.get(key) || 0) + 1);
     return counts;
   }, new Map()).entries()].map(([name, value]) => ({ name, value, workerName: name })).sort((a, b) => b.value - a.value);
-  const filteredErrorsByTypeAndShift = [...visibleIncidentRecords.reduce((counts, incident) => {
-    const shift = incident.shift || "sin turno";
-    const label = `${incident.errorType} · ${shift.replace(/\b\w/g, (letter) => letter.toUpperCase())}`;
-    counts.set(label, (counts.get(label) || 0) + 1);
-    return counts;
-  }, new Map()).entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+  const filteredErrorsByTypeAndShift = [
+    { value: "turno regular", label: "Turno regular" },
+    { value: "incidencia", aliases: ["incidencia", "error"], label: "Incidencia" },
+    { value: "turno extra", label: "Turno extra" }
+  ].map((shift) => {
+    const acceptedValues = shift.aliases || [shift.value];
+    const rows = visibleIncidentRecords.filter((incident) => acceptedValues.includes(incident.shift));
+    return {
+      name: shift.label,
+      primary: rows.filter((incident) => incident.errorType === "CONTENIDO").length,
+      secondary: rows.filter((incident) => incident.errorType === "LIBERADO").length
+    };
+  });
   const filteredAttendance = [...(dashboardData?.attendances || []).filter((row) => matchesPeopleDate(row.date) && matchesPeopleWorker(row.workerId)).reduce((totals, row) => {
     const worker = workerById.get(row.workerId);
     if (!worker) return totals;
@@ -1811,9 +1940,16 @@ export default function FootwearDashboard() {
     return totals;
   }, new Map()).values()];
   const trainingById = new Map((dashboardData?.trainings || []).map((course) => [course.id, course]));
-  const visibleAssignments = (dashboardData?.trainingAssignments || []).filter((row) => (
-    !qualityWorkerIds.length || qualityWorkerIds.includes(Number(row.workerId))
-  ));
+  const normalizeTrainingStatus = (state) => ["finalizado", "completado"].includes(state) ? "completado" : state === "en_curso" ? "en_curso" : "pendiente";
+  const visibleAssignments = (dashboardData?.trainingAssignments || []).filter((row) => {
+    const [year, month, day] = String(row.date || "").split("-").map(Number);
+    return (!qualityWorkerIds.length || qualityWorkerIds.includes(Number(row.workerId)))
+      && (!trainingCourseIds.length || trainingCourseIds.includes(Number(row.trainingId)))
+      && (!trainingStatuses.length || trainingStatuses.includes(normalizeTrainingStatus(row.state)))
+      && (!trainingYears.length || trainingYears.includes(year))
+      && (!trainingMonths.length || trainingMonths.includes(month))
+      && (!trainingDays.length || trainingDays.includes(day));
+  });
   const filteredTrainingProgress = [...visibleAssignments.reduce((totals, assignment) => {
     const worker = workerById.get(assignment.workerId);
     if (!worker) return totals;
@@ -1828,7 +1964,8 @@ export default function FootwearDashboard() {
   const filteredTrainingHistory = visibleAssignments.map((assignment) => {
     const course = trainingById.get(assignment.trainingId) || {};
     const worker = workerById.get(assignment.workerId);
-    return { ...course, id: assignment.id, worker: worker?.alias || worker?.name || "Sin trabajador", status: ["finalizado", "completado"].includes(assignment.state) ? "Completado" : assignment.state === "en_curso" ? "En curso" : "Pendiente" };
+    const normalizedStatus = normalizeTrainingStatus(assignment.state);
+    return { ...course, id: assignment.id, worker: worker?.alias || worker?.name || "Sin trabajador", status: trainingStatusOptions.find((option) => option.value === normalizedStatus)?.label || "Pendiente", date: assignment.date ? formatCalendarDate(assignment.date) : "—" };
   });
   const attendanceTotals = filteredAttendance.reduce((totals, item) => ({
     absent: totals.absent + item.absent,
@@ -1845,16 +1982,21 @@ export default function FootwearDashboard() {
     { label: "Tardanza", detail: "Llegadas fuera de hora", value: `${attendanceTotal ? ((attendanceTotals.late / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
     { label: "Permanencia promedio", detail: `${tenure.workerCount} trabajador(es) con periodos laborales`, suffix: "meses", value: tenure.months.toFixed(2) }
   ];
-  const filteredWarnings = [...(dashboardData?.warnings || []).filter((row) => matchesPeopleDate(row.date) && matchesPeopleWorker(row.workerId)).reduce((totals, row) => {
+  const filteredWarnings = (dashboardData?.warnings || []).filter((row) => {
+    const [, month, day] = String(row.date || "").split("-").map(Number);
+    return matchesPeopleDate(row.date)
+      && matchesPeopleWorker(row.workerId)
+      && (!warningMonths.length || warningMonths.includes(month))
+      && (!warningDays.length || warningDays.includes(day));
+  }).map((row) => {
     const worker = workerById.get(row.workerId);
     const alias = worker?.alias || worker?.name || "Sin trabajador";
-    totals.set(alias, { alias, workerName: worker?.name || alias, value: (totals.get(alias)?.value || 0) + 1 });
-    return totals;
-  }, new Map()).values()].sort((a, b) => b.value - a.value);
+    const documentType = row.documentType === "MEMORANDUM" ? "Memorándum" : row.documentType === "CARTA AMONESTACION" ? "Carta de amonestación" : "Sin especificar";
+    return { id: row.id, alias, workerName: worker?.name || alias, date: formatCalendarDate(row.date), documentType };
+  }).sort((a, b) => b.id - a.id);
 
   const visibleMovements = (dashboardData?.movements || []).filter((row) => (
     matchesPeopleDate(row.date)
-    && (!movementYear || Number(row.date.slice(0, 4)) === Number(movementYear))
     && matchesPeopleWorker(row.workerId)
   ));
   const filteredRotation = MONTHLY_TASKS.map((month, monthIndex) => {
@@ -1864,7 +2006,7 @@ export default function FootwearDashboard() {
     const formatDates = (rows) => rows.map((row) => formatCalendarDate(row.date)).join(", ");
     return {
       name: month.label,
-      year: movementYear || null,
+      year: null,
       primary: entries.length,
       secondary: exits.length,
       primaryDetail: entries.length ? `Fechas de ingreso: ${formatDates(entries)}` : "Sin ingresos registrados",
@@ -1939,7 +2081,9 @@ export default function FootwearDashboard() {
     setSelectedWorkerIds([]);
     setSelectedRoles([]);
     setSelectedYears([]);
-    setDateParts({});
+    setProductionMonths([]);
+    setProductionDays([]);
+    setSelectedBrandNames([]);
     setSelectedTaskIds([]);
     setSelectedTaskTypes([]);
     setSelectedIncidentTaskIds([]);
@@ -1947,8 +2091,15 @@ export default function FootwearDashboard() {
     setPeopleYears([]);
     setQualityWorkerIds([]);
     setQualityYears([]);
-    setQualityDateParts({});
-    setMovementYear("");
+    setQualityMonths([]);
+    setQualityDays([]);
+    setTrainingYears([]);
+    setTrainingMonths([]);
+    setTrainingDays([]);
+    setTrainingCourseIds([]);
+    setTrainingStatuses([]);
+    setWarningMonths([]);
+    setWarningDays([]);
     setSelectedMovementMonths([]);
   }
 
@@ -1973,16 +2124,10 @@ export default function FootwearDashboard() {
       : MONTHLY_TASKS.findIndex((month) => month.name === item.name || month.label === item.label || month.label === item.name);
     if (monthIndex < 0) return;
     const monthNumber = monthIndex + 1;
-    setDateParts((current) => {
-      const next = { ...current };
-      if (Object.prototype.hasOwnProperty.call(next, monthNumber)) delete next[monthNumber];
-      else next[monthNumber] = null;
-      return next;
-    });
+    setProductionMonths((current) => toggleArrayValue(current, monthNumber));
   }
 
-  function toggleTaskType(type) {
-    const nextTypes = toggleArrayValue(selectedTaskTypes, type);
+  function changeTaskTypes(nextTypes) {
     setSelectedTaskTypes(nextTypes);
     setSelectedTaskIds((current) => current.filter((id) => {
       const taskItem = TASK_CATALOG.find((candidate) => candidate.id === id);
@@ -2024,13 +2169,14 @@ export default function FootwearDashboard() {
   }
 
   const activeFilterCount = [
-    selectedWorkerIds, selectedYears, Object.keys(dateParts), selectedTaskIds, selectedTaskTypes,
-    peopleWorkerIds, selectedRoles, selectedWorkerStatus, peopleYears,
-    selectedIncidentTaskIds, qualityWorkerIds, qualityYears, Object.keys(qualityDateParts), movementYear ? [movementYear] : [], selectedMovementMonths
+    selectedWorkerIds, selectedYears, productionMonths, productionDays, selectedTaskIds, selectedTaskTypes, selectedBrandNames,
+    peopleWorkerIds, selectedRoles, selectedWorkerStatus, peopleYears, warningMonths, warningDays,
+    selectedIncidentTaskIds, qualityWorkerIds, qualityYears, qualityMonths, qualityDays,
+    trainingYears, trainingMonths, trainingDays, trainingCourseIds, trainingStatuses, selectedMovementMonths
   ].filter((values) => values.length).length;
   const filterSummary = activeFilterCount
     ? `${activeFilterCount} filtros locales activos · cada uno afecta solo su sección`
-    : `Filtros independientes por Producción, Personas y Calidad`;
+    : `Filtros independientes por Producción, Personas, Calidad y Capacitación`;
   const updatedAtLabel = dashboardData?.generatedAt
     ? new Intl.DateTimeFormat("es-PE", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(dashboardData.generatedAt))
     : "Sin sincronizar";
@@ -2119,25 +2265,15 @@ export default function FootwearDashboard() {
                 <p>Comparativo de productividad, volumen operativo y pares procesados.</p>
               </div>
 
-              <div className="pbi-section-filters" aria-label="Filtros de producción">
+              <div className="pbi-section-filters pbi-section-filters--production" aria-label="Filtros de producción">
                 <MultiSlicer id="production-workers" label="Trabajadores" options={workerOptions} selected={selectedWorkerIds} onChange={setSelectedWorkerIds} allLabel="Todos" />
-                <MultiSlicer id="production-years" label="Año" options={productionYears.map((year) => ({ value: year, label: String(year) }))} selected={selectedYears} onChange={setSelectedYears} allLabel="Todos" searchable={false} />
-                <DateHierarchySlicer selected={dateParts} onChange={setDateParts} years={selectedYears.length ? selectedYears : productionYears} dateDaysByYear={dateDaysByYear} />
-                <fieldset className="pbi-filter pbi-filter--tasks">
-                  <legend className="pbi-filter-label">Tareas operativas</legend>
-                  <div className="pbi-task-type-row" role="group" aria-label="Tipo de tarea">
-                    <span>Tipo</span>
-                    {["Despacho", "General", "Ingreso"].map((type) => (
-                      <button className={`pbi-chip${selectedTaskTypes.includes(type) ? " pbi-chip--active" : ""}`} type="button" key={type} onClick={() => toggleTaskType(type)} aria-pressed={selectedTaskTypes.includes(type)}>{type}</button>
-                    ))}
-                  </div>
-                  <div className="pbi-filter-chips">
-                    <button className={`pbi-chip${!selectedTaskIds.length ? " pbi-chip--active" : ""}`} type="button" onClick={() => setSelectedTaskIds([])} aria-pressed={!selectedTaskIds.length}>Todas</button>
-                    {OPERATIONAL_TASKS.filter((task) => !selectedTaskTypes.length || selectedTaskTypes.includes(task.type)).map((task) => (
-                      <button className={`pbi-chip${selectedTaskIds.includes(task.id) ? " pbi-chip--active" : ""}`} type="button" key={task.id} onClick={() => setSelectedTaskIds((current) => toggleArrayValue(current, task.id))} aria-pressed={selectedTaskIds.includes(task.id)}>{task.shortName}</button>
-                    ))}
-                  </div>
-                </fieldset>
+                <div className="pbi-powerbi-date-grid" aria-label="Fecha de producción">
+                  <MultiSlicer id="production-years" label="Año" options={productionYears.map((year) => ({ value: year, label: String(year) }))} selected={selectedYears} onChange={setSelectedYears} allLabel="Todos" searchable={false} />
+                  <MultiSlicer id="production-months" label="Mes" options={productionMonthOptions} selected={productionMonths} onChange={setProductionMonths} allLabel="Todos" searchable={false} />
+                  <MultiSlicer id="production-days" label="Día" options={productionDayOptions} selected={productionDays} onChange={setProductionDays} allLabel="Todos" searchable={false} />
+                </div>
+                <MultiSlicer id="production-task-types" label="Tipo de tarea" options={operationalTaskTypeOptions} selected={selectedTaskTypes} onChange={changeTaskTypes} allLabel="Todos" searchable={false} />
+                <MultiSlicer id="production-tasks" label="Tarea" options={operationalTaskOptions} selected={selectedTaskIds} onChange={setSelectedTaskIds} allLabel="Todas" />
               </div>
 
               <div className="pbi-content-grid">
@@ -2190,17 +2326,17 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-monthly-tasks"
-                  title="Evolución Mensual de Tareas"
+                  title="Volumen de Registros por Mes"
                   meta={`${numberFormatter.format(selectedTaskTotal)} registros`}
                   className="pbi-card--chart pbi-card--span-8"
                 >
                   <LineChart
                     id="pbi-monthly-tasks"
                     data={filteredMonthlyTasks}
-                    ariaLabel={`Evolución mensual de tareas, total ${selectedTaskTotal}`}
+                    ariaLabel={`Volumen mensual de registros, total ${selectedTaskTotal}`}
                     tone="gold"
                     onSelect={selectMonthFromChart}
-                    selectedNames={Object.keys(dateParts).map((monthNumber) => MONTHLY_TASKS[Number(monthNumber) - 1].name)}
+                    selectedNames={productionMonths.map((monthNumber) => MONTHLY_TASKS[Number(monthNumber) - 1].name)}
                   />
                 </Card>
 
@@ -2210,9 +2346,39 @@ export default function FootwearDashboard() {
                   meta={`${numberFormatter.format(filteredBrands.reduce((sum, item) => sum + item.value, 0))} pares`}
                   className="pbi-card--chart pbi-card--treemap pbi-card--span-12"
                 >
+                  <div className="pbi-brand-only-filter">
+                    <span>Filtro exclusivo de esta gráfica</span>
+                    <MultiSlicer id="tagged-brands" label="Marcas" options={brandOptions} selected={selectedBrandNames} onChange={setSelectedBrandNames} allLabel="Todas" />
+                  </div>
                   <TreemapChart
                     data={filteredBrands}
                     ariaLabel="Pares etiquetados por marca"
+                  />
+                </Card>
+
+                <Card
+                  id="pbi-task-detail"
+                  title="Detalle de Registro de Tareas"
+                  meta={`${taskDetailRows.length} registros`}
+                  className="pbi-card--table pbi-card--span-12"
+                >
+                  <DataTable
+                    caption="Detalle de registros operativos por tarea"
+                    columns={[
+                      { key: "date", label: "Fecha" },
+                      { key: "worker", label: "Trabajador" },
+                      { key: "task", label: "Tarea" },
+                      { key: "quantity", label: "Cantidad" },
+                      { key: "unit", label: "Unidad" },
+                      { key: "guideNumber", label: "N.º de guía" },
+                      { key: "lote", label: "Lote" },
+                      { key: "brand", label: "Marca" },
+                      { key: "minutes", label: "Tiempo (min)" },
+                      { key: "points", label: "Puntaje" },
+                      { key: "observation", label: "Observación" },
+                      { key: "source", label: "Origen" }
+                    ]}
+                    rows={taskDetailRows}
                   />
                 </Card>
               </div>
@@ -2241,13 +2407,6 @@ export default function FootwearDashboard() {
                   meta={`${filteredRotation.reduce((sum, item) => sum + item.primary, 0)} ingresos · ${filteredRotation.reduce((sum, item) => sum + item.secondary, 0)} salidas`}
                   className="pbi-card--chart pbi-card--span-4"
                 >
-                  <div className="pbi-visual-filter">
-                    <label htmlFor="pbi-movement-year">Período de rotación</label>
-                    <select id="pbi-movement-year" value={movementYear} onChange={(event) => setMovementYear(event.target.value)} data-testid="movement-year-filter">
-                      <option value="">Todos los años</option>
-                      {peopleAvailableYears.map((year) => <option key={year} value={year}>{year}</option>)}
-                    </select>
-                  </div>
                   <ComparisonBars
                     data={filteredRotation}
                     ariaLabel="Ingresos y salidas de personal por mes"
@@ -2277,18 +2436,19 @@ export default function FootwearDashboard() {
                 <Card
                   id="pbi-warnings"
                   title="Amonestaciones por Trabajador"
-                  meta={`${filteredWarnings.reduce((sum, item) => sum + item.value, 0)} amonestaciones`}
+                  meta={`${filteredWarnings.length} amonestaciones`}
                   className="pbi-card--table pbi-card--span-4"
                 >
+                  <div className="pbi-warning-date-filters" aria-label="Filtros de fecha de amonestaciones">
+                    <MultiSlicer id="warning-months" label="Mes" options={warningMonthOptions} selected={warningMonths} onChange={setWarningMonths} allLabel="Todos" searchable={false} />
+                    <MultiSlicer id="warning-days" label="Día" options={warningDayOptions} selected={warningDays} onChange={setWarningDays} allLabel="Todos" searchable={false} />
+                  </div>
                   <DataTable
-                    caption="Cantidad de amonestaciones registradas por trabajador"
+                    caption="Detalle de amonestaciones registradas por trabajador"
                     columns={[
+                      { key: "date", label: "Fecha" },
                       { key: "alias", label: "Trabajador" },
-                      {
-                        key: "value",
-                        label: "Amonestaciones",
-                        render: (value) => <span className={`pbi-badge${value > 1 ? " pbi-badge--alert" : ""}`}>{value}</span>
-                      }
+                      { key: "documentType", label: "Documento" }
                     ]}
                     rows={filteredWarnings}
                   />
@@ -2343,13 +2503,13 @@ export default function FootwearDashboard() {
               <div className="pbi-section-heading">
                 <div>
                   <span className="pbi-section-kicker">Calidad</span>
-                  <h2 id="pbi-quality-section-title">Calidad y desarrollo</h2>
+                  <h2 id="pbi-quality-section-title">Calidad y errores</h2>
                 </div>
-                <p>Incidentes, causas de error, capacitación y trazabilidad de tareas.</p>
+                <p>Errores, causas y trazabilidad de tareas.</p>
               </div>
 
               <fieldset className="pbi-filter pbi-filter--quality-tasks">
-                <legend className="pbi-filter-label">Tareas de incidencia</legend>
+                <legend className="pbi-filter-label">Tareas de error</legend>
                 <div className="pbi-filter-chips" data-testid="slicer-incident-tasks">
                   <button
                     className={`pbi-chip${!selectedIncidentTaskIds.length ? " pbi-chip--active" : ""}`}
@@ -2373,17 +2533,15 @@ export default function FootwearDashboard() {
                 </div>
               </fieldset>
 
-              <div className="pbi-section-filters pbi-section-filters--quality" aria-label="Filtros de calidad y desarrollo">
-                <DateHierarchySlicer
-                  selected={qualityDateParts}
-                  onChange={setQualityDateParts}
-                  years={qualityAvailableYears}
-                  selectedYears={qualityYears}
-                  onYearsChange={setQualityYears}
-                  dateDaysByYear={incidentDateDaysByYear}
-                  label="Fecha de incidencia"
-                />
-                <MultiSlicer id="quality-workers" label="Trabajador en capacitación" options={qualityWorkerOptions} selected={qualityWorkerIds} onChange={setQualityWorkerIds} allLabel="Todos" />
+              <div className="pbi-section-filters pbi-section-filters--quality" aria-label="Filtros de calidad y errores">
+                <fieldset className="pbi-powerbi-date-filter">
+                  <legend>Fecha de error</legend>
+                  <div className="pbi-powerbi-date-grid">
+                    <MultiSlicer id="incident-years" label="Año" options={qualityAvailableYears.map((year) => ({ value: year, label: String(year) }))} selected={qualityYears} onChange={setQualityYears} allLabel="Todos" searchable={false} />
+                    <MultiSlicer id="incident-months" label="Mes" options={qualityMonthOptions} selected={qualityMonths} onChange={setQualityMonths} allLabel="Todos" searchable={false} />
+                    <MultiSlicer id="incident-days" label="Día" options={qualityDayOptions} selected={qualityDays} onChange={setQualityDays} allLabel="Todos" searchable={false} />
+                  </div>
+                </fieldset>
               </div>
 
               <div className="pbi-content-grid">
@@ -2405,14 +2563,14 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-errors-task"
-                  title="Distribución de Incidencias por Tarea"
-                  meta={`${visibleIncidentRecords.length} registros de incidencia`}
+                  title="Distribución de Errores por Tarea"
+                  meta={`${visibleIncidentRecords.length} registros de error`}
                   className="pbi-card--chart pbi-card--quality-treemap pbi-card--span-4"
                 >
                   <TreemapChart
                     data={filteredErrorsByTask}
-                    ariaLabel="Registros de incidencias agrupados por tarea"
-                    unit="incidencias"
+                    ariaLabel="Registros de errores agrupados por tarea"
+                    unit="errores"
                     onSelect={(item) => selectTaskFromChart(item, setSelectedIncidentTaskIds)}
                     selectedNames={selectedIncidentTaskIds.map((id) => taskById.get(id)?.shortName).filter(Boolean)}
                   />
@@ -2420,18 +2578,59 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-error-types"
-                  title="Errores por Tipo y Turno"
-                  meta={`${visibleIncidentRecords.length} incidentes totales`}
-                  className="pbi-card--chart pbi-card--quality-donut pbi-card--span-4"
+                  title="Errores por Turno y Tipo"
+                  meta={`${visibleIncidentRecords.length} errores`}
+                  className="pbi-card--chart pbi-card--span-4"
                 >
-                  <DonutChart
-                    id="pbi-error-types"
+                  <ComparisonBars
                     data={filteredErrorsByTypeAndShift}
-                    ariaLabel="Errores por tipo y turno"
-                    unit="incidentes"
+                    ariaLabel="Comparación de errores de contenido y liberados en los tres turnos"
+                    primaryLabel="CONTENIDO"
+                    secondaryLabel="LIBERADO"
+                    primaryColor="#0a4f87"
+                    secondaryColor="#e1c233"
                   />
                 </Card>
 
+                <Card
+                  id="pbi-errors-worker"
+                  title="Errores por Usuario o Área"
+                  meta={`${visibleIncidentRecords.length} errores`}
+                  className="pbi-card--chart pbi-card--quality-responsible pbi-card--span-4"
+                >
+                  <VerticalBarChart
+                    id="pbi-errors-worker"
+                    data={filteredErrorsByOffender}
+                    ariaLabel="Errores agrupados por usuario o área que cometió el error"
+                    tone="blue"
+                    unit="errores"
+                  />
+                </Card>
+
+              </div>
+            </section>
+
+            <section className="pbi-report-section" aria-labelledby="pbi-training-section-title">
+              <div className="pbi-section-heading">
+                <div>
+                  <span className="pbi-section-kicker">Desarrollo</span>
+                  <h2 id="pbi-training-section-title">Capacitación y desarrollo</h2>
+                </div>
+                <p>Avance, estado e historial de cursos asignados al personal.</p>
+              </div>
+
+              <div className="pbi-section-filters pbi-section-filters--training" aria-label="Filtros de capacitación">
+                <MultiSlicer id="training-workers" label="Trabajador" options={qualityWorkerOptions} selected={qualityWorkerIds} onChange={setQualityWorkerIds} allLabel="Todos" />
+                <MultiSlicer id="training-courses" label="Curso" options={trainingCourseOptions} selected={trainingCourseIds} onChange={setTrainingCourseIds} allLabel="Todos" />
+                <MultiSlicer id="training-statuses" label="Estado" options={trainingStatusOptions} selected={trainingStatuses} onChange={setTrainingStatuses} allLabel="Todos" searchable={false} />
+                <div className="pbi-powerbi-date-grid" aria-label="Fecha de capacitación">
+                  <MultiSlicer id="training-years" label="Año" options={trainingAvailableYears.map((year) => ({ value: year, label: String(year) }))} selected={trainingYears} onChange={setTrainingYears} allLabel="Todos" searchable={false} />
+                  <MultiSlicer id="training-months" label="Mes" options={trainingMonthOptions} selected={trainingMonths} onChange={setTrainingMonths} allLabel="Todos" searchable={false} />
+                  <MultiSlicer id="training-days" label="Día" options={trainingDayOptions} selected={trainingDays} onChange={setTrainingDays} allLabel="Todos" searchable={false} />
+                </div>
+              </div>
+
+              <div className="pbi-content-grid">
                 <Card
                   id="pbi-training-progress"
                   title="Avance de Capacitaciones"
@@ -2445,17 +2644,18 @@ export default function FootwearDashboard() {
                   />
                 </Card>
 
-                  <Card
-                    id="pbi-training-history"
-                    title="Historial de Capacitaciones"
-                    meta={`${filteredTrainingHistory.length} asignaciones`}
-                    className="pbi-card--table pbi-card--span-8"
-                  >
+                <Card
+                  id="pbi-training-history"
+                  title="Historial de Capacitaciones"
+                  meta={`${filteredTrainingHistory.length} asignaciones`}
+                  className="pbi-card--table pbi-card--span-8"
+                >
                   <DataTable
-                      caption="Historial de cursos y capacitaciones"
-                      columns={[
-                        { key: "worker", label: "Trabajador" },
-                        { key: "course", label: "Curso" },
+                    caption="Historial de cursos y capacitaciones"
+                    columns={[
+                      { key: "date", label: "Fecha" },
+                      { key: "worker", label: "Trabajador" },
+                      { key: "course", label: "Curso" },
                       { key: "competence", label: "Competencia" },
                       { key: "hours", label: "Horas", render: (value) => value ?? "—" },
                       {
@@ -2464,46 +2664,7 @@ export default function FootwearDashboard() {
                         render: (value) => <span className={`pbi-badge${value === "Pendiente" ? " pbi-badge--alert" : ""}`}>{value}</span>
                       }
                     ]}
-                      rows={filteredTrainingHistory}
-                  />
-                </Card>
-
-                <Card
-                  id="pbi-errors-worker"
-                  title="Errores por Usuario o Área"
-                  meta={`${visibleIncidentRecords.length} incidentes`}
-                  className="pbi-card--chart pbi-card--quality-responsible pbi-card--span-4"
-                >
-                  <VerticalBarChart
-                    id="pbi-errors-worker"
-                    data={filteredErrorsByOffender}
-                    ariaLabel="Errores agrupados por usuario o área que cometió el error"
-                    tone="blue"
-                    unit="incidencias"
-                  />
-                </Card>
-
-                <Card
-                  id="pbi-task-detail"
-                  title="Detalle de Registro de Tareas"
-                  meta="Resumen por actividad"
-                  className="pbi-card--table pbi-card--span-8"
-                >
-                  <DataTable
-                    caption="Detalle consolidado del volumen registrado por tarea"
-                    columns={[
-                      { key: "name", label: "Tarea" },
-                      { key: "value", label: "Registros", render: (value) => numberFormatter.format(value) },
-                      {
-                        key: "share",
-                        label: "% del total",
-                        render: (value) => `${value.toFixed(1)}%`
-                      }
-                    ]}
-                    rows={allFilteredTaskRows.map((item) => ({
-                      ...item,
-                      share: taskVolumeTotal ? (item.value / taskVolumeTotal) * 100 : 0
-                    }))}
+                    rows={filteredTrainingHistory}
                   />
                 </Card>
               </div>

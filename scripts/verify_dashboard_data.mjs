@@ -20,10 +20,10 @@ const db = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
   auth: { persistSession: false, autoRefreshToken: false }
 });
 
-async function selectAll(table) {
+async function selectAll(table, idColumn = "id") {
   const rows = [];
   for (let from = 0; ; from += 1000) {
-    const result = await db.from(table).select("*").order("id", { ascending: true }).range(from, from + 999);
+    const result = await db.from(table).select("*").order(idColumn, { ascending: true }).range(from, from + 999);
     if (result.error) throw result.error;
     rows.push(...(result.data || []));
     if ((result.data || []).length < 1000) return rows;
@@ -51,7 +51,7 @@ const [adminResult, users, tasks, brands, workerRecords, leaderRecords, attendan
   selectAll("registros_tareas"),
   selectAll("registros_tareas_jefe_equipo"),
   selectAll("asistencias"),
-  selectAll("incidentes"),
+  selectAll("registro_errores", "id_error"),
   selectAll("amonestaciones"),
   selectAll("movimientos_personal")
 ]);
@@ -100,8 +100,8 @@ const expectedTaggedPairs = [...workerRecords, ...leaderRecords]
   .reduce((sum, row) => sum + Math.max(0, Number(row.cantidad || 0)), 0);
 assert.equal(taggedPairsTotal, expectedTaggedPairs);
 
-const years = dashboard.years.map(Number);
-const expectedPayroll = buildDashboardPayroll(users, years, {
+const years = Object.keys(dashboard.payrollByRole || {}).map(Number);
+const expectedPayroll = buildDashboardPayroll(users, movements, years, {
   normalizeRole: (role) => String(role || "otros").trim().toLowerCase()
 });
 assert.deepEqual(dashboard.payrollByRole, expectedPayroll.byRole);
@@ -116,5 +116,10 @@ console.log(JSON.stringify({
   dashboardScoreTotal: dashboard.activities.reduce((sum, row) => sum + Number(row.points || 0), 0),
   taggedPairs: taggedPairsTotal,
   attendances: dashboard.attendances.length,
-  incidents: dashboard.incidents.length
+  incidents: dashboard.incidents.length,
+  errorTurns: Object.fromEntries([...incidents.reduce((counts, row) => {
+    const key = `${row.turno} | ${row.tipo_error}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+    return counts;
+  }, new Map()).entries()].sort(([left], [right]) => left.localeCompare(right)))
 }, null, 2));
