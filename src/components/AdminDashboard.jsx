@@ -2117,6 +2117,7 @@ function AttendancePanel() {
     Trabajador: workerNameById[item.usuario_id],
     Email: workerEmailById[item.usuario_id],
     Estado: attendanceStateLabel(String(item.estado || "FALTA").toUpperCase()),
+    Sigla: item.sigla || "",
     "Retiro anticipado": item.retiro_anticipado ? "Sí" : "No",
     "Tipo de retiro": item.retiro_anticipado ? (item.tipo_retiro === "apoyo" ? "Apoyo a otra area" : "Personal") : "",
     "Motivo del retiro": item.motivo_retiro || "",
@@ -2125,7 +2126,7 @@ function AttendancePanel() {
   }));
 
   function exportAttendance() {
-    const columns = ["Fecha", "Trabajador", "Email", "Estado", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro", "Retirado en", "Marcado en"];
+    const columns = ["Fecha", "Trabajador", "Email", "Estado", "Sigla", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro", "Retirado en", "Marcado en"];
     downloadExcelTable(`asistencia_${selectedDate}.xls`, columns, attendanceRows);
   }
 
@@ -4033,12 +4034,13 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
     Sueldo: Number(user.sueldo || 0).toFixed(2)
   }));
 
-  const attendanceColumns = ["Fecha", "Trabajador", "Email", "Estado", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro"];
+  const attendanceColumns = ["Fecha", "Trabajador", "Email", "Estado", "Sigla", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro"];
   const attendanceRows = (data.attendances || []).map((item) => ({
     Fecha: item.fecha,
     Trabajador: workerNameById[item.usuario_id] || "",
     Email: workerEmailById[item.usuario_id] || "",
     Estado: attendanceStateLabel(String(item.estado || "FALTA").toUpperCase()),
+    Sigla: item.sigla || "",
     "Retiro anticipado": item.retiro_anticipado ? "Si" : "No",
     "Tipo de retiro": item.retiro_anticipado ? (item.tipo_retiro === "apoyo" ? "Apoyo a otra area" : "Personal") : "",
     "Motivo del retiro": item.motivo_retiro || ""
