@@ -488,16 +488,17 @@ function MultiSlicer({ id, label, options, selected, onChange, allLabel = "Todas
   );
 }
 
-function DateHierarchySlicer({ selected, onChange, years, dateDaysByYear }) {
+function DateHierarchySlicer({ selected, onChange, years, dateDaysByYear, label = "Fecha", selectedYears, onYearsChange }) {
   const detailsRef = useRef(null);
-  const effectiveYears = years.length ? years : [2025, 2026];
+  const effectiveYears = selectedYears?.length ? selectedYears : years.length ? years : [2025, 2026];
   const yearKey = effectiveYears.join("|");
   const selectedMonths = Object.keys(selected).map(Number);
+  const yearSummary = selectedYears?.length ? selectedYears.join(", ") : "Todos los años";
   const summary = !selectedMonths.length
-    ? "Todos los meses y días"
+    ? yearSummary
     : selectedMonths.length === 1
-      ? MONTHLY_TASKS[selectedMonths[0] - 1].name
-      : `${selectedMonths.length} meses seleccionados`;
+      ? `${yearSummary} · ${MONTHLY_TASKS[selectedMonths[0] - 1].name}`
+      : `${yearSummary} · ${selectedMonths.length} meses`;
 
   function daysForMonth(monthNumber) {
     return availableDaysForMonth(effectiveYears, monthNumber, dateDaysByYear);
@@ -574,9 +575,9 @@ function DateHierarchySlicer({ selected, onChange, years, dateDaysByYear }) {
         if (event.key === "Escape") detailsRef.current.open = false;
       }}
     >
-      <summary className="pbi-slicer-trigger" aria-label={`Fecha: ${summary}`}>
+      <summary className="pbi-slicer-trigger" aria-label={`${label}: ${summary}`}>
         <span className="pbi-slicer-copy">
-          <span className="pbi-slicer-label">Fecha</span>
+          <span className="pbi-slicer-label">{label}</span>
           <span className="pbi-slicer-value">{summary}</span>
         </span>
         {selectedMonths.length ? <span className="pbi-slicer-count">{selectedMonths.length}</span> : <span />}
@@ -595,10 +596,26 @@ function DateHierarchySlicer({ selected, onChange, years, dateDaysByYear }) {
       </summary>
       <div className="pbi-slicer-dropdown pbi-slicer-dropdown--date">
         <div className="pbi-slicer-actions">
-          <button className="pbi-slicer-action" type="button" onClick={() => onChange({})}>Mostrar todas las fechas</button>
-          <span className="pbi-slicer-option-count">Mes → Día</span>
+          <button className="pbi-slicer-action" type="button" onClick={() => { onChange({}); onYearsChange?.([]); }}>Mostrar todas las fechas</button>
+          <span className="pbi-slicer-option-count">{onYearsChange ? "Año → Mes → Día" : "Mes → Día"}</span>
         </div>
         <div className="pbi-slicer-options pbi-date-tree">
+          {onYearsChange ? (
+            <div className="pbi-date-years" role="group" aria-label="Seleccionar año">
+              <span className="pbi-date-years-label">Año</span>
+              {years.map((year) => (
+                <button
+                  className={`pbi-chip${selectedYears.includes(year) ? " pbi-chip--active" : ""}`}
+                  type="button"
+                  key={year}
+                  onClick={() => onYearsChange((current) => toggleArrayValue(current, year))}
+                  aria-pressed={selectedYears.includes(year)}
+                >
+                  {year}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {MONTHLY_TASKS.map((month, index) => {
             const monthNumber = index + 1;
             const hasMonth = Object.prototype.hasOwnProperty.call(selected, monthNumber);
@@ -699,12 +716,18 @@ function ActivityKpi({ label, daily, hourly, unit = "unidades" }) {
       <span className="pbi-kpi-label">{label}</span>
       <div className="pbi-kpi-pair">
         <span className="pbi-kpi-pair-item">
-          <strong className="pbi-kpi-value">{numberFormatter.format(daily)}</strong>
-          <small>{unit}/día</small>
+          <span className="pbi-kpi-value-line">
+            <strong className="pbi-kpi-value">{numberFormatter.format(daily)}</strong>
+            <small className="pbi-kpi-unit">{unit}</small>
+          </span>
+          <small>promedio por día</small>
         </span>
         <span className="pbi-kpi-pair-item">
-          <strong className="pbi-kpi-value">{numberFormatter.format(hourly)}</strong>
-          <small>{unit}/hora</small>
+          <span className="pbi-kpi-value-line">
+            <strong className="pbi-kpi-value">{numberFormatter.format(hourly)}</strong>
+            <small className="pbi-kpi-unit">{unit}</small>
+          </span>
+          <small>promedio por hora</small>
         </span>
       </div>
     </article>
@@ -780,13 +803,13 @@ function splitLabel(label) {
   return [parts[0], parts.slice(1).join(" ")];
 }
 
-function VerticalBarChart({ id, data, ariaLabel, tone = "gold", onSelect, selectedNames = [] }) {
+function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSelect, selectedNames = [] }) {
   const [tooltip, setTooltip] = useState(null);
   if (!data.length) return <p className="pbi-chart-empty">No hay datos para el filtro seleccionado.</p>;
 
   // La proporción anterior (2:1) reducía demasiado la gráfica dentro de
   // tarjetas altas. Este lienzo aprovecha la altura sin deformar texto o barras.
-  const width = 520;
+  const width = Math.max(520, data.length * 76);
   const height = 360;
   const left = 54;
   const right = 16;
@@ -796,13 +819,13 @@ function VerticalBarChart({ id, data, ariaLabel, tone = "gold", onSelect, select
   const innerHeight = height - top - bottom;
   const maximum = Math.max(...data.map((item) => item.value), 1) * 1.12;
   const step = innerWidth / data.length;
-  const barWidth = Math.min(74, Math.max(28, step * 0.62));
+  const barWidth = Math.min(58, step * 0.5);
   const fill = tone === "blue" ? "#0a4f87" : "#e7c42d";
   const animationKey = data.map((item) => `${item.name}:${item.value}`).join("|");
 
   return (
-    <div className="pbi-chart" data-animation-key={animationKey}>
-      <svg key={animationKey} className="pbi-chart-svg" viewBox={`0 0 ${width} ${height}`} role={onSelect ? "group" : "img"} aria-labelledby={`${id}-chart-title`}>
+    <div className="pbi-chart pbi-chart--scrollable" data-animation-key={animationKey}>
+      <svg key={animationKey} className="pbi-chart-svg" style={{ minWidth: `${width}px` }} viewBox={`0 0 ${width} ${height}`} role={onSelect ? "group" : "img"} aria-labelledby={`${id}-chart-title`}>
         <title id={`${id}-chart-title`}>{ariaLabel}</title>
         {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
           const y = top + innerHeight - ratio * innerHeight;
@@ -838,8 +861,8 @@ function VerticalBarChart({ id, data, ariaLabel, tone = "gold", onSelect, select
                   onSelect(item);
                 }
               }}
-              onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, numberFormatter.format(item.value), "Haz clic para filtrar")}
-              onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, numberFormatter.format(item.value), "Presiona Enter para filtrar")}
+              onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `${numberFormatter.format(item.value)}${unit ? ` ${unit}` : ""}`, "Nombre completo")}
+              onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `${numberFormatter.format(item.value)}${unit ? ` ${unit}` : ""}`, "Nombre completo")}
               onBlur={() => setTooltip(null)}
               onMouseLeave={() => setTooltip(null)}
             >
@@ -1283,7 +1306,7 @@ function treemapLayout(data) {
   return tiles;
 }
 
-function TreemapChart({ data, ariaLabel, onSelect, selectedNames = [] }) {
+function TreemapChart({ data, ariaLabel, unit = "pares", onSelect, selectedNames = [] }) {
   const [tooltip, setTooltip] = useState(null);
   const tiles = treemapLayout(data);
   const total = tiles.reduce((sum, item) => sum + item.value, 0);
@@ -1293,6 +1316,9 @@ function TreemapChart({ data, ariaLabel, onSelect, selectedNames = [] }) {
   return (
     <div className="pbi-treemap" role="group" aria-label={ariaLabel} data-animation-key={animationKey} data-testid="brand-treemap">
       {tiles.map((item, index) => {
+        const itemUnit = item.value === 1
+          ? ({ incidencias: "incidencia", registros: "registro", pares: "par" }[unit] || unit)
+          : unit;
         const selected = selectedNames.includes(item.name);
         const dimmed = selectedNames.length > 0 && !selected;
         const compact = item.area < 7;
@@ -1311,15 +1337,15 @@ function TreemapChart({ data, ariaLabel, onSelect, selectedNames = [] }) {
               "--pbi-index": index
             }}
             onClick={() => onSelect?.(item)}
-            onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `${numberFormatter.format(item.value)} ${item.value === 1 ? "par" : "pares"}`, `${((item.value / total) * 100).toFixed(1)}% del total`)}
+            onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `${numberFormatter.format(item.value)} ${itemUnit}`, `${((item.value / total) * 100).toFixed(1)}% del total`)}
             onPointerLeave={() => setTooltip(null)}
-            onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `${numberFormatter.format(item.value)} ${item.value === 1 ? "par" : "pares"}`, "Presiona Enter para filtrar")}
+            onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `${numberFormatter.format(item.value)} ${itemUnit}`, "Presiona Enter para filtrar")}
             onBlur={() => setTooltip(null)}
             aria-pressed={selected}
-            aria-label={`${item.name}: ${numberFormatter.format(item.value)} ${item.value === 1 ? "par" : "pares"}`}
+            aria-label={`${item.name}: ${numberFormatter.format(item.value)} ${itemUnit}`}
           >
             <span>{item.name}</span>
-            <strong>{numberFormatter.format(item.value)} {item.value === 1 ? "par" : "pares"}</strong>
+            <strong>{numberFormatter.format(item.value)} {itemUnit}</strong>
           </button>
         );
       })}
@@ -1516,6 +1542,12 @@ export default function FootwearDashboard() {
   const [dateParts, setDateParts] = useState({});
   const [selectedTaskIds, setSelectedTaskIds] = useState([]);
   const [selectedTaskTypes, setSelectedTaskTypes] = useState([]);
+  const [selectedIncidentTaskIds, setSelectedIncidentTaskIds] = useState([]);
+  const [peopleWorkerIds, setPeopleWorkerIds] = useState([]);
+  const [peopleYears, setPeopleYears] = useState([]);
+  const [qualityWorkerIds, setQualityWorkerIds] = useState([]);
+  const [qualityYears, setQualityYears] = useState([]);
+  const [qualityDateParts, setQualityDateParts] = useState({});
   const [movementYear, setMovementYear] = useState("");
   const [selectedMovementMonths, setSelectedMovementMonths] = useState([]);
 
@@ -1574,8 +1606,19 @@ export default function FootwearDashboard() {
 
   const WORKERS = useMemo(() => dashboardData?.workers || [], [dashboardData]);
   const TASK_CATALOG = useMemo(() => (dashboardData?.tasks || []).map((task) => ({ ...task, shortName: task.name })), [dashboardData]);
-  const dashboardYears = useMemo(() => dashboardData?.years || [], [dashboardData]);
-  const effectiveYears = selectedYears.length ? selectedYears : dashboardYears;
+  const OPERATIONAL_TASKS = useMemo(() => TASK_CATALOG.filter((task) => task.operational), [TASK_CATALOG]);
+  const INCIDENT_TASKS = useMemo(() => TASK_CATALOG.filter((task) => task.incident), [TASK_CATALOG]);
+  const yearsFromRows = (rows) => [...new Set((rows || [])
+    .map((row) => Number(String(row.date || "").slice(0, 4)))
+    .filter(Number.isFinite))].sort((a, b) => a - b);
+  const productionYears = useMemo(() => yearsFromRows(dashboardData?.activities), [dashboardData]);
+  const peopleAvailableYears = useMemo(() => yearsFromRows([
+    ...(dashboardData?.attendances || []),
+    ...(dashboardData?.warnings || []),
+    ...(dashboardData?.movements || [])
+  ]), [dashboardData]);
+  const qualityAvailableYears = useMemo(() => yearsFromRows(dashboardData?.incidents), [dashboardData]);
+  const effectiveYears = selectedYears.length ? selectedYears : productionYears;
   const workerById = useMemo(() => new Map(WORKERS.map((worker) => [worker.id, worker])), [WORKERS]);
   const taskById = useMemo(() => new Map(TASK_CATALOG.map((task) => [task.id, task])), [TASK_CATALOG]);
   const brandById = useMemo(() => new Map((dashboardData?.brands || []).map((brand) => [brand.id, brand.name])), [dashboardData]);
@@ -1589,56 +1632,78 @@ export default function FootwearDashboard() {
       result[year][month] ||= [];
       if (!result[year][month].includes(day)) result[year][month].push(day);
     };
-    [
-      ...(dashboardData?.activities || []), ...(dashboardData?.attendances || []),
-      ...(dashboardData?.incidents || []), ...(dashboardData?.warnings || []),
-      ...(dashboardData?.movements || [])
-    ].forEach((row) => addDate(row.date));
+    (dashboardData?.activities || []).forEach((row) => addDate(row.date));
+    Object.values(result).forEach((months) => Object.values(months).forEach((days) => days.sort((a, b) => a - b)));
+    return result;
+  }, [dashboardData]);
+  const incidentDateDaysByYear = useMemo(() => {
+    const result = {};
+    (dashboardData?.incidents || []).forEach((row) => {
+      const [year, month, day] = String(row.date || "").split("-").map(Number);
+      if (!year || !month || !day) return;
+      result[year] ||= {};
+      result[year][month] ||= [];
+      if (!result[year][month].includes(day)) result[year][month].push(day);
+    });
     Object.values(result).forEach((months) => Object.values(months).forEach((days) => days.sort((a, b) => a - b)));
     return result;
   }, [dashboardData]);
 
-  function matchesDashboardDate(date) {
+  function matchesSectionDate(date, years, availableYears, parts = {}) {
     const [year, month, day] = String(date || "").split("-").map(Number);
-    if (!year || !effectiveYears.includes(year)) return false;
-    if (!Object.keys(dateParts).length) return true;
-    if (!Object.prototype.hasOwnProperty.call(dateParts, month)) return false;
-    return dateParts[month] === null || dateParts[month].includes(day);
+    const allowedYears = years.length ? years : availableYears;
+    if (!year || !allowedYears.includes(year)) return false;
+    if (!Object.keys(parts).length) return true;
+    if (!Object.prototype.hasOwnProperty.call(parts, month)) return false;
+    return parts[month] === null || parts[month].includes(day);
   }
 
-  function matchesWorker(workerId) {
+  const matchesProductionDate = (date) => matchesSectionDate(date, selectedYears, productionYears, dateParts);
+  const matchesPeopleDate = (date) => matchesSectionDate(date, peopleYears, peopleAvailableYears);
+  const matchesQualityDate = (date) => matchesSectionDate(date, qualityYears, qualityAvailableYears, qualityDateParts);
+
+  function matchesPeopleWorker(workerId) {
     const worker = workerById.get(Number(workerId));
-    return (!selectedWorkerIds.length || selectedWorkerIds.includes(Number(workerId)))
+    return (!peopleWorkerIds.length || peopleWorkerIds.includes(Number(workerId)))
       && (!selectedRoles.length || (worker && selectedRoles.includes(worker.role)))
       && (!selectedWorkerStatus.length || (worker && selectedWorkerStatus.includes(worker.active ? "activo" : "inactivo")));
   }
 
-  const tasksAllowedByFilters = TASK_CATALOG.filter((task) => (
+  const tasksAllowedByFilters = OPERATIONAL_TASKS.filter((task) => (
     (!selectedTaskIds.length || selectedTaskIds.includes(task.id))
     && (!selectedTaskTypes.length || selectedTaskTypes.includes(task.type))
   ));
   const allowedTaskIds = new Set(tasksAllowedByFilters.map((task) => task.id));
+  const allowedIncidentTaskIds = new Set(INCIDENT_TASKS
+    .filter((task) => !selectedIncidentTaskIds.length || selectedIncidentTaskIds.includes(task.id))
+    .map((task) => task.id));
   const visibleActivities = (dashboardData?.activities || []).filter((row) => (
-    matchesDashboardDate(row.date)
-    && matchesWorker(row.workerId)
+    matchesProductionDate(row.date)
+    && (!selectedWorkerIds.length || selectedWorkerIds.includes(Number(row.workerId)))
     && allowedTaskIds.has(row.taskId)
   ));
   // Calidad comparable usa registros operativos reales de ambas fuentes. No
   // aplica trabajador ni marca porque los incidentes generales se vinculan a
   // responsables, no necesariamente a usuarios operativos.
   const qualityActivities = (dashboardData?.activities || []).filter((row) => (
-    matchesDashboardDate(row.date)
-    && allowedTaskIds.has(row.taskId)
+    matchesQualityDate(row.date)
+    && allowedIncidentTaskIds.has(row.taskId)
   ));
 
-  const workerOptions = WORKERS.filter((worker) => (
+  const workerOptions = WORKERS.map((worker) => ({
+    value: worker.id,
+    label: worker.name,
+    count: (dashboardData?.activities || []).filter((row) => row.workerId === worker.id && matchesProductionDate(row.date)).reduce((sum, row) => sum + row.points, 0)
+  }));
+  const peopleWorkerOptions = WORKERS.filter((worker) => (
     (!selectedRoles.length || selectedRoles.includes(worker.role))
     && (!selectedWorkerStatus.length || selectedWorkerStatus.includes(worker.active ? "activo" : "inactivo"))
   )).map((worker) => ({
     value: worker.id,
     label: worker.name,
-    count: (dashboardData?.activities || []).filter((row) => row.workerId === worker.id && matchesDashboardDate(row.date)).reduce((sum, row) => sum + row.points, 0)
+    count: (dashboardData?.attendances || []).filter((row) => row.workerId === worker.id && matchesPeopleDate(row.date)).length
   }));
+  const qualityWorkerOptions = WORKERS.map((worker) => ({ value: worker.id, label: worker.name }));
   const ROLE_OPTIONS = [...WORKERS.reduce((roles, worker) => {
     if (worker.active) roles.set(worker.role, (roles.get(worker.role) || 0) + 1);
     return roles;
@@ -1650,8 +1715,9 @@ export default function FootwearDashboard() {
     { value: "activo", label: "Activo", count: WORKERS.filter((worker) => worker.active).length },
     { value: "inactivo", label: "Inactivo", count: WORKERS.filter((worker) => !worker.active).length }
   ];
-  const workersAllowedByFilters = WORKERS.filter((worker) => matchesWorker(worker.id));
-  const workerProduction = workerProductionRows(workersAllowedByFilters, visibleActivities, selectedWorkerIds);
+  const productionWorkers = WORKERS.filter((worker) => !selectedWorkerIds.length || selectedWorkerIds.includes(worker.id));
+  const peopleWorkers = WORKERS.filter((worker) => matchesPeopleWorker(worker.id));
+  const workerProduction = workerProductionRows(productionWorkers, visibleActivities, selectedWorkerIds);
   const filteredTopWorkers = [...workerProduction].sort((a, b) => b.value - a.value).slice(0, 5);
   const filteredBottomWorkers = [...workerProduction].sort((a, b) => a.value - b.value).slice(0, 5).sort((a, b) => b.value - a.value);
   const activityYears = [...new Set((dashboardData?.activities || []).map((row) => Number(row.date?.slice(0, 4))).filter(Number.isFinite))].sort((a, b) => a - b);
@@ -1674,15 +1740,17 @@ export default function FootwearDashboard() {
   const averageActivities = (dashboardData?.activities || []).filter((row) => (
     !selectedWorkerIds.length || selectedWorkerIds.includes(Number(row.workerId))
   ));
-  const filteredActivityKpis = TASK_CATALOG.filter((task) => task.requiresTime).slice(0, 5).map((task) => {
+  const filteredActivityKpis = OPERATIONAL_TASKS.filter((task) => task.requiresTime).slice(0, 5).map((task) => {
     const rows = averageActivities.filter((row) => row.taskId === task.id);
-    return { label: task.shortName, unit: productionUnit(task), ...timedActivityKpi(rows) };
+    return { label: task.shortName, unit: String(task.unit || "").trim() || productionUnit(task), ...timedActivityKpi(rows) };
   });
 
   const selectedWorkerNames = selectedWorkerIds.map((id) => workerById.get(id)?.name).filter(Boolean);
+  const selectedPeopleWorkerNames = peopleWorkerIds.map((id) => workerById.get(id)?.name).filter(Boolean);
+  const selectedQualityWorkerNames = qualityWorkerIds.map((id) => workerById.get(id)?.name).filter(Boolean);
   const visibleIncidentRecords = (dashboardData?.incidents || []).filter((incident) => (
-    matchesDashboardDate(incident.date)
-    && (!incident.taskId || allowedTaskIds.has(incident.taskId))
+    matchesQualityDate(incident.date)
+    && allowedIncidentTaskIds.has(incident.taskId)
   ));
   const comparableIncidentMetrics = buildComparableIncidentMetrics(visibleIncidentRecords, qualityActivities);
   const comparableTaskIds = comparableIncidentMetrics.comparableTaskIds;
@@ -1708,9 +1776,9 @@ export default function FootwearDashboard() {
       value: comparableIncidentMetrics.ratesByTask.get(Number(item.id)) || 0
     };
   }).filter((item) => item.value > 0).sort((a, b) => b.value - a.value);
-  const filteredErrorsByResponsible = [...visibleIncidentRecords.reduce((counts, incident) => {
-    const responsibleName = incident.responsibleName || "Sin responsable";
-    const key = incident.responsibleType ? `${responsibleName} (${incident.responsibleType})` : responsibleName;
+  const filteredErrorsByOffender = [...visibleIncidentRecords.reduce((counts, incident) => {
+    const offenderName = incident.offenderName || "Sin identificar";
+    const key = `${offenderName} (${incident.offenderType || "Usuario/Área"})`;
     counts.set(key, (counts.get(key) || 0) + 1);
     return counts;
   }, new Map()).entries()].map(([name, value]) => ({ name, value, workerName: name })).sort((a, b) => b.value - a.value);
@@ -1720,7 +1788,7 @@ export default function FootwearDashboard() {
     counts.set(label, (counts.get(label) || 0) + 1);
     return counts;
   }, new Map()).entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
-  const filteredAttendance = [...(dashboardData?.attendances || []).filter((row) => matchesDashboardDate(row.date) && matchesWorker(row.workerId)).reduce((totals, row) => {
+  const filteredAttendance = [...(dashboardData?.attendances || []).filter((row) => matchesPeopleDate(row.date) && matchesPeopleWorker(row.workerId)).reduce((totals, row) => {
     const worker = workerById.get(row.workerId);
     if (!worker) return totals;
     const item = totals.get(row.workerId) || {
@@ -1744,7 +1812,7 @@ export default function FootwearDashboard() {
   }, new Map()).values()];
   const trainingById = new Map((dashboardData?.trainings || []).map((course) => [course.id, course]));
   const visibleAssignments = (dashboardData?.trainingAssignments || []).filter((row) => (
-    matchesWorker(row.workerId) && (!row.date || matchesDashboardDate(row.date))
+    !qualityWorkerIds.length || qualityWorkerIds.includes(Number(row.workerId))
   ));
   const filteredTrainingProgress = [...visibleAssignments.reduce((totals, assignment) => {
     const worker = workerById.get(assignment.workerId);
@@ -1769,7 +1837,7 @@ export default function FootwearDashboard() {
   }), { absent: 0, punctual: 0, late: 0 });
   const attendanceTotal = attendanceTotals.absent + attendanceTotals.punctual + attendanceTotals.late;
   const tenure = averageEmployeeTenureMonths(dashboardData?.movements || [], {
-    allowedWorkerIds: new Set((selectedWorkerIds.length ? WORKERS.filter((worker) => selectedWorkerIds.includes(Number(worker.id))) : WORKERS).map((worker) => Number(worker.id)))
+    allowedWorkerIds: new Set(peopleWorkers.map((worker) => Number(worker.id)))
   });
   const filteredIndicators = [
     { label: "Margen de error", detail: `${comparableIncidentMetrics.comparableIncidents} incidentes / ${comparableIncidentMetrics.comparableRecords} registros comparables`, value: `${comparableIncidentMetrics.margin.toFixed(2)}%` },
@@ -1777,7 +1845,7 @@ export default function FootwearDashboard() {
     { label: "Tardanza", detail: "Llegadas fuera de hora", value: `${attendanceTotal ? ((attendanceTotals.late / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
     { label: "Permanencia promedio", detail: `${tenure.workerCount} trabajador(es) con periodos laborales`, suffix: "meses", value: tenure.months.toFixed(2) }
   ];
-  const filteredWarnings = [...(dashboardData?.warnings || []).filter((row) => matchesDashboardDate(row.date) && matchesWorker(row.workerId)).reduce((totals, row) => {
+  const filteredWarnings = [...(dashboardData?.warnings || []).filter((row) => matchesPeopleDate(row.date) && matchesPeopleWorker(row.workerId)).reduce((totals, row) => {
     const worker = workerById.get(row.workerId);
     const alias = worker?.alias || worker?.name || "Sin trabajador";
     totals.set(alias, { alias, workerName: worker?.name || alias, value: (totals.get(alias)?.value || 0) + 1 });
@@ -1785,9 +1853,9 @@ export default function FootwearDashboard() {
   }, new Map()).values()].sort((a, b) => b.value - a.value);
 
   const visibleMovements = (dashboardData?.movements || []).filter((row) => (
-    matchesDashboardDate(row.date)
+    matchesPeopleDate(row.date)
     && (!movementYear || Number(row.date.slice(0, 4)) === Number(movementYear))
-    && matchesWorker(row.workerId)
+    && matchesPeopleWorker(row.workerId)
   ));
   const filteredRotation = MONTHLY_TASKS.map((month, monthIndex) => {
     const monthMovements = visibleMovements.filter((row) => Number(row.date.slice(5, 7)) === monthIndex + 1);
@@ -1817,7 +1885,7 @@ export default function FootwearDashboard() {
   // solo sirve para acotar el resto del dashboard.
   const payrollYear = nowParts.year;
   const payrollLastMonth = Math.max(nowParts.month - 1, 0);
-  const allowedPayrollWorkers = new Set(workersAllowedByFilters.map((worker) => Number(worker.id)));
+  const allowedPayrollWorkers = new Set(peopleWorkers.map((worker) => Number(worker.id)));
   const payrollMonthIndexes = Array.from({ length: payrollLastMonth }, (_, index) => index);
   const filteredPayroll = payrollMonthIndexes.map((monthIndex) => {
     const byWorker = dashboardData?.payrollByWorker?.[payrollYear]?.[monthIndex];
@@ -1843,8 +1911,8 @@ export default function FootwearDashboard() {
   // activos (comportamiento previo); al elegir un estado se respeta la
   // seleccion, incluyendo ver inactivos o ambos a la vez.
   const activeWorkers = selectedWorkerStatus.length
-    ? workersAllowedByFilters
-    : workersAllowedByFilters.filter((worker) => worker.active);
+    ? peopleWorkers
+    : peopleWorkers.filter((worker) => worker.active);
   const personnelKpis = [
     { label: "Total Trabajadores", value: activeWorkers.length },
     { label: "Total Operantes", value: activeWorkers.filter((worker) => ["operante", "jefe de equipo", "jefe de grupo"].includes(worker.role)).length },
@@ -1852,7 +1920,7 @@ export default function FootwearDashboard() {
   ];
   const nextBirthday = (() => {
     const today = new Date();
-    return workersAllowedByFilters.filter((worker) => worker.active && worker.birthday).map((worker) => {
+    return peopleWorkers.filter((worker) => worker.active && worker.birthday).map((worker) => {
       const [, month, day] = worker.birthday.split("-").map(Number);
       let date = new Date(today.getFullYear(), month - 1, day);
       if (date < new Date(today.getFullYear(), today.getMonth(), today.getDate())) date = new Date(today.getFullYear() + 1, month - 1, day);
@@ -1874,22 +1942,28 @@ export default function FootwearDashboard() {
     setDateParts({});
     setSelectedTaskIds([]);
     setSelectedTaskTypes([]);
+    setSelectedIncidentTaskIds([]);
+    setPeopleWorkerIds([]);
+    setPeopleYears([]);
+    setQualityWorkerIds([]);
+    setQualityYears([]);
+    setQualityDateParts({});
     setMovementYear("");
     setSelectedMovementMonths([]);
   }
 
-  function selectWorkerFromChart(item) {
+  function selectWorkerFromChart(item, setter = setSelectedWorkerIds) {
     closeOpenSlicers();
     const id = WORKERS.find((worker) => worker.name === (item.workerName || item.name))?.id;
-    if (id) setSelectedWorkerIds((current) => toggleArrayValue(current, id));
+    if (id) setter((current) => toggleArrayValue(current, id));
   }
 
-  function selectTaskFromChart(item) {
+  function selectTaskFromChart(item, setter = setSelectedTaskIds) {
     closeOpenSlicers();
     const aliases = { "Clasificado y Rotulado": "Clasificado", "Visita de Tienda": "Visita Tienda" };
     const itemName = aliases[item.name] || item.name;
     const taskItem = TASK_CATALOG.find((candidate) => candidate.id === item.id || candidate.shortName === itemName || candidate.name === itemName);
-    if (taskItem) setSelectedTaskIds((current) => toggleArrayValue(current, taskItem.id));
+    if (taskItem) setter((current) => toggleArrayValue(current, taskItem.id));
   }
 
   function selectMonthFromChart(item) {
@@ -1918,7 +1992,7 @@ export default function FootwearDashboard() {
 
   function changeRoles(nextRoles) {
     setSelectedRoles(nextRoles);
-    setSelectedWorkerIds((current) => current.filter((id) => {
+    setPeopleWorkerIds((current) => current.filter((id) => {
       const worker = WORKERS.find((candidate) => candidate.id === id);
       return worker && (!nextRoles.length || nextRoles.includes(worker.role));
     }));
@@ -1926,7 +2000,7 @@ export default function FootwearDashboard() {
 
   function changeWorkerStatus(nextStatus) {
     setSelectedWorkerStatus(nextStatus);
-    setSelectedWorkerIds((current) => current.filter((id) => {
+    setPeopleWorkerIds((current) => current.filter((id) => {
       const worker = WORKERS.find((candidate) => candidate.id === id);
       return worker && (!nextStatus.length || nextStatus.includes(worker.active ? "activo" : "inactivo"));
     }));
@@ -1949,20 +2023,14 @@ export default function FootwearDashboard() {
     }
   }
 
-  const activeFilters = [
-    selectedWorkerIds.length ? { key: "workers", label: `Trabajador: ${selectedLabel(workerOptions, selectedWorkerIds, "Todos")}`, clear: () => setSelectedWorkerIds([]) } : null,
-    selectedRoles.length ? { key: "roles", label: `Cargo: ${selectedLabel(roleOptions, selectedRoles, "Todos")}`, clear: () => setSelectedRoles([]) } : null,
-    selectedWorkerStatus.length ? { key: "status", label: `Estado: ${selectedLabel(statusOptions, selectedWorkerStatus, "Todos")}`, clear: () => setSelectedWorkerStatus([]) } : null,
-    selectedYears.length ? { key: "years", label: `Año: ${selectedYears.join(", ")}`, clear: () => setSelectedYears([]) } : null,
-    Object.keys(dateParts).length ? { key: "date", label: `Fecha: ${Object.keys(dateParts).length} mes(es)`, clear: () => setDateParts({}) } : null,
-    selectedTaskIds.length ? { key: "tasks", label: `Tarea: ${selectedTaskIds.length} seleccionada(s)`, clear: () => setSelectedTaskIds([]) } : null,
-    selectedTaskTypes.length ? { key: "task-types", label: `Tipo: ${selectedTaskTypes.join(", ")}`, clear: () => setSelectedTaskTypes([]) } : null,
-    movementYear ? { key: "movement", label: `Rotación: ${movementYear}`, clear: () => setMovementYear("") } : null,
-    selectedMovementMonths.length ? { key: "movement-months", label: `Mes rotación: ${selectedMovementMonths.join(", ")}`, clear: () => setSelectedMovementMonths([]) } : null
-  ].filter(Boolean);
-  const filterSummary = activeFilters.length
-    ? `${activeFilters.length} filtros activos · ${numberFormatter.format(selectedTaskTotal)} registros de producción visibles`
-    : `Todos los trabajadores · Todos los cargos · ${dashboardYears.join("–") || "Sin período"} · Todas las fechas`;
+  const activeFilterCount = [
+    selectedWorkerIds, selectedYears, Object.keys(dateParts), selectedTaskIds, selectedTaskTypes,
+    peopleWorkerIds, selectedRoles, selectedWorkerStatus, peopleYears,
+    selectedIncidentTaskIds, qualityWorkerIds, qualityYears, Object.keys(qualityDateParts), movementYear ? [movementYear] : [], selectedMovementMonths
+  ].filter((values) => values.length).length;
+  const filterSummary = activeFilterCount
+    ? `${activeFilterCount} filtros locales activos · cada uno afecta solo su sección`
+    : `Filtros independientes por Producción, Personas y Calidad`;
   const updatedAtLabel = dashboardData?.generatedAt
     ? new Intl.DateTimeFormat("es-PE", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(dashboardData.generatedAt))
     : "Sin sincronizar";
@@ -2024,88 +2092,11 @@ export default function FootwearDashboard() {
         ) : null}
 
         <main className={`pbi-main${!dashboardData ? " is-data-loading" : ""}`} aria-busy={!dashboardData}>
-          <div className="pbi-sticky-filters" aria-label="Filtros principales">
-            <div className="pbi-filter-grid">
-              <MultiSlicer id="workers" label="Trabajadores" options={workerOptions} selected={selectedWorkerIds} onChange={setSelectedWorkerIds} allLabel="Todos" />
-              <MultiSlicer id="roles" label="Cargos" options={roleOptions} selected={selectedRoles} onChange={changeRoles} allLabel="Todos" searchable={false} />
-              <MultiSlicer id="status" label="Estado" options={statusOptions} selected={selectedWorkerStatus} onChange={changeWorkerStatus} allLabel="Todos" searchable={false} />
-              <MultiSlicer
-                id="years"
-                label="Año"
-                options={dashboardYears.map((year) => ({ value: year, label: String(year) }))}
-                selected={selectedYears}
-                onChange={setSelectedYears}
-                allLabel="Todos"
-                searchable={false}
-                alignEnd
-              />
-            </div>
-          </div>
-
-          <aside className="pbi-sidebar" aria-label="Filtros del dashboard">
-            <div className="pbi-kpi-grid pbi-kpi-grid--personnel">
-              {personnelKpis.map((item) => <PersonnelKpi key={item.label} {...item} />)}
-            </div>
-
-            <DateHierarchySlicer selected={dateParts} onChange={setDateParts} years={selectedYears.length ? selectedYears : dashboardYears} dateDaysByYear={dateDaysByYear} />
-
-            <fieldset className="pbi-filter pbi-filter--tasks">
-              <legend className="pbi-filter-label">Tareas</legend>
-              <div className="pbi-task-type-row" role="group" aria-label="Tipo de tarea" data-testid="slicer-task-types">
-                <span>Tipo</span>
-                {["Despacho", "General", "Ingreso"].map((type) => (
-                  <button
-                    className={`pbi-chip${selectedTaskTypes.includes(type) ? " pbi-chip--active" : ""}`}
-                    type="button"
-                    key={type}
-                    onClick={() => toggleTaskType(type)}
-                    aria-pressed={selectedTaskTypes.includes(type)}
-                  >
-                    {type}
-                  </button>
-                ))}
-              </div>
-              <div className="pbi-filter-chips" data-testid="slicer-tasks">
-                <button
-                  className={`pbi-chip${!selectedTaskIds.length ? " pbi-chip--active" : ""}`}
-                  type="button"
-                  onClick={() => setSelectedTaskIds([])}
-                  aria-pressed={!selectedTaskIds.length}
-                >
-                  Todas
-                </button>
-                {TASK_CATALOG.filter((item) => !selectedTaskTypes.length || selectedTaskTypes.includes(item.type)).map((item) => (
-                  <button
-                    className={`pbi-chip${selectedTaskIds.includes(item.id) ? " pbi-chip--active" : ""}`}
-                    type="button"
-                    key={item.id}
-                    onClick={() => setSelectedTaskIds((current) => toggleArrayValue(current, item.id))}
-                    aria-pressed={selectedTaskIds.includes(item.id)}
-                  >
-                    {item.shortName}
-                  </button>
-                ))}
-              </div>
-            </fieldset>
-
-            {activeFilters.length ? (
-              <div className="pbi-active-filters" aria-label="Filtros activos" data-testid="active-filters">
-                <span className="pbi-active-filters-label">Filtros activos</span>
-                <div className="pbi-active-filters-list">
-                  {activeFilters.map((filter) => (
-                    <span className="pbi-active-filter-chip" key={filter.key}>
-                      <span>{filter.label}</span>
-                      <button type="button" onClick={filter.clear} aria-label={`Quitar ${filter.label}`}>×</button>
-                    </span>
-                  ))}
-                </div>
-                <span className="pbi-filter-results" aria-live="polite">{numberFormatter.format(selectedTaskTotal)} registros</span>
-                <button className="pbi-active-filters-clear" type="button" onClick={resetFilters}>Limpiar todo</button>
-              </div>
-            ) : null}
-          </aside>
-
           <div className="pbi-report">
+            <section className="pbi-kpi-grid pbi-kpi-grid--personnel" aria-label="Resumen de personal">
+              {personnelKpis.map((item) => <PersonnelKpi key={item.label} {...item} />)}
+            </section>
+
             <section className="pbi-kpi-grid pbi-kpi-grid--activities" aria-label="Promedios de producción">
               {filteredActivityKpis.map((item) => <ActivityKpi key={item.label} {...item} />)}
             </section>
@@ -2126,6 +2117,27 @@ export default function FootwearDashboard() {
                   <h2 id="pbi-production-section-title">Producción y rendimiento</h2>
                 </div>
                 <p>Comparativo de productividad, volumen operativo y pares procesados.</p>
+              </div>
+
+              <div className="pbi-section-filters" aria-label="Filtros de producción">
+                <MultiSlicer id="production-workers" label="Trabajadores" options={workerOptions} selected={selectedWorkerIds} onChange={setSelectedWorkerIds} allLabel="Todos" />
+                <MultiSlicer id="production-years" label="Año" options={productionYears.map((year) => ({ value: year, label: String(year) }))} selected={selectedYears} onChange={setSelectedYears} allLabel="Todos" searchable={false} />
+                <DateHierarchySlicer selected={dateParts} onChange={setDateParts} years={selectedYears.length ? selectedYears : productionYears} dateDaysByYear={dateDaysByYear} />
+                <fieldset className="pbi-filter pbi-filter--tasks">
+                  <legend className="pbi-filter-label">Tareas operativas</legend>
+                  <div className="pbi-task-type-row" role="group" aria-label="Tipo de tarea">
+                    <span>Tipo</span>
+                    {["Despacho", "General", "Ingreso"].map((type) => (
+                      <button className={`pbi-chip${selectedTaskTypes.includes(type) ? " pbi-chip--active" : ""}`} type="button" key={type} onClick={() => toggleTaskType(type)} aria-pressed={selectedTaskTypes.includes(type)}>{type}</button>
+                    ))}
+                  </div>
+                  <div className="pbi-filter-chips">
+                    <button className={`pbi-chip${!selectedTaskIds.length ? " pbi-chip--active" : ""}`} type="button" onClick={() => setSelectedTaskIds([])} aria-pressed={!selectedTaskIds.length}>Todas</button>
+                    {OPERATIONAL_TASKS.filter((task) => !selectedTaskTypes.length || selectedTaskTypes.includes(task.type)).map((task) => (
+                      <button className={`pbi-chip${selectedTaskIds.includes(task.id) ? " pbi-chip--active" : ""}`} type="button" key={task.id} onClick={() => setSelectedTaskIds((current) => toggleArrayValue(current, task.id))} aria-pressed={selectedTaskIds.includes(task.id)}>{task.shortName}</button>
+                    ))}
+                  </div>
+                </fieldset>
               </div>
 
               <div className="pbi-content-grid">
@@ -2215,6 +2227,13 @@ export default function FootwearDashboard() {
                 <p>Movimientos, asistencia, permanencia y costo del equipo operativo.</p>
               </div>
 
+              <div className="pbi-section-filters pbi-section-filters--people" aria-label="Filtros de personas">
+                <MultiSlicer id="people-workers" label="Trabajadores" options={peopleWorkerOptions} selected={peopleWorkerIds} onChange={setPeopleWorkerIds} allLabel="Todos" />
+                <MultiSlicer id="people-roles" label="Cargos" options={roleOptions} selected={selectedRoles} onChange={changeRoles} allLabel="Todos" searchable={false} />
+                <MultiSlicer id="people-status" label="Estado" options={statusOptions} selected={selectedWorkerStatus} onChange={changeWorkerStatus} allLabel="Todos" searchable={false} />
+                <MultiSlicer id="people-years" label="Año" options={peopleAvailableYears.map((year) => ({ value: year, label: String(year) }))} selected={peopleYears} onChange={setPeopleYears} allLabel="Todos" searchable={false} />
+              </div>
+
               <div className="pbi-content-grid">
                 <Card
                   id="pbi-rotation"
@@ -2226,7 +2245,7 @@ export default function FootwearDashboard() {
                     <label htmlFor="pbi-movement-year">Período de rotación</label>
                     <select id="pbi-movement-year" value={movementYear} onChange={(event) => setMovementYear(event.target.value)} data-testid="movement-year-filter">
                       <option value="">Todos los años</option>
-                      {dashboardYears.map((year) => <option key={year} value={year}>{year}</option>)}
+                      {peopleAvailableYears.map((year) => <option key={year} value={year}>{year}</option>)}
                     </select>
                   </div>
                   <ComparisonBars
@@ -2281,7 +2300,7 @@ export default function FootwearDashboard() {
                   meta="Puntual · tardanza · ausencia"
                   className="pbi-card--chart pbi-card--span-6"
                 >
-                  <AttendanceBars data={filteredAttendance} onSelect={selectWorkerFromChart} selectedNames={selectedWorkerNames} />
+                  <AttendanceBars data={filteredAttendance} onSelect={(item) => selectWorkerFromChart(item, setPeopleWorkerIds)} selectedNames={selectedPeopleWorkerNames} />
                 </Card>
 
                 <Card
@@ -2329,6 +2348,44 @@ export default function FootwearDashboard() {
                 <p>Incidentes, causas de error, capacitación y trazabilidad de tareas.</p>
               </div>
 
+              <fieldset className="pbi-filter pbi-filter--quality-tasks">
+                <legend className="pbi-filter-label">Tareas de incidencia</legend>
+                <div className="pbi-filter-chips" data-testid="slicer-incident-tasks">
+                  <button
+                    className={`pbi-chip${!selectedIncidentTaskIds.length ? " pbi-chip--active" : ""}`}
+                    type="button"
+                    onClick={() => setSelectedIncidentTaskIds([])}
+                    aria-pressed={!selectedIncidentTaskIds.length}
+                  >
+                    Todas
+                  </button>
+                  {INCIDENT_TASKS.map((task) => (
+                    <button
+                      className={`pbi-chip${selectedIncidentTaskIds.includes(task.id) ? " pbi-chip--active" : ""}`}
+                      type="button"
+                      key={task.id}
+                      onClick={() => setSelectedIncidentTaskIds((current) => toggleArrayValue(current, task.id))}
+                      aria-pressed={selectedIncidentTaskIds.includes(task.id)}
+                    >
+                      {task.shortName}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+
+              <div className="pbi-section-filters pbi-section-filters--quality" aria-label="Filtros de calidad y desarrollo">
+                <DateHierarchySlicer
+                  selected={qualityDateParts}
+                  onChange={setQualityDateParts}
+                  years={qualityAvailableYears}
+                  selectedYears={qualityYears}
+                  onYearsChange={setQualityYears}
+                  dateDaysByYear={incidentDateDaysByYear}
+                  label="Fecha de incidencia"
+                />
+                <MultiSlicer id="quality-workers" label="Trabajador en capacitación" options={qualityWorkerOptions} selected={qualityWorkerIds} onChange={setQualityWorkerIds} allLabel="Todos" />
+              </div>
+
               <div className="pbi-content-grid">
                 <Card
                   id="pbi-error-rate"
@@ -2341,22 +2398,23 @@ export default function FootwearDashboard() {
                     ariaLabel="Porcentaje de error por tipo de tarea"
                     color="#e1c233"
                     valueFormatter={(value) => `${value.toFixed(2)}%`}
-                    onSelect={selectTaskFromChart}
-                    selectedNames={selectedTaskIds.map((id) => TASK_CATALOG.find((taskItem) => taskItem.id === id)?.shortName).filter(Boolean)}
+                    onSelect={(item) => selectTaskFromChart(item, setSelectedIncidentTaskIds)}
+                    selectedNames={selectedIncidentTaskIds.map((id) => taskById.get(id)?.shortName).filter(Boolean)}
                   />
                 </Card>
 
                 <Card
                   id="pbi-errors-task"
-                  title="Distribución de Errores por Tarea"
-                  meta={`${visibleIncidentRecords.length} errores`}
+                  title="Distribución de Incidencias por Tarea"
+                  meta={`${visibleIncidentRecords.length} registros de incidencia`}
                   className="pbi-card--chart pbi-card--quality-treemap pbi-card--span-4"
                 >
                   <TreemapChart
                     data={filteredErrorsByTask}
-                    ariaLabel="Errores registrados por tarea"
-                    onSelect={selectTaskFromChart}
-                    selectedNames={selectedTaskIds.map((id) => TASK_CATALOG.find((taskItem) => taskItem.id === id)?.shortName).filter(Boolean)}
+                    ariaLabel="Registros de incidencias agrupados por tarea"
+                    unit="incidencias"
+                    onSelect={(item) => selectTaskFromChart(item, setSelectedIncidentTaskIds)}
+                    selectedNames={selectedIncidentTaskIds.map((id) => taskById.get(id)?.shortName).filter(Boolean)}
                   />
                 </Card>
 
@@ -2382,8 +2440,8 @@ export default function FootwearDashboard() {
                 >
                   <TrainingProgressBars
                     data={filteredTrainingProgress}
-                    onSelect={selectWorkerFromChart}
-                    selectedNames={selectedWorkerNames}
+                    onSelect={(item) => selectWorkerFromChart(item, setQualityWorkerIds)}
+                    selectedNames={selectedQualityWorkerNames}
                   />
                 </Card>
 
@@ -2412,15 +2470,16 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-errors-worker"
-                  title="Incidentes por Responsable"
+                  title="Errores por Usuario o Área"
                   meta={`${visibleIncidentRecords.length} incidentes`}
                   className="pbi-card--chart pbi-card--quality-responsible pbi-card--span-4"
                 >
                   <VerticalBarChart
                     id="pbi-errors-worker"
-                    data={filteredErrorsByResponsible}
-                    ariaLabel="Incidentes registrados por responsable"
+                    data={filteredErrorsByOffender}
+                    ariaLabel="Errores agrupados por usuario o área que cometió el error"
                     tone="blue"
+                    unit="incidencias"
                   />
                 </Card>
 

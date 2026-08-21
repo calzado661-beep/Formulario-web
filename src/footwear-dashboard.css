@@ -601,6 +601,70 @@
   align-content: start;
 }
 
+.pbi-filter--quality-tasks {
+  margin: 0;
+  align-content: start;
+  border-color: rgba(9, 71, 128, 0.35);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.pbi-filter--quality-tasks .pbi-filter-chips {
+  align-content: start;
+}
+
+.pbi-section-filters {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.75fr) minmax(150px, 0.55fr) minmax(260px, 1fr) minmax(360px, 1.7fr);
+  align-items: start;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.pbi-section-filters:has(.pbi-slicer[open]) {
+  z-index: 80;
+}
+
+.pbi-section-filters--people {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.pbi-section-filters--quality {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pbi-date-years {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--pbi-line);
+}
+
+.pbi-date-years-label {
+  margin-right: 0.2rem;
+  color: var(--pbi-blue-dark);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+@media (max-width: 1100px) {
+  .pbi-section-filters,
+  .pbi-section-filters--people {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .pbi-section-filters,
+  .pbi-section-filters--people,
+  .pbi-section-filters--quality {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .pbi-filter--year .pbi-period {
   margin-block: auto;
 }
@@ -914,6 +978,21 @@
 .pbi-kpi-pair-item .pbi-kpi-value {
   color: var(--pbi-ink);
   font-size: clamp(1.05rem, 1.5vw, 1.7rem);
+}
+
+.pbi-kpi-value-line {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.3rem;
+}
+
+.pbi-kpi-value-line .pbi-kpi-unit {
+  color: var(--pbi-blue-dark);
+  font-size: clamp(0.62rem, 0.72vw, 0.78rem);
+  font-weight: 800;
+  letter-spacing: 0.02em;
 }
 
 .pbi-kpi-pair-item small {

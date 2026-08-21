@@ -1322,7 +1322,7 @@ async function handleReadFootwearDashboard(request, response) {
       leaderRecords,
       attendances,
       incidents,
-      incidentResponsibles,
+      incidentAreas,
       warnings,
       movements,
       trainings,
@@ -1336,7 +1336,7 @@ async function handleReadFootwearDashboard(request, response) {
       selectAllDashboardRows("registros_tareas_jefe_equipo", { optional: true }),
       selectAllDashboardRows("asistencias", { optional: true }),
       selectAllDashboardRows("incidentes", { optional: true }),
-      selectAllDashboardRows("responsables_incidentes", { optional: true }),
+      selectAllDashboardRows("areas_departamento", { optional: true }),
       selectAllDashboardRows("amonestaciones", { optional: true }),
       selectAllDashboardRows("movimientos_personal", { optional: true }),
       selectAllDashboardRows("capacitaciones", { optional: true }),
@@ -1404,7 +1404,8 @@ async function handleReadFootwearDashboard(request, response) {
       };
     };
 
-    const incidentResponsibleById = new Map(incidentResponsibles.map((item) => [Number(item.id), item]));
+    const incidentUserById = new Map(users.map((item) => [Number(item.id), item]));
+    const incidentAreaById = new Map(incidentAreas.map((item) => [Number(item.id), item]));
     const payrollYear = Number(currentLimaDate().slice(0, 4));
     const payroll = buildDashboardPayroll(users, movements, [payrollYear], { normalizeRole });
 
@@ -1419,6 +1420,8 @@ async function handleReadFootwearDashboard(request, response) {
         type: String(task.tipo_tarea || "General"),
         unit: String(task.unidad_medida || task.unidad_base || "").trim(),
         active: isActive(task.activo),
+        operational: task.es_operativa === true,
+        incident: task.es_incidencia === true,
         requiresBrand: [true, 1, "1", "true", "si", "sí"].includes(task.requiere_marca),
         requiresTime: [true, 1, "1", "true", "si", "sí"].includes(task.requiere_tiempo) || isGroupLeaderTimeTask(task)
       })),
@@ -1433,10 +1436,11 @@ async function handleReadFootwearDashboard(request, response) {
       })).filter((row) => row.workerId && row.date),
       incidents: incidents.map((row) => ({
         id: Number(row.id), workerId: Number(row.usuario_id) || null, taskId: Number(row.tarea_id),
-        responsibleId: Number(row.responsable_id) || null,
-        responsibleName: String(incidentResponsibleById.get(Number(row.responsable_id))?.nombre || row.nombre || "Sin responsable"),
-        responsibleType: String(incidentResponsibleById.get(Number(row.responsable_id))?.tipo || ""),
-        taskName: String(row.tarea_nombre || ""), errorType: String(row.tipo_error || "Sin tipo"),
+        offenderName: String(row.es_trabajador
+          ? incidentUserById.get(Number(row.usuario_id))?.nombre || `Usuario ${row.usuario_id}`
+          : incidentAreaById.get(Number(row.area_id))?.nombre || "Área sin identificar"),
+        offenderType: row.es_trabajador ? "Usuario" : "Área",
+        taskName: String(taskTitle(scoredTaskById.get(Number(row.tarea_id))) || ""), errorType: String(row.tipo_error || "Sin tipo"),
         shift: String(row.turno || "Sin turno").trim().toLowerCase(),
         storeId: Number(row.tienda_id) || null,
         date: dashboardDate(row.fecha_incidente || row.created_at)
@@ -4064,26 +4068,34 @@ async function handleCancelLiveGroupLeaderActivity(request, response, activityId
 
 async function loadIncidentData() {
   const tableName = await getTaskTableName();
-  const [usersResult, tasksResult, storesResult, incidentsResult] = await Promise.all([
+  const [usersResult, tasksResult, storesResult, areasResult, incidentsResult] = await Promise.all([
     supabase.from("usuarios").select("id,nombre,email,rol,activo").order("id", { ascending: true }),
-    supabase.from(tableName).select("id,nombre,activo").order("id", { ascending: true }),
+    supabase.from(tableName).select("id,nombre,activo,es_incidencia").eq("es_incidencia", true).order("id", { ascending: true }),
     supabase.from("tiendas").select("id,nombre,activo").order("id", { ascending: true }),
+    supabase.from("areas_departamento").select("id,nombre").order("nombre", { ascending: true }),
     supabase
       .from("incidentes")
-      .select("id,turno,nombre,tarea_id,tarea_nombre,tienda_id,numero_guia,observacion,tipo_error,created_by,created_at,usuario_id,area")
-      .order("created_at", { ascending: false })
+      .select("id,turno,tarea_id,tienda_id,numero_guia,observacion,tipo_error,usuario_id,responsable_id,fecha_incidente,es_trabajador,area_id")
+      .order("fecha_incidente", { ascending: false })
   ]);
 
   if (usersResult.error) throw usersResult.error;
   if (tasksResult.error) throw tasksResult.error;
   if (storesResult.error) throw storesResult.error;
+  if (areasResult.error) throw areasResult.error;
   if (incidentsResult.error) throw incidentsResult.error;
 
   const stores = (storesResult.data || []).filter((store) => isActive(store.activo));
   const storeNames = new Map((storesResult.data || []).map((store) => [Number(store.id), store.nombre]));
+  const userNames = new Map((usersResult.data || []).map((user) => [Number(user.id), user.nombre || user.email]));
+  const taskNames = new Map((tasksResult.data || []).map((task) => [Number(task.id), taskTitle(task)]));
+  const areaNames = new Map((areasResult.data || []).map((area) => [Number(area.id), area.nombre]));
   const incidents = (incidentsResult.data || []).map((incident) => ({
     ...incident,
-    tienda_nombre: storeNames.get(Number(incident.tienda_id)) || ""
+    tienda_nombre: storeNames.get(Number(incident.tienda_id)) || "",
+    usuario_nombre: userNames.get(Number(incident.usuario_id)) || "",
+    tarea_nombre: taskNames.get(Number(incident.tarea_id)) || "",
+    area_nombre: areaNames.get(Number(incident.area_id)) || ""
   }));
 
   return {
@@ -4092,6 +4104,7 @@ async function loadIncidentData() {
     ),
     tasks: (tasksResult.data || []).filter((task) => isActive(task.activo)),
     stores,
+    areas: areasResult.data || [],
     incidents
   };
 }
@@ -4116,7 +4129,7 @@ async function handleCreateIncident(request, response) {
     const turno = String(body.turno || "").trim().toLowerCase();
     const guideNumber = String(body.numero_guia || "").trim();
     const errorType = String(body.tipo_error || "").trim().toUpperCase();
-    const area = String(body.area || "").trim();
+    const areaId = Number(body.area_id);
     const isAreaIncident = turno === "incidencia";
 
     if (![taskId, storeId].every((id) => Number.isInteger(id) && id > 0)) {
@@ -4135,8 +4148,7 @@ async function handleCreateIncident(request, response) {
       sendJson(response, 400, { error: "Selecciona un turno valido." });
       return;
     }
-    const incidentAreas = ["Textil", "Hogar", "Importaciones", "Almacén 1", "Operaciones", "Sistemas", "Tiendas", "Marketing"];
-    if (isAreaIncident && !incidentAreas.includes(area)) {
+    if (isAreaIncident && (!Number.isInteger(areaId) || areaId <= 0)) {
       sendJson(response, 400, { error: "Selecciona un area valida." });
       return;
     }
@@ -4146,40 +4158,45 @@ async function handleCreateIncident(request, response) {
     }
 
     const tableName = await getTaskTableName();
-    const [workerResult, taskResult, storeResult] = await Promise.all([
+    const [workerResult, taskResult, storeResult, areaResult] = await Promise.all([
       isAreaIncident ? Promise.resolve({ data: null, error: null }) : supabase.from("usuarios").select("id,nombre,email,rol,activo").eq("id", workerId).maybeSingle(),
-      supabase.from(tableName).select("id,nombre,activo").eq("id", taskId).maybeSingle(),
-      supabase.from("tiendas").select("id,nombre,activo").eq("id", storeId).maybeSingle()
+      supabase.from(tableName).select("id,nombre,activo,es_incidencia").eq("id", taskId).eq("es_incidencia", true).maybeSingle(),
+      supabase.from("tiendas").select("id,nombre,activo").eq("id", storeId).maybeSingle(),
+      isAreaIncident ? supabase.from("areas_departamento").select("id,nombre").eq("id", areaId).maybeSingle() : Promise.resolve({ data: null, error: null })
     ]);
 
     const worker = workerResult.data;
     const task = taskResult.data;
     const store = storeResult.data;
+    const area = areaResult.data;
     if (!isAreaIncident && (workerResult.error || !worker || normalizeRole(worker.rol) !== "operante" || !isActive(worker.activo))) {
       sendJson(response, 400, { error: "Selecciona un operante activo." });
       return;
     }
-    if (taskResult.error || !task || !isActive(task.activo)) {
-      sendJson(response, 400, { error: "Selecciona una tarea activa." });
+    if (taskResult.error || !task || !isActive(task.activo) || task.es_incidencia !== true) {
+      sendJson(response, 400, { error: "Selecciona una tarea activa habilitada para incidencias." });
       return;
     }
     if (storeResult.error || !store || !isActive(store.activo)) {
       sendJson(response, 400, { error: "Selecciona una tienda activa." });
       return;
     }
+    if (isAreaIncident && (areaResult.error || !area)) {
+      sendJson(response, 400, { error: "Selecciona un area valida." });
+      return;
+    }
 
     const payload = {
       turno,
-      nombre: isAreaIncident ? null : (worker.nombre || worker.email || `Usuario ${worker.id}`),
-      area: isAreaIncident ? area : null,
       tarea_id: task.id,
-      tarea_nombre: taskTitle(task),
       tienda_id: store.id,
       numero_guia: guideNumber,
       observacion: body.observacion ? String(body.observacion).trim() : null,
       tipo_error: errorType,
-      created_by: Number(session.id),
-      usuario_id: isAreaIncident ? null : worker.id
+      usuario_id: isAreaIncident ? null : worker.id,
+      area_id: isAreaIncident ? area.id : null,
+      es_trabajador: !isAreaIncident,
+      fecha_incidente: currentLimaDate()
     };
     let result = await supabase.from("incidentes").insert(payload).select("*").single();
     if (isPrimaryKeySequenceConflict(result.error)) {

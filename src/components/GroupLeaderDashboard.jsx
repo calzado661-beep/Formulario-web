@@ -468,10 +468,9 @@ function HangtagStatTile({ label, value, unit }) {
     </div>
   );
 }
-const INCIDENT_AREAS = ["Textil", "Hogar", "Importaciones", "Almacén 1", "Operaciones", "Sistemas", "Tiendas", "Marketing"];
 var initialIncidentForm = {
   usuario_id: "",
-  area: "",
+  area_id: "",
   turno: "turno regular",
   tarea_id: "",
   tienda_id: "",
@@ -486,11 +485,12 @@ function IncidentDashboard({ user }) {
   const { data, loading, error, reload } = useAsyncData(
     loadIncidentContext,
     [user?.id],
-    { workers: [], tasks: [], stores: [], incidents: [] }
+    { workers: [], tasks: [], stores: [], areas: [], incidents: [] }
   );
   const workers = data.workers || [];
   const tasks = data.tasks || [];
   const stores = data.stores || [];
+  const areas = data.areas || [];
   const incidents = data.incidents || [];
   const storeNames = useMemo(
     () => new Map(stores.map((store) => [Number(store.id), store.nombre])),
@@ -507,7 +507,7 @@ function IncidentDashboard({ user }) {
       setStatus({ type: "error", message: "Selecciona un operante." });
       return;
     }
-    if (isAreaIncident && !INCIDENT_AREAS.includes(form.area)) {
+    if (isAreaIncident && !areas.some((area) => String(area.id) === String(form.area_id))) {
       setStatus({ type: "error", message: "Selecciona un área." });
       return;
     }
@@ -531,7 +531,7 @@ function IncidentDashboard({ user }) {
     try {
       await createIncident({
         usuario_id: isAreaIncident ? null : Number(form.usuario_id),
-        area: isAreaIncident ? form.area : null,
+        area_id: isAreaIncident ? Number(form.area_id) : null,
         turno: form.turno,
         tarea_id: Number(form.tarea_id),
         tienda_id: Number(form.tienda_id),
@@ -549,8 +549,8 @@ function IncidentDashboard({ user }) {
     }
   }
   const rows = incidents.map((incident) => ({
-    Fecha: formatDateLima(incident.created_at),
-    "Operante / Área": incident.turno === "incidencia" ? incident.area : incident.nombre,
+    Fecha: formatDateLima(incident.fecha_incidente),
+    "Usuario / Área": incident.es_trabajador ? incident.usuario_nombre : incident.area_nombre,
     Tarea: incident.tarea_nombre,
     "N\xFAmero de gu\xEDa": incident.numero_guia,
     Tienda: incident.tienda_nombre || storeNames.get(Number(incident.tienda_id)) || incident.tienda_id,
@@ -574,14 +574,14 @@ function IncidentDashboard({ user }) {
       SelectInput,
       {
         label: "Área",
-        value: form.area,
-        onChange: (area) => updateForm({ area }),
-        options: [{ value: "", label: "Selecciona un área" }, ...INCIDENT_AREAS]
+        value: form.area_id,
+        onChange: (area_id) => updateForm({ area_id }),
+        options: [{ value: "", label: "Selecciona un área" }, ...areas.map((area) => ({ value: String(area.id), label: area.nombre }))]
       }
     ) : /* @__PURE__ */ React.createElement(
       SelectInput,
       {
-        label: "Operante",
+        label: "Usuario",
         value: form.usuario_id,
         onChange: (usuario_id) => updateForm({ usuario_id }),
         options: [
@@ -597,7 +597,7 @@ function IncidentDashboard({ user }) {
       {
         label: "Turno",
         value: form.turno,
-        onChange: (turno) => updateForm({ turno, usuario_id: turno === "incidencia" ? "" : form.usuario_id, area: turno === "incidencia" ? form.area : "" }),
+        onChange: (turno) => updateForm({ turno, usuario_id: turno === "incidencia" ? "" : form.usuario_id, area_id: turno === "incidencia" ? form.area_id : "" }),
         options: ["turno regular", "incidencia", "turno extra"]
       }
     ), /* @__PURE__ */ React.createElement(

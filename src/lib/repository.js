@@ -1068,6 +1068,7 @@ export async function loadIncidentContext() {
     workers: apiResult.workers || [],
     tasks: apiResult.tasks || [],
     stores: apiResult.stores || [],
+    areas: apiResult.areas || [],
     incidents: apiResult.incidents || []
   };
 }
