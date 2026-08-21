@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  averageEmployeeTenureMonths,
   buildDashboardPayroll,
+  buildComparableIncidentMetrics,
   buildTaggedPairsByBrand,
   dashboardDateParts,
   taskVolumeRows,
@@ -41,6 +43,51 @@ test("la planilla usa movimientos, prorratea altas y bajas, admite reingresos y 
   assert.deepEqual(payroll.byRole[2026][8], {});
   assert.deepEqual(payroll.byWorker[2026][0], { 1: 1600, 2: 2800 });
   assert.equal(payroll.workersByMonth[2026][0], 2);
+});
+
+test("calidad compara solo tareas con registros operativos y excluye procesos generales del margen", () => {
+  const metrics = buildComparableIncidentMetrics(
+    [
+      { id: 1, taskId: 3 },
+      { id: 2, taskId: 3 },
+      { id: 3, taskId: 50 },
+      { id: 4, taskId: 50 }
+    ],
+    [
+      { id: 10, taskId: 3 },
+      { id: 11, taskId: 3 },
+      { id: 12, taskId: 3 },
+      { id: 13, taskId: 8 }
+    ]
+  );
+
+  assert.deepEqual([...metrics.comparableTaskIds], [3]);
+  assert.equal(metrics.ratesByTask.get(3), 2 / 3 * 100);
+  assert.equal(metrics.ratesByTask.has(50), false);
+  assert.equal(metrics.comparableIncidents, 2);
+  assert.equal(metrics.comparableRecords, 3);
+  assert.equal(metrics.margin, 2 / 3 * 100);
+});
+
+test("permanencia acumula reingresos, cierra periodos abiertos hoy y promedia por trabajador", () => {
+  const tenure = averageEmployeeTenureMonths([
+    { id: 1, usuario_id: 1, tipo_movimiento: "Ingreso", fecha_movimiento: "2024-01-01" },
+    { id: 2, usuario_id: 1, tipo_movimiento: "Salida", fecha_movimiento: "2024-07-01" },
+    { id: 3, usuario_id: 1, tipo_movimiento: "Ingreso", fecha_movimiento: "2024-10-01" },
+    { id: 4, usuario_id: 1, tipo_movimiento: "Salida", fecha_movimiento: "2025-04-01" },
+    { id: 5, usuario_id: 2, tipo_movimiento: "Ingreso", fecha_movimiento: "2025-01-01" },
+    { id: 6, usuario_id: 2, tipo_movimiento: "Ingreso", fecha_movimiento: "2025-02-01" },
+    { id: 7, usuario_id: 3, tipo_movimiento: "Ingreso", fecha_movimiento: "2020-01-01" }
+  ], {
+    today: new Date("2025-07-01T12:00:00-05:00"),
+    allowedWorkerIds: new Set([1, 2])
+  });
+
+  assert.equal(tenure.workerCount, 2);
+  assert.equal(tenure.daysByWorker.get(1), 364);
+  assert.equal(tenure.daysByWorker.get(2), 181);
+  assert.equal(tenure.totalDays, 545);
+  assert.equal(tenure.months, 545 / 2 / 30.4375);
 });
 
 test("pares por marca usa solo Etiquetado y suma cantidades reales", () => {

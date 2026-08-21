@@ -101,6 +101,101 @@ export function buildDashboardPayroll(users, movements, years, {
   return { byRole, byWorker, workersByMonth };
 }
 
+export function buildComparableIncidentMetrics(incidents, operationalRecords) {
+  const recordsByTask = new Map();
+  for (const record of operationalRecords || []) {
+    const taskId = Number(record.taskId ?? record.tarea_id);
+    if (!taskId) continue;
+    recordsByTask.set(taskId, (recordsByTask.get(taskId) || 0) + 1);
+  }
+
+  const allIncidentTaskIds = new Set();
+  const incidentsByTask = new Map();
+  for (const incident of incidents || []) {
+    const taskId = Number(incident.taskId ?? incident.tarea_id);
+    if (!taskId) continue;
+    allIncidentTaskIds.add(taskId);
+    if (!recordsByTask.has(taskId)) continue;
+    incidentsByTask.set(taskId, (incidentsByTask.get(taskId) || 0) + 1);
+  }
+
+  const comparableTaskIds = new Set([...recordsByTask.keys()].filter((taskId) => allIncidentTaskIds.has(taskId)));
+  const ratesByTask = new Map();
+  let comparableIncidents = 0;
+  let comparableRecords = 0;
+  recordsByTask.forEach((recordCount, taskId) => {
+    if (!comparableTaskIds.has(taskId)) return;
+    const incidentCount = incidentsByTask.get(taskId) || 0;
+    comparableRecords += recordCount;
+    comparableIncidents += incidentCount;
+    if (incidentCount) ratesByTask.set(taskId, (incidentCount / recordCount) * 100);
+  });
+
+  return {
+    comparableTaskIds,
+    ratesByTask,
+    comparableIncidents,
+    comparableRecords,
+    margin: comparableRecords ? (comparableIncidents / comparableRecords) * 100 : 0
+  };
+}
+
+export function averageEmployeeTenureMonths(movements, {
+  today = new Date(),
+  timeZone = DEFAULT_TIME_ZONE,
+  allowedWorkerIds = null
+} = {}) {
+  const todayIso = dashboardDateParts(today, timeZone).iso;
+  const allowedIds = allowedWorkerIds ? new Set([...allowedWorkerIds].map(Number)) : null;
+  const byWorker = new Map();
+
+  for (const movement of movements || []) {
+    const workerId = Number(movement.workerId ?? movement.usuario_id);
+    const date = dashboardIsoDate(movement.date ?? movement.fecha_movimiento);
+    const type = String(movement.type ?? movement.tipo_movimiento ?? "").trim().toLowerCase();
+    if (!workerId || (allowedIds && !allowedIds.has(workerId)) || !date || !["ingreso", "salida"].includes(type)) continue;
+    if (!byWorker.has(workerId)) byWorker.set(workerId, []);
+    byWorker.get(workerId).push({ id: Number(movement.id) || 0, date, type });
+  }
+
+  const utcDay = (iso) => {
+    const [year, month, day] = iso.split("-").map(Number);
+    return Date.UTC(year, month - 1, day) / 86400000;
+  };
+  const tenureDaysByWorker = new Map();
+
+  byWorker.forEach((items, workerId) => {
+    items.sort((left, right) => left.date.localeCompare(right.date) || left.id - right.id);
+    let openStart = null;
+    let totalDays = 0;
+    let hasPeriod = false;
+    for (const item of items) {
+      if (item.type === "ingreso") {
+        if (!openStart && item.date <= todayIso) openStart = item.date;
+      } else if (openStart && item.date >= openStart) {
+        const periodEnd = item.date < todayIso ? item.date : todayIso;
+        totalDays += Math.max(0, utcDay(periodEnd) - utcDay(openStart));
+        hasPeriod = true;
+        openStart = null;
+      }
+    }
+    if (openStart) {
+      totalDays += Math.max(0, utcDay(todayIso) - utcDay(openStart));
+      hasPeriod = true;
+    }
+    if (hasPeriod) tenureDaysByWorker.set(workerId, totalDays);
+  });
+
+  const workerCount = tenureDaysByWorker.size;
+  const totalDays = [...tenureDaysByWorker.values()].reduce((sum, days) => sum + days, 0);
+  return {
+    workerCount,
+    totalDays,
+    months: workerCount ? totalDays / workerCount / 30.4375 : 0,
+    daysByWorker: tenureDaysByWorker
+  };
+}
+
 function normalizedTaskName(value) {
   return String(value || "")
     .normalize("NFD")

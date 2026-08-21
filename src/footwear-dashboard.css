@@ -723,7 +723,7 @@
 }
 
 .pbi-kpi-grid--personnel {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-content: start;
   gap: 0.5rem;
 }
@@ -1120,6 +1120,22 @@ h2.pbi-section-heading {
 
 .pbi-card--table {
   min-height: 250px;
+}
+
+.pbi-card--quality-rate {
+  background: linear-gradient(155deg, #fffdf2 0%, #fff 52%, #f5f9fc 100%);
+}
+
+.pbi-card--quality-treemap {
+  background: linear-gradient(155deg, #fff9e2 0%, #fff 58%, #f5f9fc 100%);
+}
+
+.pbi-card--quality-donut {
+  background: radial-gradient(circle at 82% 18%, rgba(154, 52, 142, 0.11), transparent 32%), #fff;
+}
+
+.pbi-card--quality-responsible {
+  background: radial-gradient(circle at 18% 15%, rgba(239, 143, 61, 0.13), transparent 34%), #fff;
 }
 
 .pbi-card--payroll {
@@ -3785,11 +3801,15 @@ button.pbi-legend-item:focus-visible,
 
   .pbi-filter-grid,
   .pbi-kpi-grid,
-  .pbi-kpi-grid--personnel,
   .pbi-kpi-grid--activities,
   .pbi-section-grid--indicators {
     grid-template-columns: minmax(0, 1fr);
     gap: 0.55rem;
+  }
+
+  .pbi-kpi-grid--personnel {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.4rem;
   }
 
   .pbi-filter--months .pbi-filter-options {

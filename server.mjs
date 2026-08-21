@@ -1322,6 +1322,7 @@ async function handleReadFootwearDashboard(request, response) {
       leaderRecords,
       attendances,
       incidents,
+      incidentResponsibles,
       warnings,
       movements,
       trainings,
@@ -1335,6 +1336,7 @@ async function handleReadFootwearDashboard(request, response) {
       selectAllDashboardRows("registros_tareas_jefe_equipo", { optional: true }),
       selectAllDashboardRows("asistencias", { optional: true }),
       selectAllDashboardRows("incidentes", { optional: true }),
+      selectAllDashboardRows("responsables_incidentes", { optional: true }),
       selectAllDashboardRows("amonestaciones", { optional: true }),
       selectAllDashboardRows("movimientos_personal", { optional: true }),
       selectAllDashboardRows("capacitaciones", { optional: true }),
@@ -1350,7 +1352,7 @@ async function handleReadFootwearDashboard(request, response) {
     workerRecords.forEach((row) => collectYear(row.fecha_registro || row.created_at));
     leaderRecords.forEach((row) => collectYear(row.fecha_registro || row.created_at));
     attendances.forEach((row) => collectYear(row.fecha || row.created_at));
-    incidents.forEach((row) => collectYear(row.created_at));
+    incidents.forEach((row) => collectYear(row.fecha_incidente || row.created_at));
     warnings.forEach((row) => collectYear(row.created_at));
     movements.forEach((row) => collectYear(row.fecha_movimiento || row.created_at));
     trainingAssignments.forEach((row) => collectYear(row.completado_en || row.created_at));
@@ -1402,6 +1404,7 @@ async function handleReadFootwearDashboard(request, response) {
       };
     };
 
+    const incidentResponsibleById = new Map(incidentResponsibles.map((item) => [Number(item.id), item]));
     const payrollYear = Number(currentLimaDate().slice(0, 4));
     const payroll = buildDashboardPayroll(users, movements, [payrollYear], { normalizeRole });
 
@@ -1414,6 +1417,7 @@ async function handleReadFootwearDashboard(request, response) {
         id: Number(task.id),
         name: taskTitle(task) || `Tarea ${task.id}`,
         type: String(task.tipo_tarea || "General"),
+        unit: String(task.unidad_medida || task.unidad_base || "").trim(),
         active: isActive(task.activo),
         requiresBrand: [true, 1, "1", "true", "si", "sí"].includes(task.requiere_marca),
         requiresTime: [true, 1, "1", "true", "si", "sí"].includes(task.requiere_tiempo) || isGroupLeaderTimeTask(task)
@@ -1428,9 +1432,14 @@ async function handleReadFootwearDashboard(request, response) {
         state: String(row.estado || "FALTA").toUpperCase(), earlyExit: Boolean(row.retiro_anticipado)
       })).filter((row) => row.workerId && row.date),
       incidents: incidents.map((row) => ({
-        id: Number(row.id), workerId: Number(row.usuario_id), taskId: Number(row.tarea_id),
+        id: Number(row.id), workerId: Number(row.usuario_id) || null, taskId: Number(row.tarea_id),
+        responsibleId: Number(row.responsable_id) || null,
+        responsibleName: String(incidentResponsibleById.get(Number(row.responsable_id))?.nombre || row.nombre || "Sin responsable"),
+        responsibleType: String(incidentResponsibleById.get(Number(row.responsable_id))?.tipo || ""),
         taskName: String(row.tarea_nombre || ""), errorType: String(row.tipo_error || "Sin tipo"),
-        shift: /extra/i.test(String(row.turno || "")) ? "extra" : "regular", date: dashboardDate(row.created_at)
+        shift: String(row.turno || "Sin turno").trim().toLowerCase(),
+        storeId: Number(row.tienda_id) || null,
+        date: dashboardDate(row.fecha_incidente || row.created_at)
       })).filter((row) => row.date),
       warnings: warnings.map((row) => ({ id: Number(row.id), workerId: Number(row.usuario_id), date: dashboardDate(row.created_at) })),
       movements: movements.map((row) => ({
