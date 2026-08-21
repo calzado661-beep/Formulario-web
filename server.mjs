@@ -1424,7 +1424,7 @@ async function handleReadFootwearDashboard(request, response) {
       ].filter((row) => row.workerId && row.taskId && row.date),
       attendances: attendances.map((row) => ({
         id: Number(row.id), workerId: Number(row.usuario_id), date: dashboardDate(row.fecha || row.created_at),
-        state: String(row.estado || "AUSENTE").toUpperCase(), earlyExit: Boolean(row.retiro_anticipado)
+        state: String(row.estado || "FALTA").toUpperCase(), earlyExit: Boolean(row.retiro_anticipado)
       })).filter((row) => row.workerId && row.date),
       incidents: incidents.map((row) => ({
         id: Number(row.id), workerId: Number(row.usuario_id), taskId: Number(row.tarea_id),
@@ -2057,8 +2057,8 @@ async function handleReadAttendances(request, response) {
   }
 }
 
-const ATTENDANCE_STATES = new Set(["AUSENTE", "PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"]);
-const ATTENDANCE_PRESENT_STATES = new Set(["PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO"]);
+const ATTENDANCE_STATES = new Set(["FALTA", "ASISTENCIA", "TARDANZA", "MEDIO_TURNO", "APOYO", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"]);
+const ATTENDANCE_PRESENT_STATES = new Set(["ASISTENCIA", "TARDANZA", "MEDIO_TURNO", "APOYO"]);
 const ATTENDANCE_RETIRO_TYPES = new Set(["personal", "apoyo"]);
 const ATTENDANCE_TIME_ZONE = "America/Lima";
 
@@ -2129,14 +2129,14 @@ async function handleMarkAttendance(request, response) {
     let estado = String(body.estado || "").trim().toUpperCase();
     if (!estado && body.presente !== undefined) {
       if (body.presente === false) {
-        estado = "AUSENTE";
+        estado = "FALTA";
       } else {
         const cutoffMinutes = attendanceCutoffMinutes(body.hora_limite);
         if (cutoffMinutes === null) {
           sendJson(response, 400, { error: "Selecciona una hora limite valida para marcar la asistencia." });
           return;
         }
-        estado = currentAttendanceMinutes() <= cutoffMinutes ? "PUNTUAL" : "TARDANZA";
+        estado = currentAttendanceMinutes() <= cutoffMinutes ? "ASISTENCIA" : "TARDANZA";
       }
     }
     if (!ATTENDANCE_STATES.has(estado)) {
@@ -2197,7 +2197,7 @@ async function handleMarkAttendance(request, response) {
       payload.updated_at = new Date().toISOString();
     } else if (!present && existingResult.data?.id) {
       // Si se desmarca desde la lista principal, elimina cualquier retiro previo
-      // para no dejar AUSENTE + retiro_anticipado, combinacion invalida en SQL.
+      // para no dejar FALTA + retiro_anticipado, combinacion invalida en SQL.
       payload.retiro_anticipado = false;
       payload.motivo_retiro = null;
       payload.tipo_retiro = null;

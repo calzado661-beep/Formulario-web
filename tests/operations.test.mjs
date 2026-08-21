@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   attendanceDisplayState,
+  attendanceGroup,
   calculateCompletedActivityPoints,
   elapsedMinutes,
   validateActivityCardMetadata,
@@ -13,21 +14,37 @@ import { validateQuantityRanges } from "../src/lib/scoring.js";
 import { groupLeaderRecordTiming } from "../server.mjs";
 
 test("retiro anticipado conserva puntualidad y exige motivo", () => {
-  assert.equal(validateAttendanceEdit({ estado: "PUNTUAL", retiro_anticipado: true, tipo_retiro: "personal", motivo_retiro: "" }), "Ingresa el motivo del retiro anticipado.");
+  assert.equal(validateAttendanceEdit({ estado: "ASISTENCIA", retiro_anticipado: true, tipo_retiro: "personal", motivo_retiro: "" }), "Ingresa el motivo del retiro anticipado.");
   assert.equal(validateAttendanceEdit({ estado: "TARDANZA", retiro_anticipado: true, tipo_retiro: "personal", motivo_retiro: "Cita medica" }), "");
-  assert.equal(attendanceDisplayState({ estado: "PUNTUAL", retiro_anticipado: true }), "Retiro anticipado");
+  assert.equal(attendanceDisplayState({ estado: "ASISTENCIA", retiro_anticipado: true }), "Retiro anticipado");
 });
 
 test("el retiro por apoyo exige un tipo de retiro valido", () => {
-  assert.match(validateAttendanceEdit({ estado: "PUNTUAL", retiro_anticipado: true, motivo_retiro: "Apoyo en tienda X" }), /apoyo.*personal/i);
-  assert.equal(validateAttendanceEdit({ estado: "PUNTUAL", retiro_anticipado: true, tipo_retiro: "apoyo", motivo_retiro: "Apoyo en tienda X" }), "");
+  assert.match(validateAttendanceEdit({ estado: "ASISTENCIA", retiro_anticipado: true, motivo_retiro: "Apoyo en tienda X" }), /apoyo.*personal/i);
+  assert.equal(validateAttendanceEdit({ estado: "ASISTENCIA", retiro_anticipado: true, tipo_retiro: "apoyo", motivo_retiro: "Apoyo en tienda X" }), "");
 });
 
 test("solo un trabajador presente puede retirarse anticipadamente", () => {
-  assert.match(validateAttendanceEdit({ estado: "AUSENTE", retiro_anticipado: true, motivo_retiro: "Motivo" }), /presente/i);
+  assert.match(validateAttendanceEdit({ estado: "FALTA", retiro_anticipado: true, motivo_retiro: "Motivo" }), /presente/i);
   assert.match(validateAttendanceEdit({ estado: "PERMISO", retiro_anticipado: true, motivo_retiro: "Motivo" }), /presente/i);
   assert.equal(attendanceDisplayState({ estado: "DESCANSO_MEDICO" }), "Descanso Médico");
   assert.equal(attendanceDisplayState({ estado: "SUSPENSION" }), "Suspensión");
+});
+
+test("medio turno y apoyo tambien pueden retirarse anticipadamente", () => {
+  assert.equal(validateAttendanceEdit({ estado: "MEDIO_TURNO", retiro_anticipado: true, tipo_retiro: "personal", motivo_retiro: "Motivo" }), "");
+  assert.equal(validateAttendanceEdit({ estado: "APOYO", retiro_anticipado: true, tipo_retiro: "apoyo", motivo_retiro: "Motivo" }), "");
+});
+
+test("los estados de asistencia se agrupan en asistencia, tardanza o ausente", () => {
+  assert.equal(attendanceGroup("ASISTENCIA"), "asistencia");
+  assert.equal(attendanceGroup("MEDIO_TURNO"), "asistencia");
+  assert.equal(attendanceGroup("APOYO"), "asistencia");
+  assert.equal(attendanceGroup("TARDANZA"), "tardanza");
+  assert.equal(attendanceGroup("FALTA"), "ausente");
+  assert.equal(attendanceGroup("SUSPENSION"), "ausente");
+  assert.equal(attendanceGroup("DESCANSO_MEDICO"), "ausente");
+  assert.equal(attendanceGroup("PERMISO"), "ausente");
 });
 
 test("la cantidad acumulada no puede disminuir", () => {

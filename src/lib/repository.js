@@ -711,7 +711,7 @@ export async function deleteAmonestacion(amonestacionId) {
 export const PENALTY_KEYS = [
   { clave: "carta_amonestacion", etiqueta: "Carta de amonestacion", descripcion: "Puntos que resta cada amonestacion registrada como Carta de amonestacion." },
   { clave: "memorandum", etiqueta: "Memorandum", descripcion: "Puntos que resta cada amonestacion registrada como Memorandum." },
-  { clave: "inasistencia", etiqueta: "Inasistencia", descripcion: "Puntos que resta cada dia marcado como AUSENTE." },
+  { clave: "inasistencia", etiqueta: "Inasistencia", descripcion: "Puntos que resta cada dia marcado como FALTA." },
   { clave: "tardanza", etiqueta: "Tardanza", descripcion: "Puntos que resta cada dia marcado como TARDANZA." }
 ];
 
@@ -770,7 +770,7 @@ export async function getAttendanceForDate(fecha) {
   return result.data || [];
 }
 
-export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"];
+export const ATTENDANCE_STATES = ["FALTA", "ASISTENCIA", "TARDANZA", "MEDIO_TURNO", "APOYO", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"];
 
 export async function markAttendance(usuarioId, fecha, presente, horaLimite, changes = {}) {
   const isPresent = Boolean(presente);
@@ -793,16 +793,16 @@ export async function markAttendance(usuarioId, fecha, presente, horaLimite, cha
 
   const tableName = await getAttendanceTableName();
   const estado = changes.estado ? String(changes.estado).toUpperCase() : !isPresent
-    ? "AUSENTE"
+    ? "FALTA"
     : nowLimaTimeHHMM() <= String(horaLimite || "").slice(0, 5)
-      ? "PUNTUAL"
+      ? "ASISTENCIA"
       : "TARDANZA";
-  const retiroAnticipado = Boolean(changes.retiro_anticipado) && estado !== "AUSENTE";
+  const retiroAnticipado = Boolean(changes.retiro_anticipado) && estado !== "FALTA";
   const payload = {
     usuario_id: usuarioId,
     fecha,
     estado,
-    created_at: estado !== "AUSENTE" ? (changes.created_at || nowLimaISODateTime()) : null
+    created_at: estado !== "FALTA" ? (changes.created_at || nowLimaISODateTime()) : null
   };
   if (Object.keys(changes).length) {
     payload.retiro_anticipado = retiroAnticipado;

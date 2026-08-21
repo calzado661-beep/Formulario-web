@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { loadFootwearDashboard } from "../lib/repository";
+import { attendanceGroup } from "../lib/operations";
 import {
   buildTaggedPairsByBrand,
   dashboardDateParts,
@@ -1084,12 +1085,12 @@ function AttendanceBars({ data, onSelect, selectedNames = [] }) {
   const maximum = Math.max(...data.map((item) => item.absent + item.punctual + item.late), 1);
   const animationKey = data.map((item) => `${item.name}:${item.punctual}:${item.late}:${item.absent}`).join("|");
   const series = [
-    ["punctual", "Puntual", "#05b13e"],
+    ["punctual", "Asistencia", "#05b13e"],
     ["late", "Tardanza", "#f4b33a"],
     ["absent", "Ausente", "#f4303f"]
   ];
   return (
-    <div className="pbi-attendance" role="group" aria-label="Asistencia por trabajador: puntual, tardanza y ausencia" data-animation-key={animationKey}>
+    <div className="pbi-attendance" role="group" aria-label="Asistencia por trabajador: asistencia, tardanza y ausencia" data-animation-key={animationKey}>
       <div className="pbi-legend">
         {series.map(([key, label, color]) => (
           <button
@@ -1122,8 +1123,8 @@ function AttendanceBars({ data, onSelect, selectedNames = [] }) {
                 onSelect(item);
               }
             }}
-            onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `Puntual ${item.punctual} · Tardanza ${item.late} · Ausente ${item.absent}`, onSelect ? "Haz clic para filtrar" : "")}
-            onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `Puntual ${item.punctual} · Tardanza ${item.late} · Ausente ${item.absent}`, onSelect ? "Presiona Enter para filtrar" : "")}
+            onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `Asistencia ${item.punctual} · Tardanza ${item.late} · Ausente ${item.absent}`, onSelect ? "Haz clic para filtrar" : "")}
+            onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `Asistencia ${item.punctual} · Tardanza ${item.late} · Ausente ${item.absent}`, onSelect ? "Presiona Enter para filtrar" : "")}
             onBlur={() => setTooltip(null)}
             onMouseLeave={() => setTooltip(null)}
           >
@@ -1671,8 +1672,12 @@ export default function FootwearDashboard() {
     const worker = workerById.get(row.workerId);
     if (!worker) return totals;
     const item = totals.get(row.workerId) || { name: worker.alias, workerName: worker.name, workerId: worker.id, absent: 0, punctual: 0, late: 0 };
-    if (row.state === "PUNTUAL") item.punctual += 1;
-    else if (row.state === "TARDANZA") item.late += 1;
+    // Agrupado en tres categorias para contabilizar facil: "asistencia"
+    // (Asistencia, Medio turno, Apoyo), "tardanza" (aparte) y "ausente"
+    // (Falta, Suspension, Descanso medico, Permiso).
+    const group = attendanceGroup(row.state);
+    if (group === "asistencia") item.punctual += 1;
+    else if (group === "tardanza") item.late += 1;
     else item.absent += 1;
     totals.set(row.workerId, item);
     return totals;

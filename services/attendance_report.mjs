@@ -250,7 +250,7 @@ export async function readActiveAttendanceWorkers(db) {
   return workers.filter((worker) => worker.activo === true && WORKER_ROLES.has(normalizeWorkerRole(worker.rol)));
 }
 
-const ATTENDED_STATES = new Set(["PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO"]);
+const ATTENDED_STATES = new Set(["ASISTENCIA", "TARDANZA", "MEDIO_TURNO", "APOYO"]);
 
 async function readAttendanceRowsForDate(db, reportDate) {
   if (!DATE_PATTERN.test(String(reportDate || ""))) throw new Error("La fecha del reporte no es valida.");
@@ -327,13 +327,12 @@ export async function readAbsentAttendances(db, reportDate, config = null) {
 
 function attendanceStateLabel(estado) {
   const labels = {
-    PUNTUAL: "Puntual",
+    ASISTENCIA: "Asistencia",
     TARDANZA: "Tardanza",
-    ASISTIO_MEDIO_DIA: "Asistió medio día",
-    SALIDA_MEDIODIA: "Salida mediodía",
+    MEDIO_TURNO: "Medio turno",
     APOYO: "Apoyo"
   };
-  return labels[String(estado || "").toUpperCase()] || "Puntual";
+  return labels[String(estado || "").toUpperCase()] || "Asistencia";
 }
 
 export function buildAttendanceReport({ reportDate, attendees, absentees = [], timeZone = REPORT_TIME_ZONE }) {

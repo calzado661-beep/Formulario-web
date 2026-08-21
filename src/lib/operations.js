@@ -1,8 +1,28 @@
 import { calculatePoints } from "./scoring.js";
 
-export const ATTENDANCE_STATES = ["AUSENTE", "PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"];
-const ATTENDANCE_PRESENT_STATES = ["PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO"];
+export const ATTENDANCE_STATES = ["FALTA", "ASISTENCIA", "TARDANZA", "MEDIO_TURNO", "APOYO", "PERMISO", "DESCANSO_MEDICO", "SUSPENSION"];
+const ATTENDANCE_PRESENT_STATES = ["ASISTENCIA", "TARDANZA", "MEDIO_TURNO", "APOYO"];
 export const ATTENDANCE_RETIRO_TYPES = ["personal", "apoyo"];
+
+// Agrupa los estados en tres categorias para que el dashboard de asistencia
+// sea facil de contabilizar: "asistencia" (llego a trabajar de alguna forma),
+// "tardanza" (aparte, ni cuenta como asistencia puntual ni como ausencia) y
+// "ausente" (no estuvo, con o sin justificacion).
+const ATTENDANCE_GROUP_BY_STATE = {
+  ASISTENCIA: "asistencia",
+  MEDIO_TURNO: "asistencia",
+  APOYO: "asistencia",
+  TARDANZA: "tardanza",
+  FALTA: "ausente",
+  SUSPENSION: "ausente",
+  DESCANSO_MEDICO: "ausente",
+  PERMISO: "ausente"
+};
+
+export function attendanceGroup(estado) {
+  const normalized = String(estado || "FALTA").trim().toUpperCase();
+  return ATTENDANCE_GROUP_BY_STATE[normalized] || "ausente";
+}
 
 export function validateAttendanceEdit({ estado, retiro_anticipado, motivo_retiro, tipo_retiro }) {
   const normalizedState = String(estado || "").trim().toUpperCase();
@@ -10,7 +30,7 @@ export function validateAttendanceEdit({ estado, retiro_anticipado, motivo_retir
     return "Selecciona un estado de asistencia valido.";
   }
   if (retiro_anticipado && !ATTENDANCE_PRESENT_STATES.includes(normalizedState)) {
-    return "Solo un trabajador presente (Puntual o Tardanza) puede figurar con retiro anticipado.";
+    return "Solo un trabajador presente (Asistencia, Tardanza, Medio turno o Apoyo) puede figurar con retiro anticipado.";
   }
   if (retiro_anticipado && !ATTENDANCE_RETIRO_TYPES.includes(String(tipo_retiro || "").trim().toLowerCase())) {
     return "Selecciona si el retiro fue por apoyo a otra area o por un motivo personal.";
@@ -23,16 +43,15 @@ export function validateAttendanceEdit({ estado, retiro_anticipado, motivo_retir
 
 export function attendanceDisplayState(attendance) {
   if (attendance?.retiro_anticipado) return "Retiro anticipado";
-  const state = String(attendance?.estado || "AUSENTE").toUpperCase();
-  if (state === "PUNTUAL") return "Puntual";
+  const state = String(attendance?.estado || "FALTA").toUpperCase();
+  if (state === "ASISTENCIA") return "Asistencia";
   if (state === "TARDANZA") return "Tardanza";
-  if (state === "ASISTIO_MEDIO_DIA") return "Asistió medio día";
-  if (state === "SALIDA_MEDIODIA") return "Salida mediodía";
+  if (state === "MEDIO_TURNO") return "Medio turno";
   if (state === "APOYO") return "Apoyo";
   if (state === "PERMISO") return "Permiso";
   if (state === "DESCANSO_MEDICO") return "Descanso Médico";
   if (state === "SUSPENSION") return "Suspensión";
-  return "Ausente";
+  return "Falta";
 }
 
 export function elapsedMinutes(startValue, endValue) {

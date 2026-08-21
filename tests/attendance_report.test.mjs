@@ -150,7 +150,7 @@ function fakeDatabase(overrides = {}) {
       id: 1,
       usuario_id: 8,
       fecha: "2026-08-04",
-      estado: "PUNTUAL",
+      estado: "ASISTENCIA",
       created_at: "2026-08-04T14:30:00Z"
     }],
     usuarios: [{ id: 8, nombre: "Ana Perez", email: "ana@example.com", rol: "operante", activo: true }],
@@ -452,7 +452,7 @@ test("solo incluye asistentes activos con rol trabajador y respeta la seleccion"
       id: index + 1,
       usuario_id: usuarioId,
       fecha: "2026-08-04",
-      estado: "PUNTUAL",
+      estado: "ASISTENCIA",
       created_at: `2026-08-04T14:3${index}:00Z`
     }))
   });
@@ -481,8 +481,8 @@ test("reporta como ausentes a los trabajadores activos sin asistencia puntual o 
       { id: 12, nombre: "Rosa", email: "rosa@example.com", rol: "TRABAJADOR", activo: true }
     ],
     asistencias: [
-      { id: 1, usuario_id: 8, fecha: "2026-08-04", estado: "PUNTUAL", created_at: "2026-08-04T14:30:00Z" },
-      { id: 2, usuario_id: 9, fecha: "2026-08-04", estado: "AUSENTE", created_at: null }
+      { id: 1, usuario_id: 8, fecha: "2026-08-04", estado: "ASISTENCIA", created_at: "2026-08-04T14:30:00Z" },
+      { id: 2, usuario_id: 9, fecha: "2026-08-04", estado: "FALTA", created_at: null }
     ]
   });
 

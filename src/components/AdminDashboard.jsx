@@ -1994,20 +1994,19 @@ function ScoreFields({ form, setForm }) {
 }
 
 const attendanceStateOptions = [
-  { value: "AUSENTE", label: "Ausente" },
-  { value: "PUNTUAL", label: "Puntual" },
+  { value: "FALTA", label: "Falta" },
+  { value: "ASISTENCIA", label: "Asistencia" },
   { value: "TARDANZA", label: "Tardanza" },
-  { value: "ASISTIO_MEDIO_DIA", label: "Asistió medio día" },
-  { value: "SALIDA_MEDIODIA", label: "Salida mediodía" },
+  { value: "MEDIO_TURNO", label: "Medio turno" },
   { value: "APOYO", label: "Apoyo" },
   { value: "PERMISO", label: "Permiso" },
   { value: "DESCANSO_MEDICO", label: "Descanso Médico" },
   { value: "SUSPENSION", label: "Suspensión" }
 ];
-const ATTENDANCE_PRESENT_STATES = new Set(["PUNTUAL", "TARDANZA", "ASISTIO_MEDIO_DIA", "SALIDA_MEDIODIA", "APOYO"]);
+const ATTENDANCE_PRESENT_STATES = new Set(["ASISTENCIA", "TARDANZA", "MEDIO_TURNO", "APOYO"]);
 
 function attendanceStateLabel(value) {
-  return attendanceStateOptions.find((option) => option.value === value)?.label || "Ausente";
+  return attendanceStateOptions.find((option) => option.value === value)?.label || "Falta";
 }
 
 function AttendancePanel() {
@@ -2048,16 +2047,16 @@ function AttendancePanel() {
   );
 
   useEffect(() => {
-    const currentMap = Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.estado || "AUSENTE").toUpperCase()]));
+    const currentMap = Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.estado || "FALTA").toUpperCase()]));
     const nextValues = {};
     (data.workers || []).forEach((worker) => {
-      nextValues[worker.id] = currentMap[worker.id] || "AUSENTE";
+      nextValues[worker.id] = currentMap[worker.id] || "FALTA";
     });
     setAttendanceValues(nextValues);
   }, [data.current, data.workers]);
 
   const currentMarks = useMemo(
-    () => Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.estado || "AUSENTE").toUpperCase()])),
+    () => Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.estado || "FALTA").toUpperCase()])),
     [data.current]
   );
 
@@ -2078,7 +2077,7 @@ function AttendancePanel() {
     { value: "inactivos", label: `Inactivos (${inactiveWorkersCount})` },
     { value: "todos", label: `Todos (${workers.length})` }
   ];
-  const markedCount = statusFilteredWorkers.filter((worker) => (attendanceValues[worker.id] || "AUSENTE") !== "AUSENTE").length;
+  const markedCount = statusFilteredWorkers.filter((worker) => (attendanceValues[worker.id] || "FALTA") !== "FALTA").length;
 
   function markWorker(worker, estado) {
     setAttendanceValues((current) => ({ ...current, [worker.id]: estado }));
@@ -2088,7 +2087,7 @@ function AttendancePanel() {
     if (event.key !== "Enter") return;
     event.preventDefault();
     if (visibleWorkers.length !== 1) return;
-    markWorker(visibleWorkers[0], "PUNTUAL");
+    markWorker(visibleWorkers[0], "ASISTENCIA");
     setWorkerSearch("");
   }
 
@@ -2097,8 +2096,8 @@ function AttendancePanel() {
     setSaving(true);
     try {
       for (const worker of data.workers || []) {
-        const estado = attendanceValues[worker.id] || "AUSENTE";
-        if ((currentMarks[worker.id] || "AUSENTE") !== estado) {
+        const estado = attendanceValues[worker.id] || "FALTA";
+        if ((currentMarks[worker.id] || "FALTA") !== estado) {
           await markAttendance(worker.id, selectedDate, ATTENDANCE_PRESENT_STATES.has(estado), "", { estado });
         }
       }
@@ -2117,7 +2116,7 @@ function AttendancePanel() {
     Fecha: item.fecha,
     Trabajador: workerNameById[item.usuario_id],
     Email: workerEmailById[item.usuario_id],
-    Estado: attendanceStateLabel(String(item.estado || "AUSENTE").toUpperCase()),
+    Estado: attendanceStateLabel(String(item.estado || "FALTA").toUpperCase()),
     "Retiro anticipado": item.retiro_anticipado ? "Sí" : "No",
     "Tipo de retiro": item.retiro_anticipado ? (item.tipo_retiro === "apoyo" ? "Apoyo a otra area" : "Personal") : "",
     "Motivo del retiro": item.motivo_retiro || "",
@@ -2170,8 +2169,8 @@ function AttendancePanel() {
         ) : null}
         <div className="attendance-list">
           {visibleWorkers.map((worker) => {
-            const estado = attendanceValues[worker.id] || "AUSENTE";
-            const marked = estado !== "AUSENTE";
+            const estado = attendanceValues[worker.id] || "FALTA";
+            const marked = estado !== "FALTA";
             return (
               <div key={worker.id} className={`attendance-row${marked ? " marked" : ""}`} data-estado={estado}>
                 <span>
@@ -4039,7 +4038,7 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
     Fecha: item.fecha,
     Trabajador: workerNameById[item.usuario_id] || "",
     Email: workerEmailById[item.usuario_id] || "",
-    Estado: attendanceStateLabel(String(item.estado || "AUSENTE").toUpperCase()),
+    Estado: attendanceStateLabel(String(item.estado || "FALTA").toUpperCase()),
     "Retiro anticipado": item.retiro_anticipado ? "Si" : "No",
     "Tipo de retiro": item.retiro_anticipado ? (item.tipo_retiro === "apoyo" ? "Apoyo a otra area" : "Personal") : "",
     "Motivo del retiro": item.motivo_retiro || ""
