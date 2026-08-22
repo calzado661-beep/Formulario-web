@@ -4,8 +4,8 @@ import {
   createIncidente,
   friendlyError,
   listIncidentes,
+  listErrorTasks,
   listOperantesAndTeamLeads,
-  listTasks,
   listTiendas
 } from "../lib/repository";
 import { formatDateTimeLima } from "../lib/dates";
@@ -42,7 +42,7 @@ function IncidentPanel({ user }) {
   const { data, loading, error, reload } = useAsyncData(
     async () => {
       const [tasks, tiendas, users, incidentes] = await Promise.all([
-        listTasks(),
+        listErrorTasks(),
         listTiendas(),
         listOperantesAndTeamLeads(),
         listIncidentes()
@@ -96,9 +96,8 @@ function IncidentPanel({ user }) {
       await createIncidente({
         turno: form.turno,
         usuario_id: selectedUser.id,
-        es_trabajador: true,
         area_id: null,
-        tarea_id: selectedTask.id,
+        tarea_error_id: selectedTask.id,
         tienda_id: selectedStore.id,
         numero_guia: form.numero_guia.trim() || null,
         observacion: form.observacion.trim() || null,
@@ -126,7 +125,7 @@ function IncidentPanel({ user }) {
     Fecha: formatDateTimeLima(item.fecha_error),
     Turno: item.turno,
     Nombre: item.usuario_id,
-    Tarea: item.tarea_id,
+    Tarea: item.tarea_error_id,
     Tienda: tiendaById[item.tienda_id],
     Guia: item.numero_guia,
     Observacion: item.observacion,

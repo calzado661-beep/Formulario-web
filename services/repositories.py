@@ -233,6 +233,10 @@ def list_tasks(supabase: Client) -> list[dict[str, Any]]:
     return supabase.table(_task_table_name(supabase)).select("*").order("id", desc=False).execute().data or []
 
 
+def list_error_tasks(supabase: Client) -> list[dict[str, Any]]:
+    return supabase.table("tarea_error").select("*").eq("activo", True).order("id", desc=False).execute().data or []
+
+
 def _task_table_columns(supabase: Client) -> list[str] | None:
     try:
         rows = supabase.table(_task_table_name(supabase)).select("*").limit(1).execute().data

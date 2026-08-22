@@ -19,12 +19,12 @@ def render_team_leader_workspace(supabase: Client, user: dict) -> None:
 
 
 def _render_incident_section(supabase: Client, user: dict) -> None:
-    from services.repositories import create_incidente, list_incidentes, list_operantes_and_team_leads, list_tasks, list_tiendas
+    from services.repositories import create_incidente, list_error_tasks, list_incidentes, list_operantes_and_team_leads, list_tiendas
 
     st.subheader("Reportar incidencias")
     st.caption("Registra turno, tarea, tienda, guia y tipo de error.")
 
-    tasks = list_tasks(supabase)
+    tasks = list_error_tasks(supabase)
     tiendas = list_tiendas(supabase)
     users = list_operantes_and_team_leads(supabase)
 
@@ -84,9 +84,8 @@ def _render_incident_section(supabase: Client, user: dict) -> None:
         payload = {
             "turno": turno,
             "usuario_id": usuario_id,
-            "es_trabajador": True,
             "area_id": None,
-            "tarea_id": tarea_id,
+            "tarea_error_id": tarea_id,
             "tienda_id": tienda_id,
             "numero_guia": numero_guia.strip() or None,
             "observacion": observacion.strip() or None,
@@ -119,7 +118,7 @@ def _render_incident_section(supabase: Client, user: dict) -> None:
                 "Fecha": created_display,
                 "Turno": item.get("turno"),
                 "Usuario": item.get("usuario_id"),
-                "Tarea": item.get("tarea_id"),
+                "Tarea": item.get("tarea_error_id"),
                 "Tienda": tienda_by_id.get(item.get("tienda_id")),
                 "Guia": item.get("numero_guia"),
                 "Observacion": item.get("observacion"),

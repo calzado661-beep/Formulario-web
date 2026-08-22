@@ -631,11 +631,11 @@
 }
 
 .pbi-section-filters--production {
-  grid-template-columns: minmax(180px, 0.65fr) minmax(440px, 1.45fr) minmax(155px, 0.55fr) minmax(240px, 0.85fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .pbi-section-filters--quality {
-  grid-template-columns: minmax(480px, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .pbi-section-filters--training {
@@ -664,6 +664,40 @@
   gap: 0.5rem;
 }
 
+.pbi-powerbi-date-grid--production {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pbi-powerbi-date-grid--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pbi-chart-series-legend {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  color: var(--pbi-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.pbi-chart-series-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.pbi-chart-series-legend i {
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 2px;
+  background: var(--pbi-gold);
+}
+
+.pbi-chart-series-legend i.is-against {
+  background: #c94b4b;
+}
+
 .pbi-brand-only-filter {
   position: relative;
   z-index: 4;
@@ -687,6 +721,132 @@
   color: var(--pbi-muted);
   font-size: 0.72rem;
   font-weight: 750;
+}
+
+.pbi-card--ranking {
+  min-height: 430px;
+}
+
+.pbi-ranking-task-filter {
+  display: grid;
+  grid-template-columns: minmax(130px, auto) minmax(180px, 1fr);
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.65rem;
+}
+
+.pbi-ranking-task-filter label {
+  color: var(--pbi-muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.pbi-ranking-task-filter select {
+  min-height: 36px;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid rgba(9, 71, 128, 0.38);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--pbi-blue-dark);
+  font-weight: 700;
+}
+
+.pbi-section-period-filter {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: 0.25rem;
+  margin-bottom: 0;
+}
+
+.pbi-section-period-filter select {
+  width: 100%;
+  min-width: 0;
+}
+
+.pbi-compact-check {
+  display: flex;
+  min-width: 0;
+  min-height: 54px;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.58rem 0.72rem;
+  border: 1px solid rgba(9, 71, 128, 0.3);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--pbi-blue-dark);
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.pbi-compact-check input {
+  width: 1.05rem;
+  height: 1.05rem;
+  flex: 0 0 auto;
+  accent-color: var(--pbi-blue);
+}
+
+.pbi-compact-check span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pbi-card--top-workers-compact {
+  min-height: 315px;
+  height: 350px;
+}
+
+.pbi-card--attendance-compact {
+  min-height: 300px;
+  height: 350px;
+}
+
+.pbi-card--attendance-compact .pbi-attendance {
+  min-height: 0;
+  align-content: start;
+  overflow: hidden;
+}
+
+.pbi-card--attendance-compact .pbi-attendance-list {
+  max-height: 210px;
+  align-content: start;
+  overflow-y: auto;
+  padding-right: 0.4rem;
+  scrollbar-color: rgba(9, 71, 128, 0.55) #edf2f7;
+  scrollbar-width: thin;
+}
+
+.pbi-table-local-filter {
+  width: min(100%, 420px);
+  margin-bottom: 0.75rem;
+}
+
+.pbi-ranking-scroll {
+  max-height: 350px;
+  overflow-y: auto;
+  padding-right: 0.4rem;
+  scrollbar-color: rgba(9, 71, 128, 0.55) #edf2f7;
+  scrollbar-width: thin;
+}
+
+.pbi-ranking-scroll .pbi-bar-list {
+  align-content: start;
+  min-height: 0;
+}
+
+.pbi-task-volume-scroll {
+  max-height: 390px;
+  overflow-y: auto;
+  padding-right: 0.4rem;
+  scrollbar-color: rgba(9, 71, 128, 0.55) #edf2f7;
+  scrollbar-width: thin;
+}
+
+.pbi-task-volume-scroll .pbi-bar-list {
+  align-content: start;
+  min-height: 0;
 }
 
 .pbi-date-years {
@@ -1000,6 +1160,15 @@
   text-align: left;
 }
 
+.pbi-personnel-kpi-detail {
+  display: block;
+  margin-top: 0.12rem;
+  color: var(--pbi-muted);
+  font-size: clamp(0.56rem, 0.64vw, 0.68rem);
+  font-weight: 600;
+  line-height: 1.15;
+}
+
 .pbi-kpi--personnel .pbi-kpi-value {
   display: grid;
   height: 100%;
@@ -1177,6 +1346,7 @@ h2.pbi-section-heading {
 
 .pbi-kpi--birthday {
   background: var(--pbi-blue);
+  min-height: 140px;
 }
 
 .pbi-kpi--birthday .pbi-kpi-label {
@@ -1187,7 +1357,7 @@ h2.pbi-section-heading {
   max-width: 100%;
   overflow: hidden;
   color: #fff;
-  font-size: clamp(0.9rem, 1vw, 1.12rem);
+  font-size: clamp(1.1rem, 1.35vw, 1.45rem);
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1195,7 +1365,7 @@ h2.pbi-section-heading {
 
 .pbi-birthday-date {
   color: var(--pbi-gold);
-  font-size: 0.72rem;
+  font-size: 0.9rem;
   font-weight: 800;
 }
 
@@ -1289,6 +1459,23 @@ h2.pbi-section-heading {
 
 .pbi-card--quality-responsible {
   background: radial-gradient(circle at 18% 15%, rgba(239, 143, 61, 0.13), transparent 34%), #fff;
+}
+
+.pbi-card--error-comparison {
+  min-height: 390px;
+  background: linear-gradient(150deg, #f6faff 0%, #fff 55%, #fffbea 100%);
+}
+
+.pbi-card--error-comparison .pbi-comparison-list {
+  gap: 1.15rem;
+}
+
+.pbi-card--error-comparison .pbi-comparison-row {
+  min-height: 62px;
+}
+
+#pbi-errors-worker .pbi-bar-list {
+  align-content: start;
 }
 
 .pbi-card--payroll {
@@ -2182,7 +2369,10 @@ h2.pbi-section-heading {
 }
 
 #pbi-task-detail .pbi-table-wrap {
+  height: 330px;
+  min-height: 190px;
   max-height: 520px;
+  resize: vertical;
 }
 
 #pbi-task-detail .pbi-data-table {
@@ -3190,19 +3380,6 @@ h2.pbi-section-heading {
   border-color: var(--pbi-blue);
   outline: 3px solid rgba(234, 203, 43, 0.42);
   outline-offset: 1px;
-}
-
-.pbi-warning-date-filters {
-  position: relative;
-  z-index: 4;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.55rem;
-  margin: -0.15rem 0 0.65rem;
-}
-
-.pbi-warning-date-filters:has(.pbi-slicer[open]) {
-  z-index: 80;
 }
 
 .pbi-chart,

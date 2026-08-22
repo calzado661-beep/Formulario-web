@@ -1327,6 +1327,7 @@ async function handleReadFootwearDashboard(request, response) {
     const [
       users,
       tasks,
+      errorTasks,
       brands,
       workerRecords,
       leaderRecords,
@@ -1341,6 +1342,7 @@ async function handleReadFootwearDashboard(request, response) {
     ] = await Promise.all([
       selectAllDashboardRows("usuarios"),
       selectAllDashboardRows(taskTable),
+      selectAllDashboardRows("tarea_error"),
       selectAllDashboardRows("marcas"),
       selectAllDashboardRows("registros_tareas", { optional: true }),
       selectAllDashboardRows("registros_tareas_jefe_equipo", { optional: true }),
@@ -1359,7 +1361,7 @@ async function handleReadFootwearDashboard(request, response) {
     const visibleWorkerRecords = workerRecords.filter((row) => dashboardUserIds.has(Number(row.usuario_id || row.trabajador_id)));
     const visibleLeaderRecords = leaderRecords.filter((row) => dashboardUserIds.has(Number(row.usuario_id || row.trabajador_id)));
     const visibleAttendances = attendances.filter((row) => dashboardUserIds.has(Number(row.usuario_id)));
-    const visibleIncidents = incidents.filter((row) => !row.es_trabajador || dashboardUserIds.has(Number(row.usuario_id)));
+    const visibleIncidents = incidents.filter((row) => !row.usuario_id || dashboardUserIds.has(Number(row.usuario_id)));
     const visibleWarnings = warnings.filter((row) => dashboardUserIds.has(Number(row.usuario_id)));
     const visibleMovements = movements.filter((row) => dashboardUserIds.has(Number(row.usuario_id)));
     const visibleTrainingAssignments = trainingAssignments.filter((row) => dashboardUserIds.has(Number(row.usuario_id)));
@@ -1388,6 +1390,7 @@ async function handleReadFootwearDashboard(request, response) {
       Number(task.id),
       applyScoringRules(task, rulesByTaskId.get(Number(task.id)) || [])
     ]));
+    const errorTaskById = new Map(errorTasks.map((task) => [Number(task.id), task]));
 
     const safeWorkers = dashboardUsers.map((user) => ({
       id: Number(user.id),
@@ -1416,6 +1419,7 @@ async function handleReadFootwearDashboard(request, response) {
         workerId: Number(row.usuario_id || row.trabajador_id),
         taskId: Number(row.tarea_id),
         date: dashboardDate(row.fecha_registro || row.created_at),
+        shift: String(row.turno || "").trim() || null,
         quantity: Number(row.cantidad || 0),
         minutes,
         brandId: Number(row.marca_id) || null,
@@ -1444,9 +1448,13 @@ async function handleReadFootwearDashboard(request, response) {
         unit: String(task.unidad_medida || task.unidad_base || "").trim(),
         active: isActive(task.activo),
         operational: task.es_operativa === true,
-        incident: task.es_incidencia === true,
         requiresBrand: [true, 1, "1", "true", "si", "sí"].includes(task.requiere_marca),
         requiresTime: [true, 1, "1", "true", "si", "sí"].includes(task.requiere_tiempo) || isGroupLeaderTimeTask(task)
+      })),
+      errorTasks: errorTasks.map((task) => ({
+        id: Number(task.id),
+        name: taskTitle(task) || `Tarea de error ${task.id}`,
+        active: isActive(task.activo)
       })),
       brands: brands.map((brand) => ({ id: Number(brand.id), name: String(brand.nombre || `Marca ${brand.id}`) })),
       activities: [
@@ -1458,12 +1466,12 @@ async function handleReadFootwearDashboard(request, response) {
         state: String(row.estado || "FALTA").toUpperCase(), earlyExit: Boolean(row.retiro_anticipado)
       })).filter((row) => row.workerId && row.date),
       incidents: visibleIncidents.map((row) => ({
-        id: Number(row.id_error), workerId: Number(row.usuario_id) || null, taskId: Number(row.tarea_id),
-        offenderName: String(row.es_trabajador
+        id: Number(row.id_error), workerId: Number(row.usuario_id) || null, areaId: Number(row.area_id) || null, taskId: Number(row.tarea_error_id),
+        offenderName: String(row.usuario_id
           ? incidentUserById.get(Number(row.usuario_id))?.nombre || `Usuario ${row.usuario_id}`
           : incidentAreaById.get(Number(row.area_id))?.nombre || "Área sin identificar"),
-        offenderType: row.es_trabajador ? "Usuario" : "Área",
-        taskName: String(taskTitle(scoredTaskById.get(Number(row.tarea_id))) || ""), errorType: String(row.tipo_error || "Sin tipo"),
+        offenderType: row.usuario_id ? "Usuario" : "Área",
+        taskName: String(taskTitle(errorTaskById.get(Number(row.tarea_error_id))) || ""), errorType: String(row.tipo_error || "Sin tipo"),
         shift: String(row.turno || "Sin turno").trim().toLowerCase(),
         storeId: Number(row.tienda_id) || null,
         date: dashboardDate(row.fecha_error || row.created_at)
@@ -1790,8 +1798,7 @@ async function handleDeleteTask(request, response, taskId) {
 
     const historyResults = await Promise.all([
       supabase.from("registros_tareas").select("id", { count: "exact", head: true }).eq("tarea_id", taskId),
-      supabase.from("registros_tareas_jefe_equipo").select("id", { count: "exact", head: true }).eq("tarea_id", taskId),
-      supabase.from("registro_errores").select("id_error", { count: "exact", head: true }).eq("tarea_id", taskId)
+      supabase.from("registros_tareas_jefe_equipo").select("id", { count: "exact", head: true }).eq("tarea_id", taskId)
     ]);
     const historyError = historyResults.find((result) => result.error)?.error;
     if (historyError) throw historyError;
@@ -2820,9 +2827,9 @@ async function handleCreateActivityLog(request, response) {
       return;
     }
     const tableName = await getTaskTableName();
-    const taskResult = await supabase.from(tableName).select("*").eq("id", Number(body.tarea_id)).maybeSingle();
+    const taskResult = await supabase.from(tableName).select("*").eq("id", Number(body.tarea_id)).eq("es_operativa", true).maybeSingle();
     if (taskResult.error || !taskResult.data) {
-      sendJson(response, 400, { error: "La tarea seleccionada no existe." });
+      sendJson(response, 400, { error: "Selecciona una tarea operativa activa." });
       return;
     }
     const scoringRulesResult = await supabase
@@ -3071,7 +3078,7 @@ async function loadGroupLeaderData() {
   const tableName = await getTaskTableName();
   const [usersResult, tasksResult, recordsResult, brandsResult, storesResult] = await Promise.all([
     supabase.from("usuarios").select("id,nombre,email,rol,activo").order("id", { ascending: true }),
-    supabase.from(tableName).select("*").order("id", { ascending: true }),
+    supabase.from(tableName).select("*").eq("es_operativa", true).order("id", { ascending: true }),
     selectGroupLeaderRecordRows((query) => query.order("created_at", { ascending: false })),
     supabase.from("marcas").select("*").order("nombre", { ascending: true }),
     supabase.from("tiendas").select("id,nombre,activo")
@@ -3831,7 +3838,7 @@ async function selectLiveGroupLeaderActivities() {
 async function taskWithScoringRules(taskId) {
   const tableName = await getTaskTableName();
   const [taskResult, rulesResult] = await Promise.all([
-    supabase.from(tableName).select("*").eq("id", taskId).maybeSingle(),
+    supabase.from(tableName).select("*").eq("id", taskId).eq("es_operativa", true).maybeSingle(),
     supabase.from("reglas_puntaje").select("*").eq("tarea_id", taskId)
   ]);
   if (taskResult.error) throw taskResult.error;
@@ -4146,15 +4153,14 @@ async function handleCancelLiveGroupLeaderActivity(request, response, activityId
 }
 
 async function loadIncidentData() {
-  const tableName = await getTaskTableName();
   const [usersResult, tasksResult, storesResult, areasResult, incidentsResult] = await Promise.all([
     supabase.from("usuarios").select("id,nombre,email,rol,activo").order("id", { ascending: true }),
-    supabase.from(tableName).select("id,nombre,activo,es_incidencia").eq("es_incidencia", true).order("id", { ascending: true }),
+    supabase.from("tarea_error").select("id,nombre,activo").order("id", { ascending: true }),
     supabase.from("tiendas").select("id,nombre,activo").order("id", { ascending: true }),
     supabase.from("areas_departamento").select("id,nombre").order("nombre", { ascending: true }),
     supabase
       .from("registro_errores")
-      .select("id_error,turno,tarea_id,tienda_id,numero_guia,observacion,tipo_error,usuario_id,fecha_error,es_trabajador,area_id")
+      .select("id_error,turno,tarea_error_id,tienda_id,numero_guia,observacion,tipo_error,usuario_id,fecha_error,area_id")
       .order("fecha_error", { ascending: false })
   ]);
 
@@ -4173,7 +4179,7 @@ async function loadIncidentData() {
     ...incident,
     tienda_nombre: storeNames.get(Number(incident.tienda_id)) || "",
     usuario_nombre: userNames.get(Number(incident.usuario_id)) || "",
-    tarea_nombre: taskNames.get(Number(incident.tarea_id)) || "",
+    tarea_nombre: taskNames.get(Number(incident.tarea_error_id)) || "",
     area_nombre: areaNames.get(Number(incident.area_id)) || ""
   }));
 
@@ -4203,7 +4209,7 @@ async function handleCreateIncident(request, response) {
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const workerId = Number(body.usuario_id);
-    const taskId = Number(body.tarea_id);
+    const taskId = Number(body.tarea_error_id);
     const storeId = Number(body.tienda_id);
     const turno = String(body.turno || "").trim().toLowerCase();
     const guideNumber = String(body.numero_guia || "").trim();
@@ -4236,10 +4242,9 @@ async function handleCreateIncident(request, response) {
       return;
     }
 
-    const tableName = await getTaskTableName();
     const [workerResult, taskResult, storeResult, areaResult] = await Promise.all([
       isAreaIncident ? Promise.resolve({ data: null, error: null }) : supabase.from("usuarios").select("id,nombre,email,rol,activo").eq("id", workerId).maybeSingle(),
-      supabase.from(tableName).select("id,nombre,activo,es_incidencia").eq("id", taskId).eq("es_incidencia", true).maybeSingle(),
+      supabase.from("tarea_error").select("id,nombre,activo").eq("id", taskId).maybeSingle(),
       supabase.from("tiendas").select("id,nombre,activo").eq("id", storeId).maybeSingle(),
       isAreaIncident ? supabase.from("areas_departamento").select("id,nombre").eq("id", areaId).maybeSingle() : Promise.resolve({ data: null, error: null })
     ]);
@@ -4252,7 +4257,7 @@ async function handleCreateIncident(request, response) {
       sendJson(response, 400, { error: "Selecciona un operante activo." });
       return;
     }
-    if (taskResult.error || !task || !isActive(task.activo) || task.es_incidencia !== true) {
+    if (taskResult.error || !task || !isActive(task.activo)) {
       sendJson(response, 400, { error: "Selecciona una tarea activa habilitada para incidencias." });
       return;
     }
@@ -4267,14 +4272,13 @@ async function handleCreateIncident(request, response) {
 
     const payload = {
       turno: isAreaIncident ? "incidencia" : turno,
-      tarea_id: task.id,
+      tarea_error_id: task.id,
       tienda_id: store.id,
       numero_guia: guideNumber,
       observacion: body.observacion ? String(body.observacion).trim() : null,
       tipo_error: errorType,
       usuario_id: isAreaIncident ? null : worker.id,
       area_id: isAreaIncident ? area.id : null,
-      es_trabajador: !isAreaIncident,
       fecha_error: currentLimaDate()
     };
     let result = await supabase.from("registro_errores").insert(payload).select("*").single();

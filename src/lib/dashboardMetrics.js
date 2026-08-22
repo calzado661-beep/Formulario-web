@@ -112,7 +112,7 @@ export function buildComparableIncidentMetrics(incidents, operationalRecords) {
   const allIncidentTaskIds = new Set();
   const incidentsByTask = new Map();
   for (const incident of incidents || []) {
-    const taskId = Number(incident.taskId ?? incident.tarea_id);
+    const taskId = Number(incident.taskId ?? incident.tarea_error_id ?? incident.tarea_id);
     if (!taskId) continue;
     allIncidentTaskIds.add(taskId);
     if (!recordsByTask.has(taskId)) continue;

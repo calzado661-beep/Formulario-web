@@ -43,10 +43,11 @@ function sessionToken(user) {
   return `${payload}.${signature}`;
 }
 
-const [adminResult, users, tasks, brands, workerRecords, leaderRecords, attendances, incidents, warnings, movements] = await Promise.all([
+const [adminResult, users, tasks, errorTasks, brands, workerRecords, leaderRecords, attendances, incidents, warnings, movements] = await Promise.all([
   db.from("usuarios").select("id,rol").ilike("rol", "administrador").limit(1).single(),
   selectAll("usuarios"),
   selectAll("tarea"),
+  selectAll("tarea_error"),
   selectAll("marcas"),
   selectAll("registros_tareas"),
   selectAll("registros_tareas_jefe_equipo"),
@@ -66,6 +67,7 @@ const dashboard = await response.json();
 
 assert.equal(dashboard.workers.length, users.length);
 assert.equal(dashboard.tasks.length, tasks.length);
+assert.equal(dashboard.errorTasks.length, errorTasks.length);
 assert.equal(dashboard.brands.length, brands.length);
 assert.equal(dashboard.activities.length, workerRecords.length + leaderRecords.length);
 assert.equal(dashboard.attendances.length, attendances.length);
@@ -112,6 +114,7 @@ console.log(JSON.stringify({
   generatedAt: dashboard.generatedAt,
   workers: dashboard.workers.length,
   activities: dashboard.activities.length,
+  errorTasks: dashboard.errorTasks.length,
   storedScoreTotal: [...workerRecords, ...leaderRecords].reduce((sum, row) => sum + Number(row.puntaje || 0), 0),
   dashboardScoreTotal: dashboard.activities.reduce((sum, row) => sum + Number(row.points || 0), 0),
   taggedPairs: taggedPairsTotal,

@@ -494,7 +494,7 @@ export async function listTasks() {
 
 export async function getTasksForUser(user) {
   const role = normalizeRole(user?.rol);
-  const tasks = (await listTasks()).filter((task) => isActiveValue(task.activo));
+  const tasks = (await listTasks()).filter((task) => isActiveValue(task.activo) && task.es_operativa === true);
 
   if (!["trabajador", "operante", "jefe de equipo", "jefe de grupo"].includes(role)) {
     return tasks;
@@ -1085,6 +1085,12 @@ export async function createIncidente(payload) {
   ensureOk(await db().from("registro_errores").insert(payload));
 }
 
+export async function listErrorTasks() {
+  const result = await db().from("tarea_error").select("*").eq("activo", true).order("id", { ascending: true });
+  if (result.error) throw result.error;
+  return result.data || [];
+}
+
 export async function loadIncidentContext() {
   const apiResult = await requestLocalApi("/api/incidents/context");
   if (!apiResult) throw new Error("El backend local debe estar activo para registrar incidencias.");
@@ -1194,7 +1200,7 @@ export async function loadGroupLeaderContext() {
 
   const [workers, tasks, brands, stores, records] = await Promise.all([
     listAssignableWorkers(),
-    listTasks().then((tasks) => tasks.filter(isGroupLeaderTimeTask)),
+    listTasks().then((tasks) => tasks.filter((task) => task.es_operativa === true && isGroupLeaderTimeTask(task))),
     listBrands(),
     listTiendas().then((stores) => stores.filter((store) => String(store.activo ?? true) !== "false")),
     listGroupLeaderRecords()

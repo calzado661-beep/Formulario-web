@@ -533,7 +533,7 @@ function IncidentDashboard({ user }) {
         usuario_id: isAreaIncident ? null : Number(form.usuario_id),
         area_id: isAreaIncident ? Number(form.area_id) : null,
         turno: form.turno,
-        tarea_id: Number(form.tarea_id),
+        tarea_error_id: Number(form.tarea_id),
         tienda_id: Number(form.tienda_id),
         numero_guia: form.numero_guia.trim(),
         tipo_error: form.tipo_error.trim(),
@@ -550,7 +550,7 @@ function IncidentDashboard({ user }) {
   }
   const rows = incidents.map((incident) => ({
     Fecha: formatDateLima(incident.fecha_error),
-    "Usuario / Área": incident.es_trabajador ? incident.usuario_nombre : incident.area_nombre,
+    "Usuario / Área": incident.usuario_id ? incident.usuario_nombre : incident.area_nombre,
     Tarea: incident.tarea_nombre,
     "N\xFAmero de gu\xEDa": incident.numero_guia,
     Tienda: incident.tienda_nombre || storeNames.get(Number(incident.tienda_id)) || incident.tienda_id,
