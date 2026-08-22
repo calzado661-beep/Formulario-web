@@ -2135,7 +2135,35 @@ tbody tr:hover {
 }
 
 .training-detail-dialog {
-  width: min(760px, 96vw);
+  width: min(1120px, 96vw);
+}
+
+.training-detail-table table {
+  min-width: 920px;
+  table-layout: auto;
+}
+
+.training-detail-table th,
+.training-detail-table td {
+  padding: 0.85rem 0.9rem;
+  overflow-wrap: normal;
+  word-break: normal;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.training-detail-table th {
+  line-height: 1.25;
+}
+
+.training-detail-table th:first-child,
+.training-detail-table td:first-child {
+  min-width: 160px;
+}
+
+.training-detail-table th:nth-child(2),
+.training-detail-table td:nth-child(2) {
+  min-width: 180px;
 }
 
 .training-roadmap {

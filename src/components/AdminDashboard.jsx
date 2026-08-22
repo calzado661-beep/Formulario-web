@@ -821,30 +821,22 @@ function TrainingDetailModal({ course, groupLabel, users, onClose }) {
           </span>
         </label>
 
-        <DataTable
-          rows={filtered.map((item) => ({
-            "ID registro": item.registro_id || "Sin registro",
-            "ID usuario": item.usuario_id || item.id,
-            Nombre: item.nombre || "Sin nombre",
-            Correo: item.email,
-            Rol: item.rol,
-            "ID capacitación": item.capacitacion_id || "—",
-            Curso: item.curso_id || "—",
-            Estado: trainingStatusLabel(item.estado),
-            Completado: item.completado ? "Sí" : "No",
-            Duración: item.nro_horas || "—",
-            Encargado: item.encargado || "—",
-            "Completado en": item.completado_en ? formatDateTimeLima(item.completado_en) : "—",
-            "Completado por": item.completado_por || "—",
-            "Registro creado": item.registro_creado_en ? formatDateTimeLima(item.registro_creado_en) : "—",
-            "Última actualización": item.registro_actualizado_en ? formatDateTimeLima(item.registro_actualizado_en) : "—"
-          }))}
-          columns={[
-            "ID registro", "ID usuario", "Nombre", "Correo", "Rol", "ID capacitación", "Curso", "Estado",
-            "Completado", "Duración", "Encargado", "Completado en", "Completado por", "Registro creado", "Última actualización"
-          ]}
-          empty="No hay trabajadores en este grupo."
-        />
+        <div className="training-detail-table">
+          <DataTable
+            rows={filtered.map((item) => ({
+              id: item.id,
+              Nombre: item.nombre || "Sin nombre",
+              Correo: item.email || "-",
+              Rol: item.rol || "-",
+              Estado: trainingStatusLabel(item.estado),
+              Duración: item.nro_horas || "-",
+              Encargado: item.encargado || "-",
+              "Fecha de finalización": item.completado_en ? formatDateTimeLima(item.completado_en) : "-"
+            }))}
+            columns={["Nombre", "Correo", "Rol", "Estado", "Duración", "Encargado", "Fecha de finalización"]}
+            empty="No hay trabajadores en este grupo."
+          />
+        </div>
       </section>
     </div>
   );
