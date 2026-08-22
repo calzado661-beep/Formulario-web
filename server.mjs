@@ -2110,13 +2110,25 @@ async function handleReadAttendances(request, response) {
   try {
     if (!requireAdministrator(request, response)) return;
     const url = new URL(request.url, `http://${request.headers.host}`);
-    let query = supabase.from("asistencias").select("*").order("fecha", { ascending: false });
-    if (url.searchParams.get("date")) query = query.eq("fecha", url.searchParams.get("date"));
-    const [result, catalog] = await Promise.all([query, selectAttendanceCatalog()]);
-    if (result.error) throw result.error;
+    const date = url.searchParams.get("date");
+    const [rows, catalog] = await Promise.all([
+      date
+        ? supabase.from("asistencias").select("*").eq("fecha", date).then((result) => {
+          if (result.error) throw result.error;
+          return result.data || [];
+        })
+        : selectAllDashboardRows("asistencias"),
+      selectAttendanceCatalog()
+    ]);
+    rows.sort((left, right) => {
+      const byDate = String(right.fecha || "").localeCompare(String(left.fecha || ""));
+      if (byDate) return byDate;
+      const byCreatedAt = String(right.created_at || "").localeCompare(String(left.created_at || ""));
+      return byCreatedAt || Number(right.id || 0) - Number(left.id || 0);
+    });
     // La sigla se saca del catalogo dato_asistencia en vez de repetirla en
     // cada fila o en el codigo del cliente.
-    const attendances = (result.data || []).map((row) => ({
+    const attendances = rows.map((row) => ({
       ...row,
       sigla: catalog.get(row.estado)?.sigla || "",
       estado_nombre: catalog.get(row.estado)?.nombre || row.estado

@@ -755,9 +755,21 @@ export async function listAttendances() {
   if (apiResult?.attendances) return apiResult.attendances;
 
   const tableName = await getAttendanceTableName();
-  const result = await db().from(tableName).select("*").order("fecha", { ascending: false });
-  if (result.error) return [];
-  return result.data || [];
+  const pageSize = 1000;
+  const attendances = [];
+  for (let from = 0; ; from += pageSize) {
+    const result = await db()
+      .from(tableName)
+      .select("*")
+      .order("fecha", { ascending: false })
+      .order("created_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (result.error) return [];
+    const page = result.data || [];
+    attendances.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return attendances;
 }
 
 export async function getAttendanceForDate(fecha) {

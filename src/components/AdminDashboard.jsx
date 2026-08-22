@@ -2009,6 +2009,9 @@ function AttendancePanel() {
   const [selectedDate, setSelectedDate] = useState(todayLimaISO());
   const [workerStatusFilter, setWorkerStatusFilter] = useState("activos");
   const [workerSearch, setWorkerSearch] = useState("");
+  const [historyUserId, setHistoryUserId] = useState("todos");
+  const [historyWorkerStatus, setHistoryWorkerStatus] = useState("todos");
+  const [historyDateOrder, setHistoryDateOrder] = useState("desc");
   const [attendanceValues, setAttendanceValues] = useState({});
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -2031,15 +2034,16 @@ function AttendancePanel() {
 
   const { data, loading, error, reload } = useAsyncData(
     async () => {
-      const [workers, current, attendances] = await Promise.all([
+      const [workers, allUsers, current, attendances] = await Promise.all([
         listWorkers(),
+        selectUsers(),
         getAttendanceForDate(selectedDate),
         listAttendances()
       ]);
-      return { workers, current, attendances };
+      return { workers, allUsers, current, attendances };
     },
     [selectedDate],
-    { workers: [], current: [], attendances: [] }
+    { workers: [], allUsers: [], current: [], attendances: [] }
   );
 
   useEffect(() => {
@@ -2106,12 +2110,36 @@ function AttendancePanel() {
     }
   }
 
-  const workerNameById = Object.fromEntries((data.workers || []).map((worker) => [worker.id, worker.nombre || worker.email]));
-  const workerEmailById = Object.fromEntries((data.workers || []).map((worker) => [worker.id, worker.email]));
-  const attendanceRows = (data.attendances || []).map((item) => ({
+  const allUsers = data.allUsers || [];
+  const historyPeople = allUsers.filter((user) => normalizeRole(user.rol) !== "administrador");
+  const administratorIds = new Set(
+    allUsers.filter((user) => normalizeRole(user.rol) === "administrador").map((user) => Number(user.id))
+  );
+  const workerById = Object.fromEntries(historyPeople.map((worker) => [worker.id, worker]));
+  const workerNameById = Object.fromEntries(historyPeople.map((worker) => [worker.id, worker.nombre || worker.email]));
+  const workerEmailById = Object.fromEntries(historyPeople.map((worker) => [worker.id, worker.email]));
+  const historyUsers = [...historyPeople].sort((left, right) =>
+    String(left.nombre || left.email || "").localeCompare(String(right.nombre || right.email || ""), "es")
+  );
+  const filteredAttendances = (data.attendances || [])
+    .filter((item) => !administratorIds.has(Number(item.usuario_id)))
+    .filter((item) => historyUserId === "todos" || String(item.usuario_id) === historyUserId)
+    .filter((item) => {
+      if (historyWorkerStatus === "todos") return true;
+      const worker = workerById[item.usuario_id];
+      if (!worker) return false;
+      return historyWorkerStatus === "activos" ? boolValue(worker.activo) : !boolValue(worker.activo);
+    })
+    .sort((left, right) => {
+      const leftValue = `${left.fecha || ""}|${left.created_at || ""}|${String(left.id || "").padStart(12, "0")}`;
+      const rightValue = `${right.fecha || ""}|${right.created_at || ""}|${String(right.id || "").padStart(12, "0")}`;
+      return historyDateOrder === "asc" ? leftValue.localeCompare(rightValue) : rightValue.localeCompare(leftValue);
+    });
+  const attendanceRows = filteredAttendances.map((item) => ({
+    id: item.id,
     Fecha: item.fecha,
-    Trabajador: workerNameById[item.usuario_id],
-    Email: workerEmailById[item.usuario_id],
+    Trabajador: workerNameById[item.usuario_id] || `Usuario ${item.usuario_id}`,
+    Email: workerEmailById[item.usuario_id] || "",
     Estado: attendanceStateLabel(String(item.estado || "FALTA").toUpperCase()),
     Sigla: item.sigla || "",
     "Retiro anticipado": item.retiro_anticipado ? "Sí" : "No",
@@ -2123,7 +2151,7 @@ function AttendancePanel() {
 
   function exportAttendance() {
     const columns = ["Fecha", "Trabajador", "Email", "Estado", "Sigla", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro", "Retirado en", "Marcado en"];
-    downloadExcelTable(`asistencia_${selectedDate}.xls`, columns, attendanceRows);
+    downloadExcelTable("historial_asistencia.xls", columns, attendanceRows);
   }
 
   return (
@@ -2195,7 +2223,45 @@ function AttendancePanel() {
         title="Historial de asistencia"
         actions={attendanceRows.length ? <Button variant="secondary" onClick={exportAttendance}>Exportar Excel</Button> : null}
       >
-        <DataTable rows={attendanceRows} />
+        <div className="toolbar attendance-history-filters">
+          <SelectInput
+            label="Usuario"
+            value={historyUserId}
+            onChange={setHistoryUserId}
+            options={[
+              { value: "todos", label: `Todos (${historyUsers.length})` },
+              ...historyUsers.map((worker) => ({
+                value: String(worker.id),
+                label: worker.nombre || worker.email || `Usuario ${worker.id}`
+              }))
+            ]}
+          />
+          <SelectInput
+            label="Estado del usuario"
+            value={historyWorkerStatus}
+            onChange={setHistoryWorkerStatus}
+            options={[
+              { value: "todos", label: "Todos" },
+              { value: "activos", label: "Activos" },
+              { value: "inactivos", label: "Inactivos" }
+            ]}
+          />
+          <SelectInput
+            label="Orden por fecha"
+            value={historyDateOrder}
+            onChange={setHistoryDateOrder}
+            options={[
+              { value: "desc", label: "Más recientes primero" },
+              { value: "asc", label: "Más antiguos primero" }
+            ]}
+          />
+        </div>
+        <DataTable
+          rows={attendanceRows}
+          columns={["Fecha", "Trabajador", "Email", "Estado", "Sigla", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro", "Retirado en", "Marcado en"]}
+          pageSize={25}
+          empty="No hay asistencias para los filtros seleccionados."
+        />
       </Panel>
     </div>
   );
