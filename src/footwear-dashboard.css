@@ -810,7 +810,7 @@
 }
 
 .pbi-card--attendance-compact .pbi-attendance-list {
-  max-height: 210px;
+  max-height: 165px;
   align-content: start;
   overflow-y: auto;
   padding-right: 0.4rem;
@@ -1667,6 +1667,295 @@ h2.pbi-section-heading {
   height: min(780px, 92dvh);
   min-height: 0;
   animation: pbi-modal-dialog-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.pbi-hourly-reference-editor {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) minmax(90px, 1fr) auto auto;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.35rem;
+}
+
+.pbi-hourly-reference-editor label {
+  color: var(--pbi-muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.pbi-hourly-reference-editor input {
+  min-width: 0;
+  padding: 0.42rem 0.55rem;
+  border: 1px solid rgba(9, 71, 128, 0.38);
+  border-radius: 6px;
+  color: var(--pbi-blue-dark);
+  font-weight: 800;
+}
+
+.pbi-hourly-reference-editor span,
+.pbi-hourly-reference-status {
+  color: var(--pbi-muted);
+  font-size: 0.72rem;
+}
+
+.pbi-hourly-reference-editor button,
+.pbi-hourly-target-control button {
+  min-height: 34px;
+  padding: 0.38rem 0.65rem;
+  border: 0;
+  border-radius: 6px;
+  background: var(--pbi-blue);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pbi-hourly-reference-editor button:disabled,
+.pbi-hourly-target-control button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.pbi-attendance-period-filter {
+  grid-template-columns: auto minmax(150px, 1fr);
+  margin-bottom: 0.35rem;
+}
+
+.pbi-ranking-records-dialog {
+  display: flex;
+  width: min(1180px, 96vw);
+  max-height: min(760px, 92dvh);
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--pbi-radius);
+  background: #fff;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.38);
+  animation: pbi-modal-dialog-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.pbi-ranking-records-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.15rem;
+  border-bottom: 1px solid var(--pbi-line);
+  background: linear-gradient(135deg, var(--pbi-blue-dark), var(--pbi-blue));
+  color: #fff;
+}
+
+.pbi-ranking-records-header h2,
+.pbi-ranking-records-header p {
+  margin: 0;
+}
+
+.pbi-ranking-records-header h2 {
+  margin-top: 0.2rem;
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
+}
+
+.pbi-ranking-records-header p {
+  margin-top: 0.3rem;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.82rem;
+}
+
+.pbi-ranking-records-header .pbi-card-eyebrow {
+  color: var(--pbi-gold);
+}
+
+.pbi-ranking-records-close {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pbi-ranking-records-dialog .pbi-table-wrap {
+  min-height: 0;
+  margin: 1rem;
+  overflow: auto;
+}
+
+.pbi-comparison-track[role="button"],
+.pbi-comparison-value-action {
+  cursor: pointer;
+}
+
+.pbi-comparison-track[role="button"]:focus-visible {
+  outline: 3px solid rgba(234, 203, 43, 0.78);
+  outline-offset: 2px;
+}
+
+.pbi-movement-records-dialog {
+  width: min(720px, 96vw);
+}
+
+.pbi-hourly-target-control {
+  display: grid;
+  grid-template-columns: minmax(180px, auto) minmax(150px, 220px) minmax(180px, 1fr);
+  align-items: center;
+  gap: 0.55rem 0.85rem;
+  padding: 0.8rem 1rem 0;
+  color: var(--pbi-blue-dark);
+}
+
+.pbi-hourly-target-control label {
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.pbi-hourly-target-control > div {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(9, 71, 128, 0.4);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.pbi-hourly-target-control input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.48rem 0.6rem;
+  border: 0;
+  outline: 0;
+  color: var(--pbi-blue-dark);
+  font-weight: 800;
+}
+
+.pbi-hourly-target-control > div span {
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  padding: 0 0.55rem;
+  background: #eaf1f7;
+  color: var(--pbi-muted);
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
+.pbi-hourly-target-control > div button {
+  align-self: stretch;
+  border-radius: 0;
+}
+
+.pbi-hourly-target-control small {
+  color: var(--pbi-muted);
+  font-size: 0.72rem;
+}
+
+.pbi-hourly-result {
+  display: inline-block;
+  min-width: 7rem;
+  padding: 0.28rem 0.48rem;
+  border-radius: 5px;
+  font-weight: 850;
+  text-align: center;
+}
+
+.pbi-hourly-result--above {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.pbi-hourly-result--below {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.pbi-hourly-modal-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.55rem 0.75rem;
+  padding: 0.75rem 1rem 0;
+}
+
+.pbi-hourly-modal-fields > label {
+  display: grid;
+  min-width: 180px;
+  gap: 0.25rem;
+  color: var(--pbi-blue-dark);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.pbi-hourly-modal-fields select,
+.pbi-hourly-modal-fields input {
+  min-height: 34px;
+  padding: 0.38rem 0.55rem;
+  border: 1px solid rgba(9, 71, 128, 0.38);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--pbi-blue-dark);
+  font-weight: 750;
+}
+
+.pbi-hourly-modal-fields label > div {
+  display: flex;
+  align-items: stretch;
+}
+
+.pbi-hourly-modal-fields label > div input {
+  width: 110px;
+  border-radius: 6px 0 0 6px;
+}
+
+.pbi-hourly-modal-fields label > div > span {
+  display: grid;
+  place-items: center;
+  padding: 0 0.45rem;
+  background: #eaf1f7;
+  color: var(--pbi-muted);
+  font-size: 0.72rem;
+  text-transform: none;
+}
+
+.pbi-hourly-modal-fields button {
+  min-height: 34px;
+  padding: 0.38rem 0.65rem;
+  border: 0;
+  border-radius: 0 6px 6px 0;
+  background: var(--pbi-blue);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pbi-hourly-modal-fields > small {
+  align-self: center;
+  color: var(--pbi-muted);
+  font-size: 0.7rem;
+}
+
+@media (max-width: 720px) {
+  .pbi-hourly-target-control {
+    grid-template-columns: 1fr;
+  }
+
+  .pbi-hourly-reference-editor {
+    grid-template-columns: 1fr auto auto;
+  }
+
+  .pbi-hourly-reference-editor label {
+    grid-column: 1 / -1;
+  }
 }
 
 .pbi-card--expanded {

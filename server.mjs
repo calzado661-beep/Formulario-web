@@ -237,6 +237,11 @@ function normalizeHangtag(value) {
   return HANGTAG_VALUES.has(raw) ? raw : null;
 }
 
+function normalizeGroupHangtag(value) {
+  const normalized = normalizeHangtag(value);
+  return normalized === "CON_HANGTAG" ? "con hangtag" : normalized === "SIN_HANGTAG" ? "sin hangtag" : null;
+}
+
 function taskTitle(task) {
   return String(task?.nombre || task?.titulo || "");
 }
@@ -1338,7 +1343,9 @@ async function handleReadFootwearDashboard(request, response) {
       movements,
       trainings,
       trainingAssignments,
-      scoringRules
+      scoringRules,
+      penalties,
+      averageReferences
     ] = await Promise.all([
       selectAllDashboardRows("usuarios"),
       selectAllDashboardRows(taskTable),
@@ -1353,7 +1360,9 @@ async function handleReadFootwearDashboard(request, response) {
       selectAllDashboardRows("movimientos_personal", { optional: true }),
       selectAllDashboardRows("capacitaciones", { optional: true }),
       selectAllDashboardRows("usuario_capacitaciones", { optional: true }),
-      selectAllDashboardRows("reglas_puntaje", { optional: true })
+      selectAllDashboardRows("reglas_puntaje", { optional: true }),
+      selectAllDashboardRows("penalizaciones", { optional: true }),
+      selectAverageReferencesByTask()
     ]);
 
     const dashboardUsers = users.filter((user) => normalizeRole(user.rol) !== "administrador");
@@ -1425,6 +1434,7 @@ async function handleReadFootwearDashboard(request, response) {
         brandId: Number(row.marca_id) || null,
         guideNumber: String(row.numero_guia || "").trim() || null,
         lote: String(row.lote || (!Number.isFinite(numericExtra) ? row.dato_extra : "") || "").trim() || null,
+        labelingType: normalizeHangtag(row.tipo_etiquetado),
         observation: String(row.observacion || "").trim() || null,
         points: Number.isFinite(storedPoints) ? storedPoints : Number(fallbackPoints || 0),
         pointsStored: storedPoints !== null && Number.isFinite(storedPoints)
@@ -1457,6 +1467,9 @@ async function handleReadFootwearDashboard(request, response) {
         active: isActive(task.activo)
       })),
       brands: brands.map((brand) => ({ id: Number(brand.id), name: String(brand.nombre || `Marca ${brand.id}`) })),
+      penalties: penalties.map((item) => ({ key: String(item.clave || ""), points: Number(item.puntos || 0) })),
+      averageReferenceByTask: averageReferences.byTask,
+      averageReferenceMigrationRequired: averageReferences.migrationRequired,
       activities: [
         ...visibleWorkerRecords.map((row) => normalizeActivity(row, "operante")),
         ...visibleLeaderRecords.map((row) => normalizeActivity(row, "jefe-equipo"))
@@ -1675,15 +1688,7 @@ async function selectActivityLogs(workerId = null) {
     }
 
     if (!resourceError) {
-      const rows = await attachBrandBreakdown(allRows.map(normalizeActivityLog));
-      if (!workerId) return rows;
-      const groupLeaderRows = await selectGroupLeaderActivityLogsForWorker(workerId);
-      if (!groupLeaderRows.length) return rows;
-      return [...rows, ...groupLeaderRows].sort((left, right) => {
-        const dateCompare = String(right.fecha_registro || "").localeCompare(String(left.fecha_registro || ""));
-        if (dateCompare !== 0) return dateCompare;
-        return String(right.created_at || "").localeCompare(String(left.created_at || ""));
-      });
+      return attachBrandBreakdown(allRows.map(normalizeActivityLog));
     }
     lastError = resourceError;
   }
@@ -3002,11 +3007,11 @@ async function handleCreateActivityLog(request, response) {
 }
 
 const GROUP_RECORD_COLUMNS_CURRENT =
-  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,marca_id,tienda_id,tipo_etiquetado,observacion,puntaje,hora_inicio,hora_fin,created_at,updated_at,revision";
+  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,lote,marca_id,tienda_id,tipo_etiquetado,observacion,hora_inicio,hora_fin,created_at,updated_at,revision";
 const GROUP_RECORD_COLUMNS_WITH_EXTRAS =
-  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,marca_id,tienda_id,observacion,puntaje,created_at";
+  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,lote,marca_id,tienda_id,observacion,created_at";
 const GROUP_RECORD_COLUMNS_BASE =
-  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,puntaje,created_at";
+  "id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,lote,observacion,created_at";
 
 // marca_id/tienda_id solo existen despues de aplicar sql/024. Hasta entonces,
 // esta consulta cae de vuelta a las columnas base para no romper el resto del
@@ -3026,7 +3031,7 @@ async function selectGroupLeaderRecordRows(applyFilters) {
       if (["42703", "PGRST204"].includes(result.error?.code)) {
         let legacyQuery = supabase
           .from("registros_tareas_jefe_equipo")
-          .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,numero_guia,lote,observacion,created_at");
+          .select("id,encargado_id,trabajador_id,tarea_id,fecha_registro,cantidad,tiempo_minutos,lote,observacion,created_at");
         legacyQuery = applyFilters(legacyQuery);
         result = await legacyQuery;
       }
@@ -3037,7 +3042,6 @@ async function selectGroupLeaderRecordRows(applyFilters) {
         ...row,
         marca_id: row.marca_id ?? null,
         tienda_id: row.tienda_id ?? null,
-        puntaje: row.puntaje ?? null,
         hora_inicio: null,
         hora_fin: null,
         updated_at: row.created_at || null,
@@ -3074,14 +3078,40 @@ function enrichGroupRecords(records, users, tasks, brands = [], stores = []) {
   });
 }
 
+// Promedio de referencia manual por tarea (sql/031): reemplaza el calculo
+// automatico anterior por tarea/hangtag. Cada tarea de jefe de equipo tiene
+// su propio numero porque rinden a ritmos distintos; una tarea sin promedio
+// fijado simplemente no se compara (queda sin dato en el historial). Las
+// tareas que usan hangtag (hoy, Etiquetado) guardan un promedio separado
+// para "con hangtag" y "sin hangtag" bajo esas mismas claves; el resto usa
+// la clave "" (un solo promedio para toda la tarea).
+async function selectAverageReferencesByTask() {
+  const result = await supabase
+    .from("promedios_referencia_jefe_equipo")
+    .select("tarea_id,tipo_etiquetado,promedio_referencia");
+  if (result.error) {
+    if (isMissingDashboardResource(result.error)) return { byTask: {}, migrationRequired: true };
+    throw result.error;
+  }
+  const byTask = {};
+  (result.data || []).forEach((row) => {
+    const taskId = Number(row.tarea_id);
+    const key = normalizeHangtag(row.tipo_etiquetado) || "";
+    byTask[taskId] = byTask[taskId] || {};
+    byTask[taskId][key] = Number(row.promedio_referencia);
+  });
+  return { byTask, migrationRequired: false };
+}
+
 async function loadGroupLeaderData() {
   const tableName = await getTaskTableName();
-  const [usersResult, tasksResult, recordsResult, brandsResult, storesResult] = await Promise.all([
+  const [usersResult, tasksResult, recordsResult, brandsResult, storesResult, averageReferenceResult] = await Promise.all([
     supabase.from("usuarios").select("id,nombre,email,rol,activo").order("id", { ascending: true }),
     supabase.from(tableName).select("*").eq("es_operativa", true).order("id", { ascending: true }),
     selectGroupLeaderRecordRows((query) => query.order("created_at", { ascending: false })),
     supabase.from("marcas").select("*").order("nombre", { ascending: true }),
-    supabase.from("tiendas").select("id,nombre,activo")
+    supabase.from("tiendas").select("id,nombre,activo"),
+    selectAverageReferencesByTask()
   ]);
 
   if (usersResult.error) throw usersResult.error;
@@ -3098,7 +3128,6 @@ async function loadGroupLeaderData() {
   const records = enrichGroupRecords(
     (recordsResult.data || []).map((record) => ({
       ...record,
-      codigo_guia: record.numero_guia,
       detalle: record.observacion
     })),
     users,
@@ -3153,9 +3182,65 @@ async function loadGroupLeaderData() {
     operationsMigrationRequired: false,
     legacyActivitiesUnavailable,
     historyMigrationRequired: Boolean(recordsResult.historyMigrationRequired),
+    averageReferenceByTask: averageReferenceResult.byTask,
+    averageReferenceMigrationRequired: averageReferenceResult.migrationRequired,
     brands: (brandsResult.data || []).filter((brand) => isActive(brand.activo)),
     stores
   };
+}
+
+async function handleUpdateAverageReference(request, response) {
+  try {
+    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo", "administrador"]);
+    if (!session) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const taskId = Number(body.tarea_id);
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      sendJson(response, 400, { error: "Tarea invalida." });
+      return;
+    }
+    // "" = un solo promedio para toda la tarea; si viene con hangtag valido
+    // se guarda esa mitad por separado (con y sin hangtag no son comparables).
+    const hangtagKey = normalizeGroupHangtag(body.tipo_etiquetado) || "";
+    const value = Number(body.promedio_referencia);
+    if (!Number.isFinite(value) || value < 0) {
+      sendJson(response, 400, { error: "El promedio de referencia debe ser un numero mayor o igual a cero." });
+      return;
+    }
+    const tableName = await getTaskTableName();
+    const taskResult = await supabase.from(tableName).select("id").eq("id", taskId).maybeSingle();
+    if (taskResult.error) throw taskResult.error;
+    if (!taskResult.data) {
+      sendJson(response, 404, { error: "Tarea no encontrada." });
+      return;
+    }
+    const rounded = Math.round(value * 100) / 100;
+    const result = await supabase
+      .from("promedios_referencia_jefe_equipo")
+      .upsert({
+        tarea_id: taskId,
+        tipo_etiquetado: hangtagKey,
+        promedio_referencia: rounded,
+        updated_at: new Date().toISOString(),
+        updated_by: Number(session.id)
+      }, { onConflict: "tarea_id,tipo_etiquetado" })
+      .select("tarea_id,tipo_etiquetado,promedio_referencia")
+      .maybeSingle();
+    if (result.error) {
+      if (isMissingDashboardResource(result.error)) {
+        sendJson(response, 503, { error: "Falta aplicar la migracion sql/031_promedio_referencia_jefe_equipo.sql en Supabase." });
+        return;
+      }
+      throw result.error;
+    }
+    sendJson(response, 200, {
+      tarea_id: taskId,
+      tipo_etiquetado: hangtagKey,
+      promedio_referencia: Number(result.data?.promedio_referencia ?? rounded)
+    });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo actualizar el promedio de referencia." });
+  }
 }
 
 async function handleGroupLeaderContext(request, response) {
@@ -3190,7 +3275,6 @@ async function handleWorkerLiveProgress(request, response) {
         horaFin: record.hora_fin || null,
         tiempoMinutos: nullableNumber(record.tiempo_minutos),
         updatedAt: record.updated_at || record.created_at || null,
-        codigo_guia: record.codigo_guia || record.numero_guia || null,
         history: [{
           tipo: record.revision > 1 ? "ACTUALIZACION" : "REGISTRO",
           cantidad: nullableNumber(record.cantidad),
@@ -3289,12 +3373,7 @@ async function handleCreateGroupLeaderRecordLegacy(request, response) {
       sendJson(response, 400, { error: "El tiempo debe ser una cantidad entera de minutos mayor a cero." });
       return;
     }
-    const guideNumber = String(body.codigo_guia || "").trim();
     const lote = String(body.lote || "").trim().toUpperCase();
-    if (guideNumber && !isGuideBreakdownTask(taskResult.data)) {
-      sendJson(response, 400, { error: "El numero de guia no esta disponible para esta tarea." });
-      return;
-    }
     if (lote && !isEtiquetadoTask(taskResult.data)) {
       sendJson(response, 400, { error: "El lote solo esta disponible para la tarea Etiquetado." });
       return;
@@ -3346,7 +3425,6 @@ async function handleCreateGroupLeaderRecordLegacy(request, response) {
       fecha_registro: body.fecha_registro ? String(body.fecha_registro) : new Date().toISOString().slice(0, 10),
       cantidad: requestedQuantity,
       tiempo_minutos: requestedMinutes,
-      numero_guia: guideNumber || null,
       lote: lote || null,
       marca_id: requestedBrandId,
       tienda_id: requestedStoreId,
@@ -3507,20 +3585,17 @@ async function validateGroupRecordMetadata(body, task, current = null) {
   const marcaId = nullableNumber(body.marca_id);
   const tiendaId = nullableNumber(body.tienda_id);
   const lote = String(body.lote || "").trim().toUpperCase() || null;
-  const numeroGuia = String(body.codigo_guia ?? body.numero_guia ?? "").trim() || null;
-  const tipoEtiquetado = normalizeHangtag(body.tipo_etiquetado);
+  const tipoEtiquetado = normalizeGroupHangtag(body.tipo_etiquetado);
   const observacion = String(body.detalle ?? body.observacion ?? "").trim() || null;
 
   if (fields.marca && !marcaId) throw invalidGroupRecord(`Selecciona una marca para ${taskTitle(task)}.`);
   if (!fields.marca && marcaId) throw invalidGroupRecord(`La marca no esta disponible para ${taskTitle(task)}.`);
   if (!fields.lote && lote) throw invalidGroupRecord(`El lote no esta disponible para ${taskTitle(task)}.`);
-  if (!fields.guia && numeroGuia) throw invalidGroupRecord(`El numero de guia no esta disponible para ${taskTitle(task)}.`);
   if (fields.hangtag && !tipoEtiquetado) throw invalidGroupRecord(`Indica si ${taskTitle(task)} va con hangtag o sin hangtag.`);
   if (!fields.hangtag && tipoEtiquetado) throw invalidGroupRecord(`El hangtag no esta disponible para ${taskTitle(task)}.`);
   if (fields.tienda && !tiendaId) throw invalidGroupRecord(`Selecciona una tienda para ${taskTitle(task)}.`);
   if (!fields.tienda && tiendaId) throw invalidGroupRecord(`La tienda no esta disponible para ${taskTitle(task)}.`);
   if (lote && lote.length > 100) throw invalidGroupRecord("El codigo de lote no puede superar 100 caracteres.");
-  if (numeroGuia && numeroGuia.length > 150) throw invalidGroupRecord("El numero de guia no puede superar 150 caracteres.");
   if (observacion && observacion.length > 1000) throw invalidGroupRecord("El detalle no puede superar 1,000 caracteres.");
 
   if (marcaId && Number(marcaId) !== Number(current?.marca_id || 0)) {
@@ -3540,7 +3615,6 @@ async function validateGroupRecordMetadata(body, task, current = null) {
     marca_id: marcaId,
     tienda_id: tiendaId,
     lote,
-    numero_guia: numeroGuia,
     tipo_etiquetado: tipoEtiquetado,
     observacion
   };
@@ -3600,8 +3674,7 @@ async function validateGroupRecordBase(body, { current = null, validateWorker = 
         tarea_id: taskId,
         cantidad: 0,
         ...groupLeaderRecordStartTiming(body.hora_inicio),
-        ...metadata,
-        puntaje: null
+        ...metadata
       }
     };
   }
@@ -3610,24 +3683,6 @@ async function validateGroupRecordBase(body, { current = null, validateWorker = 
     throw invalidGroupRecord(`La cantidad debe ser un numero entero entre 1 y ${MAX_SCORE_QUANTITY.toLocaleString("es-PE")}.`);
   }
   const timing = groupLeaderRecordTiming(body.hora_inicio, body.hora_fin);
-  const quantityRules = (task.reglas_puntaje || []).filter(
-    (rule) => normalizeRole(rule.tipo_regla) === "cantidad"
-  );
-  if (quantityRules.length) {
-    const matchingRule = quantityRules.find((rule) => {
-      const from = Number(rule.desde ?? rule.cantidad_desde ?? 0);
-      const rawTo = rule.hasta ?? rule.cantidad_hasta;
-      const to = rawTo === null || rawTo === undefined || rawTo === "" ? null : Number(rawTo);
-      return quantity >= from && (to === null || quantity <= to);
-    });
-    if (!matchingRule) {
-      throw invalidGroupRecord(
-        "La cantidad no esta cubierta por las reglas de puntaje de esta tarea. Corrige los rangos antes de registrar.",
-        422
-      );
-    }
-  }
-  const points = calculatePoints(task, quantity, timing.tiempo_minutos, true);
   await ensureGroupRecordDoesNotOverlap(workerId, timing, current?.id || null);
   return {
     task,
@@ -3638,8 +3693,7 @@ async function validateGroupRecordBase(body, { current = null, validateWorker = 
       tarea_id: taskId,
       cantidad: quantity,
       ...timing,
-      ...metadata,
-      puntaje: points
+      ...metadata
     }
   };
 }
@@ -3699,7 +3753,6 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
       ...body,
       tarea_id: current.tarea_id,
       trabajador_id: current.trabajador_id,
-      codigo_guia: body.codigo_guia ?? body.numero_guia ?? current.numero_guia,
       detalle: body.detalle ?? body.observacion ?? current.observacion
     };
     const { payload } = await validateGroupRecordBase(merged, { current, validateWorker: false });
@@ -3709,13 +3762,11 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
       fecha_registro: payload.fecha_registro,
       hora_inicio: payload.hora_inicio,
       hora_fin: payload.hora_fin,
-      numero_guia: payload.numero_guia,
       lote: payload.lote,
       marca_id: payload.marca_id,
       tienda_id: payload.tienda_id,
       tipo_etiquetado: payload.tipo_etiquetado,
-      observacion: payload.observacion,
-      puntaje: payload.puntaje
+      observacion: payload.observacion
     };
     const updateResult = await supabase
       .from("registros_tareas_jefe_equipo")
@@ -4642,6 +4693,11 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (request.url?.startsWith("/api/group-leader/context") && request.method === "GET") {
     await handleGroupLeaderContext(request, response);
+    return;
+  }
+
+  if (/^\/api\/group-leader\/average-reference\/?$/.test(apiPath) && request.method === "PUT") {
+    await handleUpdateAverageReference(request, response);
     return;
   }
 

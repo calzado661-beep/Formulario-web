@@ -1634,7 +1634,7 @@ function PenaltiesSection() {
         <StatusAlert status={status} />
         <Alert>
           Define cuantos puntos resta cada ocurrencia. Ingresa el valor como numero positivo: se descuenta esa cantidad
-          por cada carta de amonestacion, memorandum, inasistencia o tardanza.
+          por cada carta de amonestacion, memorandum, inasistencia (solo Falta y Suspension) o tardanza.
         </Alert>
 
         <form className="stack" onSubmit={handleSubmit} noValidate>

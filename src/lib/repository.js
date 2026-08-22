@@ -711,7 +711,7 @@ export async function deleteAmonestacion(amonestacionId) {
 export const PENALTY_KEYS = [
   { clave: "carta_amonestacion", etiqueta: "Carta de amonestacion", descripcion: "Puntos que resta cada amonestacion registrada como Carta de amonestacion." },
   { clave: "memorandum", etiqueta: "Memorandum", descripcion: "Puntos que resta cada amonestacion registrada como Memorandum." },
-  { clave: "inasistencia", etiqueta: "Inasistencia", descripcion: "Puntos que resta cada dia marcado como FALTA." },
+  { clave: "inasistencia", etiqueta: "Inasistencia (Falta y suspension)", descripcion: "Puntos que resta cada dia marcado como FALTA o SUSPENSION. Permiso y descanso medico no descuentan." },
   { clave: "tardanza", etiqueta: "Tardanza", descripcion: "Puntos que resta cada dia marcado como TARDANZA." }
 ];
 
@@ -1194,6 +1194,8 @@ export async function loadGroupLeaderContext() {
       activities: apiContext.activities || [],
       operationsMigrationRequired: Boolean(apiContext.operationsMigrationRequired),
       historyMigrationRequired: Boolean(apiContext.historyMigrationRequired),
+      averageReferenceByTask: apiContext.averageReferenceByTask || {},
+      averageReferenceMigrationRequired: Boolean(apiContext.averageReferenceMigrationRequired),
       records: (apiContext.records || []).map(normalizeGroupLeaderLog)
     };
   }
@@ -1205,7 +1207,23 @@ export async function loadGroupLeaderContext() {
     listTiendas().then((stores) => stores.filter((store) => String(store.activo ?? true) !== "false")),
     listGroupLeaderRecords()
   ]);
-  return { workers, tasks, brands, stores, leaders: [], allUsers: workers, activities: [], operationsMigrationRequired: false, historyMigrationRequired: false, records };
+  return {
+    workers, tasks, brands, stores, leaders: [], allUsers: workers, activities: [],
+    operationsMigrationRequired: false, historyMigrationRequired: false,
+    averageReferenceByTask: {}, averageReferenceMigrationRequired: false,
+    records
+  };
+}
+
+export async function updateGroupLeaderAverageReference(taskId, value, hangtagKey = "") {
+  const apiResult = await requestLocalApi("/api/group-leader/average-reference", {
+    method: "PUT",
+    body: JSON.stringify({ tarea_id: taskId, tipo_etiquetado: hangtagKey, promedio_referencia: value })
+  }, { requiredBackend: true });
+  if (typeof apiResult?.promedio_referencia !== "number") {
+    throw new Error("No se pudo actualizar el promedio de referencia.");
+  }
+  return apiResult.promedio_referencia;
 }
 
 export async function listGroupLeaderRecords(encargadoId = null) {

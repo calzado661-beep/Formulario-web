@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { loadFootwearDashboard } from "../lib/repository";
+import { loadFootwearDashboard, updateGroupLeaderAverageReference } from "../lib/repository";
 import { attendanceGroup } from "../lib/operations";
 import {
   averageEmployeeTenureMonths,
@@ -858,6 +858,7 @@ function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSel
           const barHeight = (item.value / maximum) * innerHeight;
           const y = top + innerHeight - barHeight;
           const secondaryValue = Number(item.secondaryValue || 0);
+          const againstPoints = Number(item.againstPoints ?? secondaryValue ?? 0);
           const secondaryHeight = (secondaryValue / maximum) * innerHeight;
           const secondaryY = top + innerHeight - secondaryHeight;
           const seriesGap = hasSecondaryValues ? 5 : 0;
@@ -873,7 +874,7 @@ function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSel
               focusable="true"
               role={onSelect ? "button" : undefined}
               aria-pressed={onSelect ? selected : undefined}
-              aria-label={`${item.name}: ${item.value} puntos a favor${hasSecondaryValues ? `, ${secondaryValue} puntos en contra` : ""}`}
+              aria-label={`${item.name}: ${item.value} puntos normales${againstPoints ? `, ${againstPoints} puntos en contra. ${item.againstReason || ""}` : ""}`}
               onClick={() => onSelect?.(item)}
               onKeyDown={(event) => {
                 if (onSelect && (event.key === "Enter" || event.key === " ")) {
@@ -881,8 +882,8 @@ function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSel
                   onSelect(item);
                 }
               }}
-              onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `${numberFormatter.format(item.value)} a favor${hasSecondaryValues ? ` · ${numberFormatter.format(secondaryValue)} en contra` : ""}${unit ? ` ${unit}` : ""}`, "Puntaje")}
-              onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `${numberFormatter.format(item.value)} a favor${hasSecondaryValues ? ` · ${numberFormatter.format(secondaryValue)} en contra` : ""}${unit ? ` ${unit}` : ""}`, "Puntaje")}
+              onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `${numberFormatter.format(item.value)} puntos normales${againstPoints ? ` · -${numberFormatter.format(againstPoints)} puntos en contra` : " · 0 puntos en contra"}${unit ? ` ${unit}` : ""}`, item.againstReason || "Sin descuentos en el periodo")}
+              onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `${numberFormatter.format(item.value)} puntos normales${againstPoints ? ` · -${numberFormatter.format(againstPoints)} puntos en contra` : " · 0 puntos en contra"}${unit ? ` ${unit}` : ""}`, item.againstReason || "Sin descuentos en el periodo")}
               onBlur={() => setTooltip(null)}
               onMouseLeave={() => setTooltip(null)}
             >
@@ -1054,7 +1055,7 @@ function HorizontalBars({ data, ariaLabel, color = "#0a4f87", valueFormatter = (
   );
 }
 
-function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primaryColor, secondaryColor, onSelect, selectedNames = [] }) {
+function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primaryColor, secondaryColor, onSelect, onSeriesSelect, selectedNames = [] }) {
   const [tooltip, setTooltip] = useState(null);
   const [visibleSeries, setVisibleSeries] = useState({ primary: true, secondary: true });
   if (!data.length) return <p className="pbi-chart-empty">No hay datos para el filtro seleccionado.</p>;
@@ -1102,6 +1103,11 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
             event.stopPropagation();
             tooltipAt(event, setTooltip, tooltipLabel, `${secondaryLabel}: ${item.secondary}`, secondaryDetail);
           };
+          const selectSeries = (event, series) => {
+            if (!onSeriesSelect) return;
+            event.stopPropagation();
+            onSeriesSelect(item, series);
+          };
           return (
           <div
             className={`pbi-comparison-row${selected ? " is-selected" : ""}${dimmed ? " is-dimmed" : ""}`}
@@ -1122,14 +1128,18 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
             onMouseLeave={() => setTooltip(null)}
           >
             <strong>{item.name}</strong>
-            <span className="pbi-comparison-track" aria-hidden="true" onPointerMove={showPrimaryTooltip}>
+            <span className="pbi-comparison-track" role={onSeriesSelect ? "button" : undefined} tabIndex={onSeriesSelect ? 0 : undefined} aria-label={onSeriesSelect ? `Ver ${primaryLabel.toLowerCase()} de ${tooltipLabel}` : undefined} onClick={(event) => selectSeries(event, "primary")} onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectSeries(event, "primary"); }
+            }} onPointerMove={showPrimaryTooltip}>
               <i style={{ width: visibleSeries.primary ? `${(item.primary / maximum) * 100}%` : "0%", backgroundColor: primaryColor, "--pbi-index": index }} />
             </span>
-            <span onPointerMove={showPrimaryTooltip}>{visibleSeries.primary ? item.primary : "—"}</span>
-            <span className="pbi-comparison-track" aria-hidden="true" onPointerMove={showSecondaryTooltip}>
+            <span className={onSeriesSelect ? "pbi-comparison-value-action" : undefined} onClick={(event) => selectSeries(event, "primary")} onPointerMove={showPrimaryTooltip}>{visibleSeries.primary ? item.primary : "—"}</span>
+            <span className="pbi-comparison-track" role={onSeriesSelect ? "button" : undefined} tabIndex={onSeriesSelect ? 0 : undefined} aria-label={onSeriesSelect ? `Ver ${secondaryLabel.toLowerCase()} de ${tooltipLabel}` : undefined} onClick={(event) => selectSeries(event, "secondary")} onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectSeries(event, "secondary"); }
+            }} onPointerMove={showSecondaryTooltip}>
               <i style={{ width: visibleSeries.secondary ? `${(item.secondary / maximum) * 100}%` : "0%", backgroundColor: secondaryColor, "--pbi-index": index }} />
             </span>
-            <span onPointerMove={showSecondaryTooltip}>{visibleSeries.secondary ? item.secondary : "—"}</span>
+            <span className={onSeriesSelect ? "pbi-comparison-value-action" : undefined} onClick={(event) => selectSeries(event, "secondary")} onPointerMove={showSecondaryTooltip}>{visibleSeries.secondary ? item.secondary : "—"}</span>
           </div>
         );})}
       </div>
@@ -1491,6 +1501,183 @@ function DataTable({ caption, columns, rows }) {
   );
 }
 
+function HourlyRankingRecordsModal({ workerName, taskName, periodLabel, unit, rows, targetHourly, onTargetHourlyChange, onSaveTarget, targetSaving, targetStatus, showHangtag, hangtagValue, onHangtagChange, onClose }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose]);
+
+  const detailRows = rows.map((row) => ({
+    id: row.id,
+    date: formatCalendarDate(row.date),
+    quantity: numberFormatter.format(row.quantity || 0),
+    time: `${numberFormatter.format(row.minutes || 0)} min`,
+    averageValue: row.minutes > 0 ? Math.round(Number(row.quantity || 0) / (Number(row.minutes) / 60)) : null,
+    hangtag: row.labelingType || "—",
+    lote: row.lote || "—",
+    observation: row.observation || "—"
+  }));
+  const numericTarget = String(targetHourly).trim() === "" ? null : Number(targetHourly);
+  const columns = [
+    { key: "date", label: "Fecha" },
+    { key: "quantity", label: "Cantidad" },
+    { key: "time", label: "Tiempo" },
+    {
+      key: "averageValue",
+      label: "Promedio/h",
+      render: (value) => value === null ? "—" : (
+        <span className={Number.isFinite(numericTarget) ? `pbi-hourly-result pbi-hourly-result--${value >= numericTarget ? "above" : "below"}` : "pbi-hourly-result"}>
+          {numberFormatter.format(value)} {unit}/h
+        </span>
+      )
+    },
+    ...(showHangtag ? [{ key: "hangtag", label: "Hangtag" }] : []),
+    { key: "lote", label: "Lote" },
+    { key: "observation", label: "Observación" }
+  ];
+
+  return createPortal(
+    <div className="pbi-visual-modal pbi-ranking-records-modal" role="dialog" aria-modal="true" aria-labelledby="pbi-ranking-records-title" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section className="pbi-ranking-records-dialog">
+        <header className="pbi-ranking-records-header">
+          <div>
+            <span className="pbi-card-eyebrow">Registros de jefe de equipo</span>
+            <h2 id="pbi-ranking-records-title">{workerName}</h2>
+            <p>{taskName} · {periodLabel} · {numberFormatter.format(rows.length)} registros</p>
+          </div>
+          <button type="button" className="pbi-ranking-records-close" onClick={onClose} aria-label="Cerrar detalle">×</button>
+        </header>
+        <div className="pbi-hourly-modal-fields">
+          {showHangtag ? (
+            <label>
+              <span>Tipo de etiquetado</span>
+              <select value={hangtagValue} onChange={(event) => onHangtagChange(event.target.value)}>
+                <option value="CON_HANGTAG">Con hangtag</option>
+                <option value="SIN_HANGTAG">Sin hangtag</option>
+              </select>
+            </label>
+          ) : null}
+          <label>
+            <span>Promedio de referencia</span>
+            <div>
+            <input
+              id="pbi-hourly-target"
+              type="number"
+              min="0"
+              step="0.01"
+              value={targetHourly}
+              onChange={(event) => onTargetHourlyChange(event.target.value)}
+              placeholder="Ej. 120"
+            />
+            <span>{unit}/h</span>
+            <button type="button" onClick={onSaveTarget} disabled={targetSaving}>{targetSaving ? "…" : "Guardar"}</button>
+            </div>
+          </label>
+          <small>{targetStatus || "Verde: igual o superior · Rojo: inferior"}</small>
+        </div>
+        <DataTable
+          caption={`Registros de ${workerName} en ${taskName}`}
+          columns={columns}
+          rows={detailRows}
+        />
+      </section>
+    </div>,
+    document.body
+  );
+}
+
+function MovementRecordsModal({ month, movementLabel, rows, workerById, onClose }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose]);
+  const detailRows = rows.map((row) => ({
+    id: row.id,
+    worker: workerById.get(Number(row.workerId))?.name || `Usuario ${row.workerId}`,
+    date: formatCalendarDate(row.date),
+    rawDate: row.date
+  })).sort((a, b) => String(b.rawDate).localeCompare(String(a.rawDate)));
+  return createPortal(
+    <div className="pbi-visual-modal" role="dialog" aria-modal="true" aria-labelledby="pbi-movement-records-title" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section className="pbi-ranking-records-dialog pbi-movement-records-dialog">
+        <header className="pbi-ranking-records-header">
+          <div>
+            <span className="pbi-card-eyebrow">Rotación de personal</span>
+            <h2 id="pbi-movement-records-title">{movementLabel} · {month}</h2>
+            <p>{numberFormatter.format(rows.length)} trabajador(es)</p>
+          </div>
+          <button type="button" className="pbi-ranking-records-close" onClick={onClose} aria-label="Cerrar detalle">×</button>
+        </header>
+        <DataTable caption={`${movementLabel} de personal en ${month}`} columns={[
+          { key: "worker", label: "Trabajador" },
+          { key: "date", label: "Fecha" }
+        ]} rows={detailRows} />
+      </section>
+    </div>,
+    document.body
+  );
+}
+
+function ErrorRecordsModal({ shiftLabel, errorType, rows, onClose }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose]);
+  const detailRows = rows.map((row) => ({
+    id: row.id,
+    offender: row.offenderName || "Sin identificar",
+    offenderType: row.offenderType || "Usuario/Área",
+    date: formatCalendarDate(row.date),
+    rawDate: row.date
+  })).sort((a, b) => String(b.rawDate).localeCompare(String(a.rawDate)));
+  return createPortal(
+    <div className="pbi-visual-modal" role="dialog" aria-modal="true" aria-labelledby="pbi-error-records-title" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section className="pbi-ranking-records-dialog pbi-movement-records-dialog">
+        <header className="pbi-ranking-records-header">
+          <div>
+            <span className="pbi-card-eyebrow">Detalle de errores</span>
+            <h2 id="pbi-error-records-title">{errorType} · {shiftLabel}</h2>
+            <p>{numberFormatter.format(rows.length)} error(es)</p>
+          </div>
+          <button type="button" className="pbi-ranking-records-close" onClick={onClose} aria-label="Cerrar detalle">×</button>
+        </header>
+        <DataTable caption={`${errorType} en ${shiftLabel}`} columns={[
+          { key: "offender", label: "Usuario o área" },
+          { key: "offenderType", label: "Tipo" },
+          { key: "date", label: "Fecha" }
+        ]} rows={detailRows} />
+      </section>
+    </div>,
+    document.body
+  );
+}
+
 function IndicatorKpi({ label, value, suffix, detail }) {
   return (
     <article className="pbi-kpi pbi-kpi--indicator">
@@ -1565,6 +1752,11 @@ export default function FootwearDashboard() {
   const [selectedProductionRoles, setSelectedProductionRoles] = useState([]);
   const [taskVolumePeriod, setTaskVolumePeriod] = useState("current");
   const [hourlyRankingTaskId, setHourlyRankingTaskId] = useState("");
+  const [hourlyRankingWorkerId, setHourlyRankingWorkerId] = useState(null);
+  const [hourlyRankingHangtag, setHourlyRankingHangtag] = useState("CON_HANGTAG");
+  const [hourlyReferenceDraft, setHourlyReferenceDraft] = useState("");
+  const [hourlyReferenceSaving, setHourlyReferenceSaving] = useState(false);
+  const [hourlyReferenceStatus, setHourlyReferenceStatus] = useState("");
   const [quantityRankingTaskId, setQuantityRankingTaskId] = useState("");
   const [detailTaskIds, setDetailTaskIds] = useState([]);
   const [selectedTaskTypes, setSelectedTaskTypes] = useState([]);
@@ -1582,6 +1774,9 @@ export default function FootwearDashboard() {
   const [trainingCourseIds, setTrainingCourseIds] = useState([]);
   const [trainingStatuses, setTrainingStatuses] = useState([]);
   const [selectedMovementMonths, setSelectedMovementMonths] = useState([]);
+  const [selectedMovementDetail, setSelectedMovementDetail] = useState(null);
+  const [attendancePeriod, setAttendancePeriod] = useState("current");
+  const [selectedErrorDetail, setSelectedErrorDetail] = useState(null);
 
   const refreshDashboard = useCallback(async ({ silent = false } = {}) => {
     dashboardRequestRef.current?.abort();
@@ -1795,7 +1990,28 @@ export default function FootwearDashboard() {
   const productionWorkers = eligibleProductionWorkers.filter((worker) => !selectedWorkerIds.length || selectedWorkerIds.includes(worker.id));
   const peopleWorkers = WORKERS.filter((worker) => matchesPeopleWorker(worker.id));
   const workerProduction = workerProductionRows(productionWorkers, visibleActivities, selectedWorkerIds);
-  const filteredTopWorkers = [...workerProduction].sort((a, b) => b.value - a.value).slice(0, 5);
+  const penaltyByKey = new Map((dashboardData?.penalties || []).map((item) => [item.key, Number(item.points || 0)]));
+  const filteredTopWorkers = workerProduction.map((item) => {
+    const attendanceRows = (dashboardData?.attendances || []).filter((row) => Number(row.workerId) === Number(item.id) && matchesProductionDate(row.date));
+    const warningRows = (dashboardData?.warnings || []).filter((row) => Number(row.workerId) === Number(item.id) && matchesProductionDate(row.date));
+    const faltas = attendanceRows.filter((row) => String(row.state).toUpperCase() === "FALTA").length;
+    const suspensiones = attendanceRows.filter((row) => String(row.state).toUpperCase() === "SUSPENSION").length;
+    const tardanzas = attendanceRows.filter((row) => String(row.state).toUpperCase() === "TARDANZA").length;
+    const cartas = warningRows.filter((row) => row.documentType === "CARTA AMONESTACION").length;
+    const memorandums = warningRows.filter((row) => row.documentType === "MEMORANDUM").length;
+    const againstPoints = (faltas + suspensiones) * (penaltyByKey.get("inasistencia") || 0)
+      + tardanzas * (penaltyByKey.get("tardanza") || 0)
+      + cartas * (penaltyByKey.get("carta_amonestacion") || 0)
+      + memorandums * (penaltyByKey.get("memorandum") || 0);
+    const reasons = [
+      faltas ? `${faltas} falta${faltas === 1 ? "" : "s"}` : null,
+      suspensiones ? `${suspensiones} suspensión${suspensiones === 1 ? "" : "es"}` : null,
+      tardanzas ? `${tardanzas} tardanza${tardanzas === 1 ? "" : "s"}` : null,
+      cartas ? `${cartas} carta${cartas === 1 ? "" : "s"} de amonestación` : null,
+      memorandums ? `${memorandums} memorándum${memorandums === 1 ? "" : "s"}` : null
+    ].filter(Boolean);
+    return { ...item, againstPoints, againstReason: reasons.length ? `Motivo: ${reasons.join(" · ")}` : "Sin descuentos en el periodo" };
+  }).sort((a, b) => b.value - a.value).slice(0, 5);
   const staticMonthlyTasks = MONTHLY_TASKS.map((month, monthIndex) => ({
     ...month,
     monthNumber: monthIndex + 1,
@@ -1819,19 +2035,61 @@ export default function FootwearDashboard() {
     OPERATIONAL_TASKS,
     taskVolumeActivities
   );
-  const rankingWorkers = eligibleProductionWorkers.filter((worker) => (
-    !selectedWorkerIds.length || selectedWorkerIds.includes(Number(worker.id))
-  ));
+  // En los rankings el filtro de trabajador funciona como resaltado: se
+  // conservan todos los nombres para no perder la comparacion ni la posicion.
+  const rankingWorkers = eligibleProductionWorkers;
   const rankingActivities = (dashboardData?.activities || []).filter((row) => matchesProductionDate(row.date));
+  const leaderRankingActivities = rankingActivities.filter((row) => row.source === "jefe-equipo");
   const timedRankingTasks = OPERATIONAL_TASKS.filter((task) => task.requiresTime);
   const effectiveHourlyTaskId = timedRankingTasks.some((task) => String(task.id) === String(hourlyRankingTaskId))
     ? Number(hourlyRankingTaskId)
     : timedRankingTasks[0]?.id;
   const effectiveHourlyTask = taskById.get(Number(effectiveHourlyTaskId));
+  const hourlyTaskIsLabeling = String(effectiveHourlyTask?.shortName || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim() === "etiquetado";
+  const effectiveHourlyHangtagKey = hourlyTaskIsLabeling ? hourlyRankingHangtag : "";
+  const storedHourlyReference = dashboardData?.averageReferenceByTask?.[effectiveHourlyTaskId]?.[effectiveHourlyHangtagKey];
+  useEffect(() => {
+    setHourlyReferenceDraft(storedHourlyReference === undefined ? "" : String(storedHourlyReference));
+    setHourlyReferenceStatus("");
+  }, [effectiveHourlyTaskId, effectiveHourlyHangtagKey, storedHourlyReference]);
+  const hourlyTaskActivities = leaderRankingActivities.filter((row) => Number(row.taskId) === Number(effectiveHourlyTaskId));
   const hourlyWorkerRanking = rankingWorkers.map((worker) => {
-    const rows = rankingActivities.filter((row) => Number(row.workerId) === Number(worker.id) && Number(row.taskId) === Number(effectiveHourlyTaskId));
-    return { name: worker.alias || worker.name, workerName: worker.name, value: timedActivityKpi(rows).hourly, records: rows.length };
+    const rows = hourlyTaskActivities.filter((row) => Number(row.workerId) === Number(worker.id));
+    return { id: worker.id, name: worker.alias || worker.name, workerName: worker.name, value: timedActivityKpi(rows).hourly, records: rows.length };
   }).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+  const selectedHourlyRankingWorker = workerById.get(Number(hourlyRankingWorkerId));
+  const selectedHourlyRankingRows = hourlyTaskActivities
+    .filter((row) => Number(row.workerId) === Number(hourlyRankingWorkerId))
+    .filter((row) => !hourlyTaskIsLabeling || row.labelingType === effectiveHourlyHangtagKey)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
+  const productionPeriodLabel = `${selectedYears.length ? selectedYears.join(", ") : "Todos los años"} · ${productionMonths.length ? productionMonths.map((month) => MONTHLY_TASKS[month - 1]?.name).filter(Boolean).join(", ") : "Todos los meses"}`;
+  async function saveHourlyReference() {
+    const value = Number(hourlyReferenceDraft);
+    if (hourlyReferenceDraft === "" || !Number.isFinite(value) || value < 0) {
+      setHourlyReferenceStatus("Ingresa un promedio válido mayor o igual a cero.");
+      return;
+    }
+    setHourlyReferenceSaving(true);
+    setHourlyReferenceStatus("");
+    try {
+      const saved = await updateGroupLeaderAverageReference(effectiveHourlyTaskId, value, effectiveHourlyHangtagKey);
+      setDashboardData((current) => ({
+        ...current,
+        averageReferenceByTask: {
+          ...(current?.averageReferenceByTask || {}),
+          [effectiveHourlyTaskId]: {
+            ...(current?.averageReferenceByTask?.[effectiveHourlyTaskId] || {}),
+            [effectiveHourlyHangtagKey]: saved
+          }
+        }
+      }));
+      setHourlyReferenceStatus("Promedio actualizado.");
+    } catch (error) {
+      setHourlyReferenceStatus(error.message || "No se pudo actualizar el promedio.");
+    } finally {
+      setHourlyReferenceSaving(false);
+    }
+  }
   const pairRankingTasks = OPERATIONAL_TASKS.filter((task) => productionUnit(task) === "pares");
   const defaultPairTask = pairRankingTasks.find((task) => String(task.name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim() === "etiquetado") || pairRankingTasks[0];
   const effectiveQuantityTaskId = pairRankingTasks.some((task) => String(task.id) === String(quantityRankingTaskId))
@@ -1913,13 +2171,19 @@ export default function FootwearDashboard() {
   ].map((shift) => {
     const acceptedValues = shift.aliases || [shift.value];
     const rows = visibleIncidentRecords.filter((incident) => acceptedValues.includes(incident.shift));
+    const primaryRows = rows.filter((incident) => incident.errorType === "CONTENIDO");
+    const secondaryRows = rows.filter((incident) => incident.errorType === "LIBERADO");
     return {
       name: shift.label,
-      primary: rows.filter((incident) => incident.errorType === "CONTENIDO").length,
-      secondary: rows.filter((incident) => incident.errorType === "LIBERADO").length
+      primaryRows,
+      secondaryRows,
+      primary: primaryRows.length,
+      secondary: secondaryRows.length,
+      primaryDetail: primaryRows.length ? "Haz clic para ver responsables" : "Sin errores de contenido",
+      secondaryDetail: secondaryRows.length ? "Haz clic para ver responsables" : "Sin errores liberados"
     };
   });
-  const filteredAttendance = [...(dashboardData?.attendances || []).filter((row) => matchesPeopleDate(row.date) && matchesPeopleWorker(row.workerId)).reduce((totals, row) => {
+  const aggregateAttendance = (rows) => [...rows.reduce((totals, row) => {
     const worker = workerById.get(row.workerId);
     if (!worker) return totals;
     const item = totals.get(row.workerId) || {
@@ -1941,6 +2205,16 @@ export default function FootwearDashboard() {
     totals.set(row.workerId, item);
     return totals;
   }, new Map()).values()];
+  const filteredAttendance = aggregateAttendance((dashboardData?.attendances || []).filter((row) => matchesPeopleDate(row.date) && matchesPeopleWorker(row.workerId)));
+  const attendanceChartRows = (dashboardData?.attendances || []).filter((row) => {
+    if (!matchesPeopleWorker(row.workerId)) return false;
+    if (attendancePeriod === "all") return true;
+    const [year, month] = String(row.date || "").split("-").map(Number);
+    return attendancePeriod === "previous"
+      ? year === PREVIOUS_LIMA_MONTH_YEAR && month === PREVIOUS_LIMA_MONTH
+      : year === CURRENT_LIMA_YEAR && month === CURRENT_LIMA_MONTH;
+  });
+  const attendanceChartData = aggregateAttendance(attendanceChartRows);
   const trainingById = new Map((dashboardData?.trainings || []).map((course) => [course.id, course]));
   const normalizeTrainingStatus = (state) => ["finalizado", "completado"].includes(state) ? "completado" : state === "en_curso" ? "en_curso" : "pendiente";
   const visibleAssignments = (dashboardData?.trainingAssignments || []).filter((row) => {
@@ -2001,14 +2275,15 @@ export default function FootwearDashboard() {
     const monthMovements = visibleMovements.filter((row) => Number(row.date.slice(5, 7)) === monthIndex + 1);
     const entries = monthMovements.filter((row) => /ingreso/i.test(row.type));
     const exits = monthMovements.filter((row) => /salida/i.test(row.type));
-    const formatDates = (rows) => rows.map((row) => formatCalendarDate(row.date)).join(", ");
     return {
       name: month.label,
       year: null,
       primary: entries.length,
       secondary: exits.length,
-      primaryDetail: entries.length ? `Fechas de ingreso: ${formatDates(entries)}` : "Sin ingresos registrados",
-      secondaryDetail: exits.length ? `Fechas de salida: ${formatDates(exits)}` : "Sin salidas registradas"
+      primaryRows: entries,
+      secondaryRows: exits,
+      primaryDetail: entries.length ? "Haz clic para ver trabajadores" : "Sin ingresos registrados",
+      secondaryDetail: exits.length ? "Haz clic para ver trabajadores" : "Sin salidas registradas"
     };
   });
   const EXIT_REASONS = [...visibleMovements.filter((row) => /salida/i.test(row.type) && (!selectedMovementMonths.length || selectedMovementMonths.includes(MONTHLY_TASKS[Number(row.date.slice(5, 7)) - 1].label))).reduce((totals, row) => {
@@ -2107,6 +2382,7 @@ export default function FootwearDashboard() {
     setTrainingCourseIds([]);
     setTrainingStatuses([]);
     setSelectedMovementMonths([]);
+    setAttendancePeriod("current");
   }
 
   function selectWorkerFromChart(item, setter = setSelectedWorkerIds) {
@@ -2375,7 +2651,7 @@ export default function FootwearDashboard() {
                     </select>
                   </div>
                   <div className="pbi-ranking-scroll">
-                    <HorizontalBars data={hourlyWorkerRanking} ariaLabel={`Ranking de todos los trabajadores por promedio por hora en ${effectiveHourlyTask?.shortName || "la tarea seleccionada"}`} color="#0a4f87" valueFormatter={(value) => `${numberFormatter.format(value)} ${productionUnit(effectiveHourlyTask)}/h`} />
+                    <HorizontalBars data={hourlyWorkerRanking} ariaLabel={`Ranking de todos los trabajadores por promedio por hora en ${effectiveHourlyTask?.shortName || "la tarea seleccionada"}`} color="#0a4f87" valueFormatter={(value) => `${numberFormatter.format(value)} ${productionUnit(effectiveHourlyTask)}/h`} onSelect={(item) => setHourlyRankingWorkerId(item.id)} selectedNames={selectedWorkerNames} />
                   </div>
                 </Card>
 
@@ -2392,9 +2668,28 @@ export default function FootwearDashboard() {
                     </select>
                   </div>
                   <div className="pbi-ranking-scroll">
-                    <HorizontalBars data={quantityWorkerRanking} ariaLabel={`Ranking de todos los trabajadores por cantidad de pares en ${effectiveQuantityTask?.shortName || "la tarea seleccionada"}`} color="#e1c233" valueFormatter={(value) => `${numberFormatter.format(value)} pares`} />
+                    <HorizontalBars data={quantityWorkerRanking} ariaLabel={`Ranking de todos los trabajadores por cantidad de pares en ${effectiveQuantityTask?.shortName || "la tarea seleccionada"}`} color="#e1c233" valueFormatter={(value) => `${numberFormatter.format(value)} pares`} selectedNames={selectedWorkerNames} />
                   </div>
                 </Card>
+
+                {selectedHourlyRankingWorker ? (
+                  <HourlyRankingRecordsModal
+                    workerName={selectedHourlyRankingWorker.name}
+                    taskName={effectiveHourlyTask?.shortName || "Tarea seleccionada"}
+                    periodLabel={productionPeriodLabel}
+                    unit={productionUnit(effectiveHourlyTask)}
+                    rows={selectedHourlyRankingRows}
+                    targetHourly={hourlyReferenceDraft}
+                    onTargetHourlyChange={setHourlyReferenceDraft}
+                    onSaveTarget={saveHourlyReference}
+                    targetSaving={hourlyReferenceSaving}
+                    targetStatus={hourlyReferenceStatus}
+                    showHangtag={hourlyTaskIsLabeling}
+                    hangtagValue={hourlyRankingHangtag}
+                    onHangtagChange={setHourlyRankingHangtag}
+                    onClose={() => setHourlyRankingWorkerId(null)}
+                  />
+                ) : null}
 
                 <Card
                   id="pbi-task-volume"
@@ -2459,9 +2754,25 @@ export default function FootwearDashboard() {
                     primaryColor="#05b13e"
                     secondaryColor="#f4303f"
                     onSelect={(item) => setSelectedMovementMonths((current) => toggleArrayValue(current, item.name))}
+                    onSeriesSelect={(item, series) => {
+                      const rows = series === "primary" ? item.primaryRows : item.secondaryRows;
+                      if (rows.length) setSelectedMovementDetail({
+                        month: item.name,
+                        movementLabel: series === "primary" ? "Ingresos" : "Salidas",
+                        rows
+                      });
+                    }}
                     selectedNames={selectedMovementMonths}
                   />
                 </Card>
+
+                {selectedMovementDetail ? (
+                  <MovementRecordsModal
+                    {...selectedMovementDetail}
+                    workerById={workerById}
+                    onClose={() => setSelectedMovementDetail(null)}
+                  />
+                ) : null}
 
                 <Card
                   id="pbi-exit-reasons"
@@ -2500,7 +2811,15 @@ export default function FootwearDashboard() {
                   meta="Puntual · tardanza · ausencia"
                   className="pbi-card--chart pbi-card--attendance-compact pbi-card--span-6"
                 >
-                  <AttendanceBars data={filteredAttendance} onSelect={(item) => selectWorkerFromChart(item, setPeopleWorkerIds)} selectedNames={selectedPeopleWorkerNames} />
+                  <div className="pbi-ranking-task-filter pbi-attendance-period-filter">
+                    <label htmlFor="pbi-attendance-period">Periodo</label>
+                    <select id="pbi-attendance-period" value={attendancePeriod} onChange={(event) => setAttendancePeriod(event.target.value)}>
+                      <option value="current">Mes actual</option>
+                      <option value="previous">Mes anterior</option>
+                      <option value="all">General</option>
+                    </select>
+                  </div>
+                  <AttendanceBars data={attendanceChartData} onSelect={(item) => selectWorkerFromChart(item, setPeopleWorkerIds)} selectedNames={selectedPeopleWorkerNames} />
                 </Card>
 
                 <Card
@@ -2615,8 +2934,20 @@ export default function FootwearDashboard() {
                     secondaryLabel="LIBERADO"
                     primaryColor="#0a4f87"
                     secondaryColor="#e1c233"
+                    onSeriesSelect={(item, series) => {
+                      const rows = series === "primary" ? item.primaryRows : item.secondaryRows;
+                      if (rows.length) setSelectedErrorDetail({
+                        shiftLabel: item.name,
+                        errorType: series === "primary" ? "CONTENIDO" : "LIBERADO",
+                        rows
+                      });
+                    }}
                   />
                 </Card>
+
+                {selectedErrorDetail ? (
+                  <ErrorRecordsModal {...selectedErrorDetail} onClose={() => setSelectedErrorDetail(null)} />
+                ) : null}
 
                 <Card
                   id="pbi-errors-worker"

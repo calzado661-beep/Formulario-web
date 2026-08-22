@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   BadgeCheck,
   ClipboardCheck,
@@ -19,6 +19,7 @@ import {
   loadIncidentContext,
   loadGroupLeaderContext,
   updateGroupLeaderActivity,
+  updateGroupLeaderAverageReference,
   updateGroupLeaderRecord
 } from "../lib/repository";
 import { formatDateLima, formatDateTimeLima, limaDateTimeToISO, todayLimaISO, yesterdayLimaISO } from "../lib/dates";
@@ -60,7 +61,6 @@ function createInitialForm() {
     marca_id: "",
     lote: "",
     tipo_etiquetado: "",
-    numero_guia: "",
     tienda_id: "",
     detalle: ""
   };
@@ -86,62 +86,89 @@ function timeTo12h(value) {
   const hour12 = hours % 12 === 0 ? 12 : hours % 12;
   return `${hour12}:${String(minutes).padStart(2, "0")} ${period}`;
 }
-// Registros antiguos guardaron el hangtag como "con hangtag"/"sin hangtag"
-// (minuscula, con espacio) antes de que existiera el selector actual, que
-// escribe CON_HANGTAG/SIN_HANGTAG. Se reconocen las dos formas por igual para
-// no perder esos 260+ registros historicos al agrupar o mostrar.
+// Se reconocen por igual las variantes con espacios y con guion bajo para no
+// perder registros al agrupar, comparar o mostrar el tipo de etiquetado.
 function normalizeHangtagValue(value) {
   const raw = String(value || "").trim().toUpperCase().replace(/\s+/g, "_");
   return raw === "CON_HANGTAG" || raw === "SIN_HANGTAG" ? raw : null;
 }
-// Clave de agrupacion para promediar una tarea: si la tarea usa hangtag
-// (hoy, Etiquetado), con y sin hangtag se promedian por separado porque
-// rinden distinto: un Etiquetado con hangtag no es comparable a uno sin el.
-function taskAverageKey(tarea_id, tipo_etiquetado, taskFlagsById) {
-  const taskId = String(tarea_id);
-  const splitsByHangtag = taskFlagsById?.get(taskId)?.hangtag;
-  return splitsByHangtag ? `${taskId}::${normalizeHangtagValue(tipo_etiquetado) || "SIN_DATO"}` : taskId;
-}
-// Rendimiento promedio (cantidad por hora) de TODOS los operantes activos en
-// una tarea -no del propio operante-, calculado sobre todo el historial
-// cerrado. Compara contra el ritmo tipico del equipo, no contra el historial
-// personal de quien hizo el registro.
-function buildTaskAverages(records, activeWorkerIds, taskFlagsById) {
-  const totals = new Map();
-  for (const record of records) {
-    const minutes = Number(record.tiempo_minutos || 0);
-    const quantity = Number(record.cantidad || 0);
-    if (!record.hora_fin || !(minutes > 0) || !(quantity > 0)) continue;
-    if (!activeWorkerIds.has(String(record.trabajador_id))) continue;
-    const key = taskAverageKey(record.tarea_id, record.tipo_etiquetado, taskFlagsById);
-    const entry = totals.get(key) || { rateSum: 0, count: 0 };
-    entry.rateSum += (quantity / minutes) * 60;
-    entry.count += 1;
-    totals.set(key, entry);
-  }
-  const averages = new Map();
-  totals.forEach((entry, key) => averages.set(key, entry.rateSum / entry.count));
-  return averages;
-}
-// Compara el rendimiento de un registro contra el promedio del equipo en esa
-// tarea (y, si aplica, ese mismo estado de hangtag). Null si todavia no hay
-// promedio con que compararlo.
-function compareToTaskAverage(record, averages, taskFlagsById) {
+// Rendimiento propio de un registro (cantidad por hora), se muestre o no un
+// promedio de referencia para compararlo. Null si no tiene un cierre valido.
+function recordHourlyRate(record) {
   const minutes = Number(record.tiempo_minutos || 0);
   const quantity = Number(record.cantidad || 0);
   if (!record.hora_fin || !(minutes > 0) || !(quantity > 0)) return null;
-  const average = averages.get(taskAverageKey(record.tarea_id, record.tipo_etiquetado, taskFlagsById));
-  if (!average) return null;
-  const rate = (quantity / minutes) * 60;
+  return (quantity / minutes) * 60;
+}
+// Compara el rendimiento de un registro contra el promedio de referencia de
+// SU tarea, fijado manualmente arriba del historial -ya no un promedio
+// automatico por tarea/hangtag. Cada tarea tiene su propio numero porque
+// rinden a ritmos distintos; si ademas usa hangtag, "con hangtag" y "sin
+// hangtag" tienen cada uno el suyo. Null si el registro no tiene un cierre
+// valido o su tarea (y su mitad de hangtag, si aplica) no tiene un promedio
+// fijado -el rendimiento propio se sigue mostrando aparte en ese caso.
+function compareToReferenceAverage(record, averageReferenceByTask) {
+  const rate = recordHourlyRate(record);
+  if (rate === null) return null;
+  const taskAverages = averageReferenceByTask?.[record.tarea_id];
+  if (!taskAverages) return null;
+  const hangtagKey = normalizeHangtagValue(record.tipo_etiquetado) || "";
+  const average = Number(taskAverages[hangtagKey] ?? taskAverages[""] ?? 0);
+  if (!(average > 0)) return null;
   const diffPct = ((rate - average) / average) * 100;
   if (Math.abs(diffPct) < 1) return { label: "En el promedio", tone: "neutral" };
   return diffPct > 0
     ? { label: `${Math.round(diffPct)}% sobre el promedio`, tone: "good" }
     : { label: `${Math.round(Math.abs(diffPct))}% bajo el promedio`, tone: "bad" };
 }
+function TaskAverageField({ label, value, onSave }) {
+  const initialDraft = value != null ? String(value) : "";
+  const [draft, setDraft] = useState(initialDraft);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+  useEffect(() => {
+    setDraft(value != null ? String(value) : "");
+  }, [value]);
+  const dirty = draft !== (value != null ? String(value) : "");
+  async function handleSave() {
+    setStatus(null);
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setStatus({ type: "error", message: "Ingresa un numero valido mayor o igual a cero." });
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(parsed);
+      setStatus({ type: "success", message: "Guardado." });
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <div className="group-average-reference-item">
+      <TextInput
+        label={label}
+        type="number"
+        min="0"
+        step="0.01"
+        placeholder="Sin definir"
+        hint="Cantidad por hora"
+        value={draft}
+        onChange={setDraft}
+      />
+      <Button type="button" variant="secondary" icon={Save} loading={saving} disabled={!dirty} onClick={handleSave}>
+        Guardar
+      </Button>
+      {status ? <Alert type={status.type}>{status.message}</Alert> : null}
+    </div>
+  );
+}
 function GroupLeaderDashboard({ user }) {
-  const [workspace, setWorkspace] = useState("Registrar actividad normal");
-  const tabs = ["Registrar actividad normal", "Registrar actividad (tiempo)", "Registrar incidencias", "Ranking"];
+  const [workspace, setWorkspace] = useState("Registrar actividad (tiempo)");
+  const tabs = ["Registrar actividad (tiempo)", "Registrar actividad normal", "Registrar incidencias", "Ranking"];
   return /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(
     Tabs,
     {
@@ -365,24 +392,57 @@ function RankingDashboard({ user }) {
         const limited = limit ? ordered.slice(0, limit) : ordered;
         return (
           <Panel key={item.id} title={item.nombre} eyebrow={peopleScope === "todos" ? "Top de todo el personal" : "Top operantes y jefes"}>
-            <RankingBarChart entries={limited} metric={metric} />
-            <DataTable
-              rows={limited.map((entry, index) => ({
-                "#": index + 1,
-                Trabajador: entry.nombre +
-                  (entry.rol && entry.rol !== "operante" ? ` (${entry.rol})` : "") +
-                  (!entry.activo ? " · inactivo" : ""),
-                "Rendimiento (por hora)": formatRate(entry.rendimiento),
-                "Cantidad total": formatNumber(entry.cantidad),
-                "Tiempo total": formatDuration(entry.minutos),
-                Registros: entry.registros
-              }))}
-              columns={["#", "Trabajador", "Rendimiento (por hora)", "Cantidad total", "Tiempo total", "Registros"]}
-              compact
-            />
+            <RankingColumnChart entries={limited} metric={metric} />
           </Panel>
         );
       })}
+    </div>
+  );
+}
+
+function RankingColumnChart({ entries, metric }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  if (!entries.length) return null;
+  const spec = RANKING_METRICS[metric] || RANKING_METRICS.rendimiento;
+  const maximum = Math.max(...entries.map((entry) => spec.getValue(entry)), 1);
+  const activeEntry = entries[Math.min(activeIndex, entries.length - 1)] || entries[0];
+  return (
+    <div className="ranking-dashboard-chart" style={{ "--ranking-count": entries.length }} role="list" aria-label={`Top operantes y jefes por ${spec.label.toLowerCase()}`}>
+      <div className="ranking-dashboard-plot">
+        <div className="ranking-dashboard-grid">
+          {entries.map((entry, index) => {
+          const value = spec.getValue(entry);
+          const heightPct = Math.max(8, Math.round((value / maximum) * 100));
+          const key = `${entry.nombre}-${index}`;
+          const initials = String(entry.nombre || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+          return (
+            <div className={`ranking-dashboard-item ranking-dashboard-position-${Math.min(index + 1, 4)}${activeIndex === index ? " is-active" : ""}`} key={key} role="listitem" tabIndex={0}
+              onMouseEnter={() => setActiveIndex(index)} onFocus={() => setActiveIndex(index)}>
+              <div className="ranking-dashboard-value">{spec.format(value)}</div>
+              <div className="ranking-dashboard-bar-area">
+                <div className="ranking-dashboard-bar" style={{ height: `${heightPct}%` }}><i /></div>
+                <span className="ranking-dashboard-medal">{index + 1}</span>
+              </div>
+              <div className="ranking-dashboard-person">
+                <span className="ranking-dashboard-avatar">{initials}</span>
+                <strong title={entry.nombre}>{entry.nombre}</strong>
+                <small>{entry.rol && entry.rol !== "operante" ? entry.rol : `${entry.registros} ${entry.registros === 1 ? "registro" : "registros"}`}{!entry.activo ? " · inactivo" : ""}</small>
+              </div>
+            </div>
+          );
+          })}
+        </div>
+        <div className="ranking-dashboard-axis"><span>0</span><span>{spec.label}</span><span>{spec.format(maximum)}</span></div>
+      </div>
+      <aside className="ranking-dashboard-detail" aria-live="polite">
+        <span className="ranking-dashboard-detail-position">Puesto #{activeIndex + 1}</span>
+        <strong>{activeEntry.nombre}</strong>
+        <small>{activeEntry.rol || "operante"}{!activeEntry.activo ? " · inactivo" : ""}</small>
+        <div className="ranking-dashboard-detail-row"><span>Rendimiento</span><b>{formatRate(activeEntry.rendimiento)}/h</b></div>
+        <div className="ranking-dashboard-detail-row"><span>Cantidad total</span><b>{formatNumber(activeEntry.cantidad)}</b></div>
+        <div className="ranking-dashboard-detail-row"><span>Tiempo total</span><b>{formatDuration(activeEntry.minutos) || "0 min"}</b></div>
+        <div className="ranking-dashboard-detail-row"><span>Registros</span><b>{activeEntry.registros}</b></div>
+      </aside>
     </div>
   );
 }
@@ -660,7 +720,10 @@ function GroupTimeDashboard({ user }) {
   const { data, loading, error, reload } = useAsyncData(
     loadGroupLeaderContext,
     [user?.id],
-    { workers: [], tasks: [], recordTasks: [], brands: [], stores: [], leaders: [], activities: [], records: [], historyMigrationRequired: false }
+    {
+      workers: [], tasks: [], recordTasks: [], brands: [], stores: [], leaders: [], activities: [], records: [],
+      historyMigrationRequired: false, averageReferenceByTask: {}, averageReferenceMigrationRequired: false
+    }
   );
   const workers = data.workers || [];
   const tasks = data.tasks || [];
@@ -672,18 +735,24 @@ function GroupTimeDashboard({ user }) {
     () => new Map(recordTasks.map((task) => [String(task.id), String(task.tipo_tarea || "").trim()])),
     [recordTasks]
   );
-  const taskFlagsById = useMemo(
-    () => new Map(recordTasks.map((task) => [String(task.id), getTaskFieldFlags(task)])),
-    [recordTasks]
-  );
-  // El promedio compara contra operantes activos; un jefe que hizo la tarea
-  // el mismo o un operante ya inactivo no forman parte de la base de
-  // comparacion (sus propios registros igual se pueden comparar contra ella).
-  const activeWorkerIds = useMemo(() => new Set(workers.map((worker) => String(worker.id))), [workers]);
-  const taskAverages = useMemo(
-    () => buildTaskAverages(records, activeWorkerIds, taskFlagsById),
-    [records, activeWorkerIds, taskFlagsById]
-  );
+  const averageReferenceByTask = data.averageReferenceByTask || {};
+  async function saveAverageReference(taskId, hangtagKey, value) {
+    await updateGroupLeaderAverageReference(taskId, value, hangtagKey);
+    await reload();
+  }
+  // Las tareas con hangtag (hoy, Etiquetado) muestran dos campos -con y sin
+  // hangtag- porque rinden a ritmos distintos y no son comparables entre si;
+  // el resto de tareas de jefe de equipo muestra un solo campo.
+  const averageFields = useMemo(() => tasks.flatMap((task) => {
+    const title = getTaskTitle(task) || `Tarea ${task.id}`;
+    if (getTaskFieldFlags(task).hangtag) {
+      return [
+        { key: `${task.id}-con`, taskId: task.id, hangtagKey: "CON_HANGTAG", label: `${title} - Con hangtag` },
+        { key: `${task.id}-sin`, taskId: task.id, hangtagKey: "SIN_HANGTAG", label: `${title} - Sin hangtag` }
+      ];
+    }
+    return [{ key: String(task.id), taskId: task.id, hangtagKey: "", label: title }];
+  }), [tasks]);
   const selectedTask = useMemo(
     () => tasks.find((task) => String(task.id) === String(form.tarea_id)),
     [tasks, form.tarea_id]
@@ -715,7 +784,6 @@ function GroupTimeDashboard({ user }) {
           record.trabajador_nombre,
           record.trabajador_email,
           record.tarea_nombre,
-          record.codigo_guia,
           record.lote,
           record.marca_nombre,
           record.tienda_nombre,
@@ -728,42 +796,16 @@ function GroupTimeDashboard({ user }) {
       return filters.order === "asc" ? diff : -diff;
     });
   }, [filters, records, taskCategoryById, user.id]);
-  const pendingActivities = useMemo(
-    () => (data.activities || []).filter((activity) => activity.estado === "EN_CURSO"),
-    [data.activities]
-  );
-  const filteredPending = useMemo(() => {
-    const term = normalizeText(filters.search);
-    return pendingActivities.filter((activity) => {
-      if (filters.scope === "mine" && String(activity.encargado_id) !== String(user.id)) return false;
-      if (filters.workerId && String(activity.trabajador_id) !== String(filters.workerId)) return false;
-      if (filters.taskId && String(activity.tarea_id) !== String(filters.taskId)) return false;
-      if (filters.categoria && taskCategoryById.get(String(activity.tarea_id)) !== filters.categoria) return false;
-      if (!term) return true;
-      return normalizeText(
-        [
-          activity.id,
-          activity.encargado_nombre,
-          activity.encargado_email,
-          activity.trabajador_nombre,
-          activity.trabajador_email,
-          activity.tarea_nombre,
-          activity.numero_guia,
-          activity.lote,
-          activity.marca_nombre,
-          activity.tienda_nombre
-        ].join(" ")
-      ).includes(term);
-    });
-  }, [filters, pendingActivities, taskCategoryById, user.id]);
   const combinedRows = useMemo(() => {
-    const merged = [
-      ...filteredPending.map((activity) => ({ kind: "pending", key: `pending-${activity.id}`, sortTime: recordSortTime(activity), activity })),
-      ...filteredRecords.map((record) => ({ kind: "record", key: `record-${record.id}`, sortTime: recordSortTime(record), record }))
-    ];
+    const merged = filteredRecords.map((record) => ({
+      kind: "record",
+      key: `record-${record.id}`,
+      sortTime: recordSortTime(record),
+      record
+    }));
     merged.sort((a, b) => filters.order === "asc" ? a.sortTime - b.sortTime : b.sortTime - a.sortTime);
     return merged;
-  }, [filteredPending, filteredRecords, filters.order]);
+  }, [filteredRecords, filters.order]);
   function updateForm(changes) {
     setForm((current) => ({ ...current, ...changes }));
   }
@@ -804,7 +846,6 @@ function GroupTimeDashboard({ user }) {
       marca_id: fields.marca ? Number(draft.marca_id) : null,
       lote: fields.lote ? String(draft.lote || "").trim().toUpperCase() || null : null,
       tipo_etiquetado: fields.hangtag ? draft.tipo_etiquetado || null : null,
-      numero_guia: fields.guia ? String(draft.numero_guia || "").trim() || null : null,
       tienda_id: fields.tienda ? Number(draft.tienda_id) : null,
       detalle: String(draft.detalle || "").trim() || null,
       ...revision === void 0 || revision === null ? {} : { revision }
@@ -895,7 +936,7 @@ function GroupTimeDashboard({ user }) {
     try {
       await updateGroupLeaderRecord(record.id, payload);
       cancelEditing();
-      setStatus({ type: "success", message: `Registro #${record.id} actualizado; tiempo y puntaje fueron recalculados.` });
+      setStatus({ type: "success", message: `Registro #${record.id} actualizado; el tiempo fue recalculado.` });
       await reload();
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });
@@ -915,7 +956,7 @@ function GroupTimeDashboard({ user }) {
     loading ? /* @__PURE__ */ React.createElement(LoadingBlock, null) : null,
     error ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, error) : null,
     data.historyMigrationRequired ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, "Falta aplicar la migracion SQL 027 en Supabase para guardar y editar hora inicio, hora fin y revision.") : null,
-    /* @__PURE__ */ React.createElement(Alert, null, "Registra el inicio de la tarea. La cantidad y la fecha y hora de fin se completan despues en el historial; ahi el servidor recalcula la duracion y el puntaje."),
+    /* @__PURE__ */ React.createElement(Alert, null, "Registra el inicio de la tarea. La cantidad y la fecha y hora de fin se completan despues en el historial; ahi el servidor recalcula la duracion."),
     !loading && !workers.length ? /* @__PURE__ */ React.createElement(Alert, null, "No hay trabajadores operantes activos.") : null,
     !loading && !tasks.length ? /* @__PURE__ */ React.createElement(Alert, null, "No hay tareas registradas en la base de datos.") : null,
     /* @__PURE__ */ React.createElement("form", { className: "group-form form-grid", onSubmit: handleSubmit }, /* @__PURE__ */ React.createElement(
@@ -1006,7 +1047,23 @@ function GroupTimeDashboard({ user }) {
         "Exportar a Excel"
       ), /* @__PURE__ */ React.createElement(Button, { variant: "secondary", icon: RefreshCcw, onClick: reload }, "Actualizar"))
     },
-    /* @__PURE__ */ React.createElement(Alert, null, "Las filas marcadas como Sin cerrar esperan su cantidad y su fecha y hora de fin: usa Completar para cargarlas. Al guardar, el tiempo y el puntaje se recalculan. Los registros de otros jefes son de solo lectura."),
+    /* @__PURE__ */ React.createElement(
+      "div",
+      { className: "group-average-reference" },
+      /* @__PURE__ */ React.createElement("p", { className: "group-average-reference-hint" }, "Promedio de referencia por tarea: cada registro del historial se compara contra el promedio de SU tarea para marcarlo por encima o por debajo."),
+      data.averageReferenceMigrationRequired ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, "Falta aplicar la migracion sql/031_promedio_referencia_jefe_equipo.sql en Supabase para guardar estos valores.") : null,
+      /* @__PURE__ */ React.createElement(
+        "div",
+        { className: "group-average-reference-grid" },
+        ...averageFields.map((field) => /* @__PURE__ */ React.createElement(TaskAverageField, {
+          key: field.key,
+          label: field.label,
+          value: averageReferenceByTask[field.taskId]?.[field.hangtagKey],
+          onSave: (value) => saveAverageReference(field.taskId, field.hangtagKey, value)
+        }))
+      )
+    ),
+    /* @__PURE__ */ React.createElement(Alert, null, "Las filas marcadas como Sin cerrar esperan su cantidad y su fecha y hora de fin: usa Completar para cargarlas. Al guardar, el tiempo se recalcula. Los registros de otros jefes son de solo lectura."),
     /* @__PURE__ */ React.createElement("div", { className: "history-toolbar" }, /* @__PURE__ */ React.createElement("div", { className: "scope-switch", "aria-label": "Alcance de registros" }, /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -1080,7 +1137,7 @@ function GroupTimeDashboard({ user }) {
         className: "input",
         value: filters.search,
         onChange: (event) => updateFilters({ search: event.target.value }),
-        placeholder: "Nombre, tarea, guia, lote, marca"
+        placeholder: "Nombre, tarea, lote, marca"
       }
     )))),
     /* @__PURE__ */ React.createElement(
@@ -1090,8 +1147,7 @@ function GroupTimeDashboard({ user }) {
         tasks: recordTasks,
         brands,
         stores,
-        averages: taskAverages,
-        taskFlagsById,
+        averageReferenceByTask,
         currentUserId: user.id,
         editingDisabled: data.historyMigrationRequired,
         editingId,
@@ -1117,8 +1173,7 @@ function EditableGroupHistory({
   tasks,
   brands,
   stores,
-  averages,
-  taskFlagsById,
+  averageReferenceByTask,
   currentUserId,
   editingDisabled,
   editingId,
@@ -1153,10 +1208,8 @@ function EditableGroupHistory({
               <th>Hangtag</th>
               <th>Codigo de lote</th>
               <th>Marca</th>
-              <th>Numero de guia</th>
               <th>Tienda</th>
               <th>Detalle</th>
-              <th>Puntaje</th>
               <th>Modificado</th>
               <th>Encargado</th>
             </tr>
@@ -1201,7 +1254,7 @@ function EditableGroupHistory({
                   record={record}
                   editable={editable}
                   busy={saving}
-                  average={compareToTaskAverage(record, averages, taskFlagsById)}
+                  average={compareToReferenceAverage(record, averageReferenceByTask)}
                   readonlyReason={mine && record.revision == null ? "Registro anterior" : editingDisabled && mine ? "Migracion pendiente" : "Solo lectura"}
                   onEdit={() => onEdit(record)}
                   onDelete={() => onDelete(record)}
@@ -1218,6 +1271,7 @@ function EditableGroupHistory({
 function HistoryRow({ record, editable, busy, average, readonlyReason, onEdit, onDelete }) {
   const [confirming, setConfirming] = useState(false);
   const pending = isPendingRecord(record);
+  const rate = recordHourlyRate(record);
   const pendingMark = <span className="muted">Pendiente</span>;
   return (
     <tr className={pending ? "history-pending-record" : undefined}>
@@ -1268,19 +1322,16 @@ function HistoryRow({ record, editable, busy, average, readonlyReason, onEdit, o
       <td className="history-number-cell">{pending ? pendingMark : formatNumber(record.cantidad) || "-"}</td>
       <td>{pending ? pendingMark : formatDuration(record.tiempo_minutos) || "-"}</td>
       <td>
-        {average ? (
-          <span className={`history-avg-badge history-avg-${average.tone}`}>{average.label}</span>
-        ) : (
-          <span className="muted">-</span>
-        )}
+        <div className="history-avg-cell">
+          {rate !== null ? <span className="history-rate-value">{formatRate(rate)}/h</span> : <span className="muted">-</span>}
+          {average ? <span className={`history-avg-badge history-avg-${average.tone}`}>{average.label}</span> : null}
+        </div>
       </td>
       <td>{hangtagLabel(record.tipo_etiquetado)}</td>
       <td>{record.lote || "-"}</td>
       <td>{record.marca_nombre || "-"}</td>
-      <td>{record.codigo_guia || record.numero_guia || "-"}</td>
       <td>{record.tienda_nombre || "-"}</td>
       <td className="history-detail-cell" title={record.detalle || ""}>{record.detalle || "-"}</td>
-      <td className="history-score-cell">{pending ? pendingMark : formatScore(record.puntaje)}</td>
       <td className="history-updated-cell">{formatUpdatedAt(record)}</td>
       <td>{record.encargado_nombre || record.encargado_email || "-"}</td>
     </tr>
@@ -1386,17 +1437,6 @@ function EditableHistoryRow({ record, draft, tasks, brands, stores, saving, onDr
         ) : <span className="muted">No aplica</span>}
       </td>
       <td>
-        {fields.guia ? (
-          <input
-            className="history-cell-input"
-            aria-label={`Numero de guia del registro ${record.id}`}
-            value={draft.numero_guia || ""}
-            onChange={(event) => updateDraft({ numero_guia: event.target.value })}
-            placeholder="Opcional"
-          />
-        ) : <span className="muted">No aplica</span>}
-      </td>
-      <td>
         {fields.tienda ? (
           <select
             className="history-cell-input history-select-input"
@@ -1418,7 +1458,6 @@ function EditableHistoryRow({ record, draft, tasks, brands, stores, saving, onDr
           placeholder="Opcional"
         />
       </td>
-      <td className="history-preview-cell">Se recalcula</td>
       <td className="history-updated-cell">{formatUpdatedAt(record)}</td>
       <td>{record.encargado_nombre || record.encargado_email || "Tu registro"}</td>
     </tr>
@@ -1578,7 +1617,6 @@ function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, 
           ) : (activity.marca_nombre || "-")
         ) : <span className="muted">No aplica</span>}
       </td>
-      <td>{activity.numero_guia || activity.codigo_guia || "-"}</td>
       <td>{activity.tienda_nombre || <span className="muted">No aplica</span>}</td>
       <td className="history-detail-cell" title={activity.detalle || activity.observacion || ""}>{activity.detalle || activity.observacion || "-"}</td>
       <td className="history-score-cell">Pendiente</td>
@@ -1611,15 +1649,6 @@ function DynamicGroupFields({ mode, task, form, updateForm, brands, stores }) {
       onChange: (tipo_etiquetado) => updateForm({ tipo_etiquetado }),
       options: HANGTAG_OPTIONS,
       hint: "Obligatorio para guardar esta tarea."
-    }
-  ) : null, mode.requiresGuideCode ? /* @__PURE__ */ React.createElement(
-    TextInput,
-    {
-      label: "N\xFAmero de gu\xEDa",
-      value: form.numero_guia,
-      onChange: (numero_guia) => updateForm({ numero_guia }),
-      placeholder: "Ej. GUIA-001",
-      hint: "Opcional."
     }
   ) : null, mode.requiresLote ? /* @__PURE__ */ React.createElement(
     TextInput,
@@ -1720,7 +1749,6 @@ function recordToEditableDraft(record) {
     hora_fin: timeInputValue(record.hora_fin),
     cantidad: Number(record.cantidad) > 0 ? String(record.cantidad) : "",
     tipo_etiquetado: normalizeHangtagValue(record.tipo_etiquetado) || "",
-    numero_guia: record.numero_guia || record.codigo_guia || "",
     marca_id: record.marca_id ? String(record.marca_id) : "",
     lote: record.lote || "",
     tienda_id: record.tienda_id ? String(record.tienda_id) : "",
@@ -1784,9 +1812,8 @@ function isValidTime(value) {
 function isPendingRecord(record) {
   return !record?.hora_fin;
 }
-// Misma forma para una fila cerrada (record) y una pendiente (activity): los
-// campos vacios de una fila "Sin cerrar" quedan en blanco en vez de mostrar
-// "Pendiente", que solo tiene sentido en pantalla.
+// Los campos vacios de una fila "Sin cerrar" quedan en blanco en la exportacion
+// en vez de mostrar "Pendiente", que solo tiene sentido en pantalla.
 function groupHistoryExportRow(item, pending) {
   return {
     Fecha: formatRecordDate(item),
@@ -1797,21 +1824,19 @@ function groupHistoryExportRow(item, pending) {
     "Hora fin": pending ? "" : formatTimeLima(item.hora_fin),
     Cantidad: pending ? "" : (formatNumber(item.cantidad) || ""),
     "Tiempo (min)": pending ? "" : (item.tiempo_minutos ?? ""),
-    "Numero de guia": item.codigo_guia || item.numero_guia || "",
     "Codigo de lote": item.lote || "",
     Hangtag: item.tipo_etiquetado ? hangtagLabel(item.tipo_etiquetado) : "",
     Marca: item.marca_nombre || "",
     Tienda: item.tienda_nombre || "",
     Detalle: item.detalle || item.observacion || "",
-    Puntaje: pending ? "" : (item.puntaje ?? ""),
     Modificado: item.updated_at ? formatUpdatedAt(item) : "",
     Estado: pending ? "Sin cerrar" : "Cerrado"
   };
 }
 const GROUP_HISTORY_EXPORT_COLUMNS = [
   "Fecha", "Encargado", "Operante", "Tarea", "Hora inicio", "Hora fin", "Cantidad",
-  "Tiempo (min)", "Hangtag", "Codigo de lote", "Marca", "Numero de guia", "Tienda",
-  "Detalle", "Puntaje", "Modificado", "Estado"
+  "Tiempo (min)", "Hangtag", "Codigo de lote", "Marca", "Tienda",
+  "Detalle", "Modificado", "Estado"
 ];
 // Exporta exactamente las filas que se ven en la tabla (ya filtradas por
 // operante, tarea, categoria, busqueda y alcance), en el mismo orden.
@@ -1831,12 +1856,6 @@ function formatUpdatedAt(record) {
   const value = record?.updated_at || record?.updatedAt || null;
   if (!value) return "-";
   return formatDateTimeLima(value) || "-";
-}
-function formatScore(value) {
-  if (value === null || value === void 0 || value === "") return "-";
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return String(value);
-  return `${numeric.toLocaleString("es-PE", { maximumFractionDigits: 2 })} pts`;
 }
 function MetricTile({ icon: Icon2, label, value }) {
   return /* @__PURE__ */ React.createElement("div", { className: "group-metric" }, /* @__PURE__ */ React.createElement(Icon2, null), /* @__PURE__ */ React.createElement("span", null, label), /* @__PURE__ */ React.createElement("strong", null, value));

@@ -376,7 +376,28 @@ function RegisterActivity({ user }) {
 
   return (
     <>
-    <TodayLeaderTaskCard user={user} />
+    <TodayLeaderTaskCard user={user} onUse={(activity) => {
+      const taskEntry = Object.entries(taskMap).find(([, task]) => Number(task.id) === Number(activity.tarea_id));
+      if (!taskEntry) {
+        setStatus({ type: "error", message: "La tarea indicada por el jefe no esta disponible en tu formulario." });
+        return;
+      }
+      const [, task] = taskEntry;
+      const flags = recordFieldFlags(task);
+      const quantity = Number(activity.cantidad || 0);
+      const hangtag = String(activity.tipo_etiquetado || "").trim().toUpperCase().replace(/\s+/g, "_");
+      setRecords([{
+        ...emptyRecord(),
+        taskKey: taskEntry[0],
+        cantidad: quantity > 0 ? String(quantity) : "",
+        marcaId: flags.marca && activity.marca_id ? String(activity.marca_id) : "",
+        lote: flags.lote ? String(activity.lote || "") : "",
+        tipoEtiquetado: flags.hangtag && ["CON_HANGTAG", "SIN_HANGTAG"].includes(hangtag) ? hangtag : "",
+        tiendaId: flags.tienda && activity.tienda_id ? String(activity.tienda_id) : "",
+        detalle: String(activity.detalle || activity.observacion || "")
+      }]);
+      setStatus({ type: "success", message: `Datos de ${activity.tarea_nombre || "la tarea"} cargados. Revisa y completa lo pendiente antes de guardar.` });
+    }} />
     <Panel
       title="Registrar lo realizado"
       eyebrow="Operaciones"
@@ -686,7 +707,7 @@ function liveProgressTime(value) {
 // tope de "Registrar actividad", en reemplazo de la antigua pestaña
 // "Progreso en vivo": no es una lista de todo el historial, solo lo que esta
 // en curso ahora mismo, para que sea lo primero que se ve al entrar.
-function TodayLeaderTaskCard({ user }) {
+function TodayLeaderTaskCard({ user, onUse }) {
   const requestRef = useRef(null);
   const [activities, setActivities] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -701,10 +722,11 @@ function TodayLeaderTaskCard({ user }) {
         const result = await loadWorkerLiveProgress({ signal: controller.signal });
         if (cancelled) return;
         const today = todayLimaISO();
-        const openToday = (result.activities || []).filter(
-          (activity) => activity.estado === "EN_CURSO" && String(activity.fecha_registro || "").slice(0, 10) === today
+        const leaderRecordsToday = (result.activities || []).filter(
+          (activity) => ["historial_jefe_equipo", "jefe_equipo"].includes(activity.origen)
+            && String(activity.fecha_registro || "").slice(0, 10) === today
         );
-        setActivities(openToday);
+        setActivities(leaderRecordsToday);
         setLoaded(true);
       } catch (err) {
         if (err?.name !== "AbortError" && !cancelled) setLoaded(true);
@@ -723,7 +745,7 @@ function TodayLeaderTaskCard({ user }) {
   if (!loaded || !activities.length) return null;
 
   return (
-    <Panel title="Tu jefe de equipo te registro esto hoy" eyebrow="En curso" className="today-leader-task-panel">
+    <Panel title="Tu jefe de equipo te registro esto hoy" eyebrow="Datos para completar" className="today-leader-task-panel">
       <div className="today-leader-task-grid">
         {activities.map((activity) => (
           <article className="today-leader-task-card" key={activity.id}>
@@ -735,13 +757,14 @@ function TodayLeaderTaskCard({ user }) {
               <div><dt>Cantidad</dt><dd>{liveProgressNumber(activity.cantidad)}</dd></div>
               <div><dt>Marca</dt><dd>{activity.marca_nombre || "No aplica"}</dd></div>
               <div><dt>Lote</dt><dd>{activity.lote || "No aplica"}</dd></div>
-              <div><dt>Numero de guia</dt><dd>{activity.numero_guia || activity.codigo_guia || "No aplica"}</dd></div>
               <div><dt>Tienda</dt><dd>{activity.tienda_nombre || "No aplica"}</dd></div>
+              <div><dt>Hangtag</dt><dd>{activity.tipo_etiquetado || "No aplica"}</dd></div>
             </dl>
             <small>
               Registrada por {activity.encargado_nombre || "tu jefe de equipo"} · inicio{" "}
-              {liveProgressTime(activity.hora_inicio || activity.horaInicio)}
+              {liveProgressTime(activity.hora_inicio || activity.horaInicio)} · {activity.estado === "EN_CURSO" ? "En curso" : "Cerrada por el jefe"}
             </small>
+            <Button type="button" variant="secondary" onClick={() => onUse(activity)}>Usar estos datos</Button>
           </article>
         ))}
       </div>
@@ -751,13 +774,12 @@ function TodayLeaderTaskCard({ user }) {
 
 const WORKER_HISTORY_EXPORT_COLUMNS = [
   "Fecha", "Hora inicio", "Hora fin", "Tarea", "Cantidad", "Tiempo (min)", "Turno",
-  "Cumplimiento", "Puntos", "Tienda", "Guia", "Lote", "Marcas", "Registrado por", "Detalle"
+  "Cumplimiento", "Puntos", "Tienda", "Guia", "Lote", "Marcas", "Detalle"
 ];
 
 export function WorkerHistory({ user }) {
   const [sortOrder, setSortOrder] = useState("desc");
   const [taskFilter, setTaskFilter] = useState("");
-  const [sourceFilter, setSourceFilter] = useState("");
   const [search, setSearch] = useState("");
   const { data, loading, error, reload } = useAsyncData(
     async () => {
@@ -771,9 +793,6 @@ export function WorkerHistory({ user }) {
   const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || `Tarea ${task.id}`]));
   const storeNameById = Object.fromEntries((data.stores || []).map((store) => [store.id, store.nombre]));
   const allLogs = data.logs || [];
-  // Se calcula sobre el total sin filtrar, no sobre lo visible: si el
-  // operante filtra "Registrado por: Yo" el aviso no debe desaparecer.
-  const hasLeaderRecords = allLogs.some((log) => log.origen === "jefe_equipo");
 
   const loggedTaskOptions = [];
   const seenTaskIds = new Set();
@@ -787,8 +806,6 @@ export function WorkerHistory({ user }) {
 
   const filteredLogs = allLogs.filter((log) => {
     if (taskFilter && String(log.tarea_id) !== taskFilter) return false;
-    if (sourceFilter === "propio" && log.origen === "jefe_equipo") return false;
-    if (sourceFilter === "jefe_equipo" && log.origen !== "jefe_equipo") return false;
     if (!search.trim()) return true;
     const taskName = taskNameById[log.tarea_id] || log.actividad_nombre || "";
     const term = normalizeText(search);
@@ -804,7 +821,6 @@ export function WorkerHistory({ user }) {
   const rows = sortedLogs.map((log) => {
     const taskName = taskNameById[log.tarea_id] || log.actividad_nombre || "";
     const [tipoAct] = getActivityCaptureMode(taskName);
-    const registeredByLeader = log.origen === "jefe_equipo";
     return {
       Fecha: formatDateTimeLima(log.created_at) || log.fecha_registro,
       "Hora inicio": log.hora_inicio ? liveProgressTime(log.hora_inicio) : "",
@@ -819,7 +835,6 @@ export function WorkerHistory({ user }) {
       Guia: log.numero_guia || "",
       Lote: log.lote || "",
       Marcas: (log.marcas || []).map((item) => `${item.marca_nombre}: ${item.cantidad}`).join(", "),
-      "Registrado por": registeredByLeader ? (log.encargado_nombre || "Jefe de equipo") : "Tú",
       Detalle: log.detalle
     };
   });
@@ -848,18 +863,6 @@ export function WorkerHistory({ user }) {
           onChange={setTaskFilter}
           options={[{ value: "", label: "Todas" }, ...loggedTaskOptions]}
         />
-        {hasLeaderRecords ? (
-          <SelectInput
-            label="Registrado por"
-            value={sourceFilter}
-            onChange={setSourceFilter}
-            options={[
-              { value: "", label: "Todos" },
-              { value: "propio", label: "Yo" },
-              { value: "jefe_equipo", label: "Jefe de equipo" }
-            ]}
-          />
-        ) : null}
         <SelectInput
           label="Ordenar por fecha"
           value={sortOrder}
@@ -886,9 +889,6 @@ export function WorkerHistory({ user }) {
       {error ? <Alert type="error">{error}</Alert> : null}
       {!loading && !allLogs.length ? <Alert>Aun no tienes registros.</Alert> : null}
       {!loading && allLogs.length > 0 && !rows.length ? <Alert>Ningun registro coincide con los filtros actuales.</Alert> : null}
-      {hasLeaderRecords ? (
-        <Alert>Los registros marcados como "Registrado por" un jefe de equipo fueron cargados por tu encargado a nombre tuyo.</Alert>
-      ) : null}
       <DataTable rows={rows} />
     </Panel>
   );
