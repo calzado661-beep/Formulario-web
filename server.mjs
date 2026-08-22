@@ -1649,13 +1649,25 @@ async function selectActivityLogs(workerId = null) {
 
   let lastError = null;
   for (const resource of resources) {
-    let query = supabase.from(resource.table).select("*");
-    if (workerId) query = query.eq(resource.userColumn, workerId);
-    query = query.order(resource.orderColumn, { ascending: false });
+    const pageSize = 1000;
+    const allRows = [];
+    let resourceError = null;
+    for (let from = 0; ; from += pageSize) {
+      let query = supabase.from(resource.table).select("*");
+      if (workerId) query = query.eq(resource.userColumn, workerId);
+      query = query.order(resource.orderColumn, { ascending: false }).range(from, from + pageSize - 1);
+      const result = await query;
+      if (result.error) {
+        resourceError = result.error;
+        break;
+      }
+      const page = result.data || [];
+      allRows.push(...page);
+      if (page.length < pageSize) break;
+    }
 
-    const result = await query;
-    if (!result.error) {
-      const rows = await attachBrandBreakdown((result.data || []).map(normalizeActivityLog));
+    if (!resourceError) {
+      const rows = await attachBrandBreakdown(allRows.map(normalizeActivityLog));
       if (!workerId) return rows;
       const groupLeaderRows = await selectGroupLeaderActivityLogsForWorker(workerId);
       if (!groupLeaderRows.length) return rows;
@@ -1665,7 +1677,7 @@ async function selectActivityLogs(workerId = null) {
         return String(right.created_at || "").localeCompare(String(left.created_at || ""));
       });
     }
-    lastError = result.error;
+    lastError = resourceError;
   }
 
   throw lastError || new Error("No se pudieron leer los registros de actividades.");

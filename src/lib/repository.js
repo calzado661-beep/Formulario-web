@@ -1054,10 +1054,22 @@ export async function listAllActivityLogs() {
 
   for (const resourceName of ["v_registro_actividades", "registros_tareas", "registro_actividades"]) {
     for (const orderColumn of ["fecha_registro", "created_at", null]) {
-      let query = db().from(resourceName).select("*");
-      if (orderColumn) query = query.order(orderColumn, { ascending: false });
-      const result = await query;
-      if (!result.error) return (result.data || []).map(normalizeActivityLog);
+      const pageSize = 1000;
+      const rows = [];
+      let failed = false;
+      for (let from = 0; ; from += pageSize) {
+        let query = db().from(resourceName).select("*");
+        if (orderColumn) query = query.order(orderColumn, { ascending: false });
+        const result = await query.range(from, from + pageSize - 1);
+        if (result.error) {
+          failed = true;
+          break;
+        }
+        const page = result.data || [];
+        rows.push(...page);
+        if (page.length < pageSize) break;
+      }
+      if (!failed) return rows.map(normalizeActivityLog);
     }
   }
   return [];

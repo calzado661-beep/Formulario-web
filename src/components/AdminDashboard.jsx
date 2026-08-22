@@ -52,9 +52,7 @@ import {
 } from "../lib/repository";
 import { birthdayMaxISO, formatDateTimeLima, todayLimaISO } from "../lib/dates";
 import {
-  displayShiftFromQuantity,
   emptyQuantityRanges,
-  getActivityCaptureMode,
   getTaskTitle,
   MAX_SCORE_QUANTITY,
   normalizeMeasurementType,
@@ -104,7 +102,7 @@ export default function AdminDashboard({ section }) {
   if (section === "Tiendas") return <StoresPanel />;
   if (section === "Amonestaciones") return <WarningsPanel />;
   if (section === "Documentos") return <DocumentsPanel />;
-  return <WorkerPointsPanel />;
+  return <FootwearDashboard />;
 }
 
 function boolValue(value) {
@@ -2150,7 +2148,7 @@ function AttendancePanel() {
   }));
 
   function exportAttendance() {
-    const columns = ["Fecha", "Trabajador", "Email", "Estado", "Sigla", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro", "Retirado en", "Marcado en"];
+    const columns = ["Fecha", "Trabajador", "Email", "Estado", "Sigla"];
     downloadExcelTable("historial_asistencia.xls", columns, attendanceRows);
   }
 
@@ -2258,7 +2256,7 @@ function AttendancePanel() {
         </div>
         <DataTable
           rows={attendanceRows}
-          columns={["Fecha", "Trabajador", "Email", "Estado", "Sigla", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro", "Retirado en", "Marcado en"]}
+          columns={["Fecha", "Trabajador", "Email", "Estado", "Sigla", "Marcado en"]}
           pageSize={25}
           empty="No hay asistencias para los filtros seleccionados."
         />
@@ -3484,30 +3482,99 @@ function AttendanceNotificationsPanel() {
   );
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function excelSheetName(value, fallback = "Datos") {
+  return String(value || fallback).replace(/[\\/*?:[\]]/g, " ").trim().slice(0, 31) || fallback;
 }
 
-function downloadExcelTable(filename, columns, rows) {
-  const header = columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("");
-  const body = rows
-    .map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>`)
-    .join("");
-  const html = `<!doctype html><html><head><meta charset="UTF-8"></head><body><table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></body></html>`;
-  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+function excelTableName(value, index) {
+  const normalized = String(value || `Tabla${index + 1}`).replace(/[^a-zA-Z0-9_]/g, "");
+  return `Tabla_${normalized || index + 1}_${index + 1}`;
+}
+
+function excelCellValue(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number" || typeof value === "boolean" || value instanceof Date) return value;
+  return String(value);
+}
+
+async function downloadExcelWorkbook(filename, datasets) {
+  const excelModule = await import("exceljs");
+  const ExcelJS = excelModule.default || excelModule;
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Sistema de Formularios";
+  workbook.created = new Date();
+  workbook.modified = new Date();
+
+  datasets.forEach((dataset, datasetIndex) => {
+    const sheet = workbook.addWorksheet(excelSheetName(dataset.sheetName || dataset.label, `Hoja ${datasetIndex + 1}`), {
+      views: [{ state: "frozen", ySplit: 1 }],
+      properties: { defaultRowHeight: 21 }
+    });
+    const columns = dataset.columns || [];
+    const rows = dataset.rows || [];
+    const tableRows = rows.map((row) => columns.map((column) => excelCellValue(row[column])));
+
+    sheet.addTable({
+      name: excelTableName(dataset.key || dataset.label, datasetIndex),
+      ref: "A1",
+      headerRow: true,
+      totalsRow: false,
+      style: { theme: "TableStyleMedium2", showRowStripes: true, showColumnStripes: false },
+      columns: columns.map((column) => ({ name: column, filterButton: true })),
+      rows: tableRows
+    });
+
+    const header = sheet.getRow(1);
+    header.height = 30;
+    header.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F766E" } };
+      cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+      cell.border = {
+        top: { style: "thin", color: { argb: "FF0B5F59" } },
+        bottom: { style: "medium", color: { argb: "FF0B5F59" } },
+        left: { style: "thin", color: { argb: "FF9CCBC5" } },
+        right: { style: "thin", color: { argb: "FF9CCBC5" } }
+      };
+    });
+
+    columns.forEach((column, columnIndex) => {
+      const longest = rows.reduce((max, row) => Math.max(max, String(row[column] ?? "").length), String(column).length);
+      const worksheetColumn = sheet.getColumn(columnIndex + 1);
+      worksheetColumn.width = Math.min(42, Math.max(12, longest + 2));
+      worksheetColumn.alignment = { vertical: "middle", wrapText: longest > 34 };
+    });
+
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) row.height = 22;
+    });
+    sheet.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: Math.max(1, rows.length + 1), column: Math.max(1, columns.length) }
+    };
+    sheet.pageSetup = {
+      orientation: columns.length > 7 ? "landscape" : "portrait",
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      margins: { left: 0.3, right: 0.3, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 }
+    };
+  });
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = filename;
+  link.download = filename.replace(/\.xls$/i, ".xlsx");
   document.body.appendChild(link);
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function downloadExcelTable(filename, columns, rows, label = "Datos") {
+  return downloadExcelWorkbook(filename, [{ key: label, label, sheetName: label, columns, rows }]);
 }
 
 function StoresPanel() {
@@ -3837,190 +3904,6 @@ function WarningsPanel() {
   );
 }
 
-function activityDateISO(log) {
-  const registrationDate = String(log.fecha_registro || "").slice(0, 10);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(registrationDate)) return registrationDate;
-  if (!log.created_at) return "";
-  const date = new Date(log.created_at);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Lima",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(date);
-}
-
-function weekBounds(dateISO) {
-  const selected = /^\d{4}-\d{2}-\d{2}$/.test(dateISO) ? dateISO : todayLimaISO();
-  const date = new Date(`${selected}T12:00:00Z`);
-  const mondayOffset = (date.getUTCDay() + 6) % 7;
-  const start = new Date(date);
-  start.setUTCDate(start.getUTCDate() - mondayOffset);
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 6);
-  return [start.toISOString().slice(0, 10), end.toISOString().slice(0, 10)];
-}
-
-function PointsUserGroup({ title, eyebrow, workers, rows, emptyMessage }) {
-  const summaries = workers.map((worker) => {
-    const workerRows = rows.filter((row) => Number(row.workerId) === Number(worker.id));
-    return {
-      Trabajador: worker.nombre || worker.email,
-      Email: worker.email,
-      Registros: workerRows.length,
-      Puntos: Number(workerRows.reduce((sum, row) => sum + Number(row.Puntos || 0), 0).toFixed(1))
-    };
-  }).sort((a, b) => b.Puntos - a.Puntos || a.Trabajador.localeCompare(b.Trabajador));
-
-  return (
-    <Panel title={title} eyebrow={eyebrow}>
-      {!workers.length ? <Alert>{emptyMessage}</Alert> : null}
-      <DataTable rows={summaries} />
-      <div className="details-list">
-        {workers.map((worker) => {
-          const workerRows = rows.filter((row) => Number(row.workerId) === Number(worker.id));
-          const points = workerRows.reduce((sum, row) => sum + Number(row.Puntos || 0), 0);
-          return (
-            <details key={worker.id} className="detail-card">
-              <summary>
-                <span>{worker.nombre || worker.email}</span>
-                <strong>{points.toFixed(1)} pts</strong>
-              </summary>
-              {!workerRows.length ? <Alert>Sin registros en el periodo seleccionado.</Alert> : null}
-              <DataTable rows={workerRows.map(({ workerId: _workerId, Trabajador: _worker, Email: _email, ...rest }) => rest)} compact />
-            </details>
-          );
-        })}
-      </div>
-    </Panel>
-  );
-}
-
-function WorkerPointsPanel() {
-  const { data, loading, error, reload } = useAsyncData(
-    async () => {
-      const [logs, users, tasks] = await Promise.all([listAllActivityLogs(), selectUsers(), listTasks()]);
-      return { logs, users, tasks };
-    },
-    [],
-    { logs: [], users: [], tasks: [] }
-  );
-
-  const today = todayLimaISO();
-  const [periodType, setPeriodType] = useState("mes");
-  const [selectedDay, setSelectedDay] = useState(today);
-  const [selectedWeekDay, setSelectedWeekDay] = useState(today);
-  const [selectedMonth, setSelectedMonth] = useState(today.slice(0, 7));
-  const [rangeStart, setRangeStart] = useState(today);
-  const [rangeEnd, setRangeEnd] = useState(today);
-
-  const workers = (data.users || []).filter((user) => ["operante", "jefe de equipo"].includes(normalizeRole(user.rol)));
-  const workerIds = new Set(workers.map((worker) => Number(worker.id)));
-  const userNameById = Object.fromEntries(workers.map((worker) => [worker.id, worker.nombre || worker.email]));
-  const userEmailById = Object.fromEntries(workers.map((worker) => [worker.id, worker.email]));
-  const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || `Tarea ${task.id}`]));
-
-  const [weekStart, weekEnd] = weekBounds(selectedWeekDay);
-  const rangeInvalid = periodType === "rango" && (!rangeStart || !rangeEnd || rangeStart > rangeEnd);
-  const periodLabel = periodType === "dia"
-    ? `Día ${selectedDay}`
-    : periodType === "semana"
-      ? `Semana del ${weekStart} al ${weekEnd}`
-      : periodType === "mes"
-        ? `Mes ${selectedMonth}`
-        : `Del ${rangeStart || "-"} al ${rangeEnd || "-"}`;
-
-  const rows = (data.logs || [])
-    .filter((log) => workerIds.has(Number(log.trabajador_id)))
-    .filter((log) => {
-      if (rangeInvalid) return false;
-      const date = activityDateISO(log);
-      if (periodType === "dia") return date === selectedDay;
-      if (periodType === "semana") return date >= weekStart && date <= weekEnd;
-      if (periodType === "mes") return date.startsWith(selectedMonth);
-      return date >= rangeStart && date <= rangeEnd;
-    })
-    .map((log) => {
-      const tareaNombre = taskNameById[log.tarea_id] || log.actividad_nombre || "";
-      const [tipoAct] = getActivityCaptureMode(tareaNombre);
-      const turnoDisplay = log.turno || (tipoAct === "turno" ? displayShiftFromQuantity(log.cantidad) : "");
-      return {
-        workerId: Number(log.trabajador_id),
-        Fecha: formatDateTimeLima(log.created_at) || log.fecha_registro,
-        Trabajador: userNameById[log.trabajador_id],
-        Email: userEmailById[log.trabajador_id],
-        Tarea: tareaNombre,
-        Cantidad: log.cantidad ?? "",
-        Turno: turnoDisplay,
-        "Tiempo (min)": log.tiempo_minutos,
-        Cumplimiento: log.cumplimiento,
-        Puntos: Number(log.puntaje || 0)
-      };
-    });
-
-  const activeWorkers = workers.filter((worker) => boolValue(worker.activo));
-  const inactiveWorkers = workers.filter((worker) => !boolValue(worker.activo));
-  const total = rows.reduce((sum, row) => sum + Number(row.Puntos || 0), 0);
-  const workersWithRecords = new Set(rows.map((row) => row.workerId)).size;
-
-  return (
-    <div className="stack">
-      <Panel title="Tareas realizadas y puntos" eyebrow="Rendimiento" actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
-        {loading ? <LoadingBlock /> : null}
-        {error ? <Alert type="error">{error}</Alert> : null}
-        <div className="form-grid">
-          <SelectInput
-            label="Filtrar periodo"
-            value={periodType}
-            onChange={setPeriodType}
-            options={[
-              { value: "dia", label: "Día específico" },
-              { value: "semana", label: "Semana" },
-              { value: "mes", label: "Mes" },
-              { value: "rango", label: "Rango personalizado" }
-            ]}
-          />
-          {periodType === "dia" ? <TextInput label="Fecha" type="date" value={selectedDay} onChange={setSelectedDay} /> : null}
-          {periodType === "semana" ? (
-            <TextInput label="Selecciona un día de la semana" type="date" value={selectedWeekDay} onChange={setSelectedWeekDay} />
-          ) : null}
-          {periodType === "mes" ? <TextInput label="Mes" type="month" value={selectedMonth} onChange={setSelectedMonth} /> : null}
-          {periodType === "rango" ? (
-            <>
-              <TextInput label="Desde" type="date" value={rangeStart} onChange={setRangeStart} />
-              <TextInput label="Hasta" type="date" value={rangeEnd} onChange={setRangeEnd} />
-            </>
-          ) : null}
-        </div>
-        {rangeInvalid ? <Alert type="error">El rango personalizado necesita fechas válidas y “Desde” no puede ser posterior a “Hasta”.</Alert> : null}
-        {!loading && !rows.length && !rangeInvalid ? <Alert>No hay registros en el periodo seleccionado.</Alert> : null}
-        <Alert>Periodo aplicado: {periodLabel}</Alert>
-        <div className="metrics-row">
-          <Metric label="Puntos totales" value={total.toFixed(0)} tone="accent" />
-          <Metric label="Usuarios con registros" value={workersWithRecords} />
-          <Metric label="Usuarios activos" value={activeWorkers.length} />
-          <Metric label="Usuarios inactivos" value={inactiveWorkers.length} />
-        </div>
-      </Panel>
-      <PointsUserGroup
-        title={`Usuarios activos (${activeWorkers.length})`}
-        eyebrow="Personal habilitado"
-        workers={activeWorkers}
-        rows={rows}
-        emptyMessage="No hay usuarios activos para mostrar."
-      />
-      <PointsUserGroup
-        title={`Usuarios inactivos (${inactiveWorkers.length})`}
-        eyebrow="Personal bloqueado"
-        workers={inactiveWorkers}
-        rows={rows}
-        emptyMessage="No hay usuarios inactivos para mostrar."
-      />
-    </div>
-  );
-}
-
 function DocumentsPanel() {
   const { data, loading, error, reload } = useAsyncData(
     async () => {
@@ -4052,10 +3935,7 @@ function DocumentsPanel() {
   async function exportAll(datasets) {
     setExporting(true);
     try {
-      for (const dataset of datasets) {
-        downloadExcelTable(dataset.filename, dataset.columns, dataset.rows);
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
+      await downloadExcelWorkbook("reporte_completo_formulario.xlsx", datasets);
     } finally {
       setExporting(false);
     }
@@ -4099,19 +3979,16 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
     Sueldo: Number(user.sueldo || 0).toFixed(2)
   }));
 
-  const attendanceColumns = ["Fecha", "Trabajador", "Email", "Estado", "Sigla", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro"];
+  const attendanceColumns = ["Fecha", "Trabajador", "Email", "Estado", "Sigla"];
   const attendanceRows = (data.attendances || []).filter((item) => userIds.has(Number(item.usuario_id))).map((item) => ({
     Fecha: item.fecha,
     Trabajador: workerNameById[item.usuario_id] || "",
     Email: workerEmailById[item.usuario_id] || "",
     Estado: attendanceStateLabel(String(item.estado || "FALTA").toUpperCase()),
-    Sigla: item.sigla || "",
-    "Retiro anticipado": item.retiro_anticipado ? "Si" : "No",
-    "Tipo de retiro": item.retiro_anticipado ? (item.tipo_retiro === "apoyo" ? "Apoyo a otra area" : "Personal") : "",
-    "Motivo del retiro": item.motivo_retiro || ""
+    Sigla: item.sigla || ""
   }));
 
-  const activityColumns = ["Fecha", "Trabajador", "Email", "Tarea", "Cantidad", "Turno", "Tiempo (min)", "Cumplimiento", "Puntos"];
+  const activityColumns = ["Fecha", "Trabajador", "Email", "Tarea", "Cantidad", "Turno", "Tiempo (min)", "Puntos"];
   const activityRows = (data.logs || []).filter((log) => userIds.has(Number(log.trabajador_id || log.usuario_id))).map((log) => ({
     Fecha: formatDateTimeLima(log.created_at) || log.fecha_registro,
     Trabajador: workerNameById[log.trabajador_id] || "",
@@ -4120,7 +3997,6 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
     Cantidad: log.cantidad ?? "",
     Turno: log.turno || "",
     "Tiempo (min)": log.tiempo_minutos ?? "",
-    Cumplimiento: log.cumplimiento ? "Si" : "No",
     Puntos: Number(log.puntaje || 0)
   }));
 
@@ -4145,11 +4021,11 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
   ));
 
   const datasets = [
-    { key: "usuarios", label: "Usuarios", Icon: UsersRound, description: `${userRows.length} trabajador(es) registrados`, filename: "usuarios.xls", columns: userColumns, rows: userRows },
-    { key: "asistencias", label: "Asistencias", Icon: CalendarCheck2, description: `${attendanceRows.length} registro(s) de asistencia`, filename: "asistencias.xls", columns: attendanceColumns, rows: attendanceRows },
-    { key: "actividades", label: "Actividades y puntos", Icon: ClipboardCheck, description: `${activityRows.length} registro(s) de actividad`, filename: "actividades.xls", columns: activityColumns, rows: activityRows },
-    { key: "amonestaciones", label: "Amonestaciones", Icon: AlertTriangle, description: `${warningRows.length} documento(s)`, filename: "amonestaciones.xls", columns: warningColumns, rows: warningRows },
-    { key: "capacitaciones", label: "Capacitaciones", Icon: GraduationCap, description: `${trainingRows.length} registro(s)`, filename: "capacitaciones.xls", columns: trainingColumns, rows: trainingRows }
+    { key: "usuarios", label: "Usuarios", sheetName: "Usuarios", Icon: UsersRound, description: `${userRows.length} trabajador(es) registrados`, filename: "usuarios.xlsx", columns: userColumns, rows: userRows },
+    { key: "asistencias", label: "Asistencias", sheetName: "Asistencias", Icon: CalendarCheck2, description: `${attendanceRows.length} registro(s) de asistencia`, filename: "asistencias.xlsx", columns: attendanceColumns, rows: attendanceRows },
+    { key: "actividades", label: "Actividades y puntos", sheetName: "Actividades y puntos", Icon: ClipboardCheck, description: `${activityRows.length} registro(s) de actividad`, filename: "actividades.xlsx", columns: activityColumns, rows: activityRows },
+    { key: "amonestaciones", label: "Amonestaciones", sheetName: "Amonestaciones", Icon: AlertTriangle, description: `${warningRows.length} documento(s)`, filename: "amonestaciones.xlsx", columns: warningColumns, rows: warningRows },
+    { key: "capacitaciones", label: "Capacitaciones", sheetName: "Capacitaciones", Icon: GraduationCap, description: `${trainingRows.length} registro(s)`, filename: "capacitaciones.xlsx", columns: trainingColumns, rows: trainingRows }
   ];
   const totalRows = datasets.reduce((sum, dataset) => sum + dataset.rows.length, 0);
 
@@ -4160,7 +4036,7 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
         <div className="documents-hero-copy">
           <span className="documents-hero-eyebrow">Exportacion completa</span>
           <h3>Exporta toda la informacion en Excel</h3>
-          <p>{totalRows} registros listos, repartidos en {datasets.length} archivos: usuarios, asistencias, actividades, amonestaciones y capacitaciones.</p>
+          <p>{totalRows} registros listos en un solo archivo con {datasets.length} hojas: usuarios, asistencias, actividades, amonestaciones y capacitaciones.</p>
         </div>
         <Button icon={FileSpreadsheet} loading={exporting} onClick={() => onExportAll(datasets)}>
           Exportar todo en Excel
@@ -4176,7 +4052,7 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
               variant="secondary"
               icon={FileSpreadsheet}
               disabled={!dataset.rows.length}
-              onClick={() => downloadExcelTable(dataset.filename, dataset.columns, dataset.rows)}
+              onClick={() => downloadExcelTable(dataset.filename, dataset.columns, dataset.rows, dataset.sheetName || dataset.label)}
             >
               Descargar Excel
             </Button>

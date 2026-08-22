@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import {
   AlertTriangle,
-  BarChart3,
   BellRing,
   CalendarCheck2,
   ClipboardList,
@@ -31,8 +30,7 @@ const adminItems = [
   { key: "Notificaciones", icon: BellRing },
   { key: "Tiendas", icon: Store },
   { key: "Amonestaciones", icon: AlertTriangle },
-  { key: "Documentos", icon: FileSpreadsheet },
-  { key: "Puntos", icon: BarChart3 }
+  { key: "Documentos", icon: FileSpreadsheet }
 ];
 
 export default function Layout({ user, adminSection, onAdminSectionChange, onLogout, children }) {
