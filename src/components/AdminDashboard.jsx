@@ -893,9 +893,10 @@ function TrainingsPanel() {
   const percent = activeUsers.length ? Math.round((completedUsers.length / activeUsers.length) * 100) : 0;
   const modalUsers = modalGroup === "completado" ? completedUsers : modalGroup === "en_curso" ? inProgressUsers : modalGroup === "pendiente" ? pendingUsers : [];
 
-  const profileUser = users.find((user) => String(user.id) === String(profileUserId));
-  const inactiveWorkerCount = users.filter((user) => !boolValue(user.activo)).length;
-  const visibleWorkers = showInactiveWorkers ? users : users.filter((user) => boolValue(user.activo));
+  const trainingUsers = users.filter((user) => normalizeRole(user.rol) !== "administrador");
+  const profileUser = trainingUsers.find((user) => String(user.id) === String(profileUserId));
+  const inactiveWorkerCount = trainingUsers.filter((user) => !boolValue(user.activo)).length;
+  const visibleWorkers = showInactiveWorkers ? trainingUsers : trainingUsers.filter((user) => boolValue(user.activo));
   const workerRows = visibleWorkers.map((user) => ({
     id: user.id,
     Nombre: user.nombre,
@@ -985,7 +986,7 @@ function TrainingsPanel() {
           ) : (
             <>
               {usersError ? <Alert type="error">{usersError}</Alert> : null}
-              <BulkTrainingPanel users={users} />
+              <BulkTrainingPanel users={trainingUsers} />
             </>
           )
         ) : null}
@@ -1090,7 +1091,7 @@ function CourseCard({ course, onSaved, onDeleted }) {
   }
 
   return (
-    <article className="document-card">
+    <article className="document-card training-course-card">
       <h3>{course.id_curso} - {course.nombre_curso}</h3>
       <div className="form-grid">
         <TextInput label="Curso" value={nombreCurso} onChange={setNombreCurso} maxLength={200} />
@@ -1283,7 +1284,7 @@ function CoursesEditor({ courses, loading, error, onReload }) {
         <h3>Nueva capacitacion</h3>
         <CourseCreateForm onCreated={onReload} />
       </article>
-      <div className="documents-grid">
+      <div className="documents-grid training-courses-grid">
         {courses.map((course) => (
           <CourseCard
             key={course.id_curso}
@@ -1324,7 +1325,7 @@ function BulkTrainingPanel({ users }) {
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  const { data: courseStatusData, loading: courseStatusLoading } = useAsyncData(
+  const { data: courseStatusData, loading: courseStatusLoading, reload: reloadCourseStatus } = useAsyncData(
     () => (courseId ? getTrainingStatusByCourse(courseId) : Promise.resolve(null)),
     [courseId],
     null
@@ -1332,14 +1333,16 @@ function BulkTrainingPanel({ users }) {
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [courseId, estado]);
+  }, [courseId]);
   const statusByUserId = new Map((courseStatusData?.users || []).map((item) => [Number(item.id), item.estado]));
   const sourceStatus = BULK_SOURCE_STATUS_BY_TARGET[estado] ?? "";
 
   const filteredUsers = users.filter((item) => {
+    if (normalizeRole(item.rol) === "administrador") return false;
     if (statusFilter === "activos" && !boolValue(item.activo)) return false;
     if (statusFilter === "inactivos" && boolValue(item.activo)) return false;
-    if (courseId && sourceStatus) {
+    const isSelected = selectedIds.has(String(item.id));
+    if (courseId && sourceStatus && !isSelected) {
       const currentStatus = statusByUserId.get(Number(item.id)) || "pendiente";
       if (currentStatus !== sourceStatus) return false;
     }
@@ -1390,6 +1393,7 @@ function BulkTrainingPanel({ users }) {
         message: `${result.updated} trabajador(es) quedaron con ${courseId} en "${trainingStatusLabel(estado).toLowerCase()}" (encargado: ${encargado}).`
       });
       setSelectedIds(new Set());
+      reloadCourseStatus();
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });
     } finally {
@@ -3599,8 +3603,10 @@ function WarningsPanel() {
   const [saving, setSaving] = useState(false);
 
   const users = data.users || [];
-  const warnings = data.warnings || [];
-  const activeUsers = users.filter((user) => boolValue(user.activo));
+  const operationalUsers = users.filter((user) => normalizeRole(user.rol) !== "administrador");
+  const operationalUserIds = new Set(operationalUsers.map((user) => String(user.id)));
+  const warnings = (data.warnings || []).filter((warning) => operationalUserIds.has(String(warning.usuario_id)));
+  const activeUsers = operationalUsers.filter((user) => boolValue(user.activo));
   const userById = Object.fromEntries(users.map((user) => [String(user.id), user]));
   const selectedWarning = warnings.find((warning) => String(warning.id) === String(selectedWarningId));
 
@@ -4013,7 +4019,8 @@ function DocumentsPanel() {
 }
 
 function DocumentsExporter({ data, exporting, onExportAll }) {
-  const users = data.users || [];
+  const users = (data.users || []).filter((user) => normalizeRole(user.rol) !== "administrador");
+  const userIds = new Set(users.map((user) => Number(user.id)));
   const workerNameById = Object.fromEntries(users.map((user) => [user.id, user.nombre || user.email]));
   const workerEmailById = Object.fromEntries(users.map((user) => [user.id, user.email]));
   const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || `Tarea ${task.id}`]));
@@ -4035,7 +4042,7 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
   }));
 
   const attendanceColumns = ["Fecha", "Trabajador", "Email", "Estado", "Sigla", "Retiro anticipado", "Tipo de retiro", "Motivo del retiro"];
-  const attendanceRows = (data.attendances || []).map((item) => ({
+  const attendanceRows = (data.attendances || []).filter((item) => userIds.has(Number(item.usuario_id))).map((item) => ({
     Fecha: item.fecha,
     Trabajador: workerNameById[item.usuario_id] || "",
     Email: workerEmailById[item.usuario_id] || "",
@@ -4047,7 +4054,7 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
   }));
 
   const activityColumns = ["Fecha", "Trabajador", "Email", "Tarea", "Cantidad", "Turno", "Tiempo (min)", "Cumplimiento", "Puntos"];
-  const activityRows = (data.logs || []).map((log) => ({
+  const activityRows = (data.logs || []).filter((log) => userIds.has(Number(log.trabajador_id || log.usuario_id))).map((log) => ({
     Fecha: formatDateTimeLima(log.created_at) || log.fecha_registro,
     Trabajador: workerNameById[log.trabajador_id] || "",
     Email: workerEmailById[log.trabajador_id] || "",
@@ -4060,7 +4067,7 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
   }));
 
   const warningColumns = ["Fecha", "Trabajador", "Usuario", "Tipo de documento", "Descripcion"];
-  const warningRows = (data.warnings || []).map((warning) => ({
+  const warningRows = (data.warnings || []).filter((warning) => userIds.has(Number(warning.usuario_id))).map((warning) => ({
     Fecha: formatWarningDate(warning),
     Trabajador: workerNameById[warning.usuario_id] || "",
     Usuario: workerEmailById[warning.usuario_id] || "",
@@ -4070,7 +4077,7 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
 
   const trainingColumns = ["Capacitacion", "Trabajador", "Usuario", "Rol", "Estado"];
   const trainingRows = (data.trainingStatuses || []).flatMap((entry) => (
-    (entry.users || []).map((user) => ({
+    (entry.users || []).filter((user) => normalizeRole(user.rol) !== "administrador").map((user) => ({
       Capacitacion: entry.course ? `${entry.course.id_curso} - ${entry.course.nombre_curso}` : "",
       Trabajador: user.nombre || "",
       Usuario: user.email || "",

@@ -529,6 +529,35 @@ h2 {
   gap: 1rem;
 }
 
+.training-courses-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
+}
+
+.training-course-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 1rem;
+  padding: 1.2rem;
+}
+
+.training-course-card > h3,
+.training-course-card > .form-grid,
+.training-course-card > .alert {
+  grid-column: 1 / -1;
+}
+
+.training-course-card > .form-grid {
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+}
+
+.training-course-card > .field {
+  align-self: center;
+}
+
+.training-course-card > .form-actions {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
 .document-card {
   display: grid;
   gap: 0.6rem;
@@ -3784,6 +3813,20 @@ tbody tr:hover {
   .brand-distribution-header,
   .brand-share-row {
     grid-template-columns: 1fr;
+  }
+
+  .training-course-card {
+    grid-template-columns: 1fr;
+  }
+
+  .training-course-card > .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .training-course-card > .field,
+  .training-course-card > .form-actions {
+    grid-column: 1;
+    width: 100%;
   }
 
   .btn,

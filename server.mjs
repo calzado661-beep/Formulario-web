@@ -806,13 +806,17 @@ async function handleUpdateUserTraining(request, response, userId, courseId) {
     }
 
     const [userResult, courseResult] = await Promise.all([
-      supabase.from("usuarios").select("id").eq("id", userId).maybeSingle(),
+      supabase.from("usuarios").select("id,rol").eq("id", userId).maybeSingle(),
       supabase.from("capacitaciones").select("id,id_curso,orden").eq("id_curso", courseId).eq("activo", true).maybeSingle()
     ]);
     const firstError = [userResult.error, courseResult.error].find(Boolean);
     if (firstError) throw firstError;
     if (!userResult.data) {
       sendJson(response, 404, { error: "Usuario no encontrado." });
+      return;
+    }
+    if (normalizeRole(userResult.data.rol) === "administrador") {
+      sendJson(response, 400, { error: "Los administradores no participan en capacitaciones." });
       return;
     }
     if (!courseResult.data) {
@@ -1140,7 +1144,9 @@ async function handleReadTrainingStatus(request, response, courseId) {
     }
 
     const progressByUser = new Map((progressResult.data || []).map((item) => [Number(item.usuario_id), item]));
-    const users = (usersResult.data || []).map((user) => {
+    const users = (usersResult.data || [])
+      .filter((user) => normalizeRole(user.rol) !== "administrador")
+      .map((user) => {
       const progress = progressByUser.get(Number(user.id));
       const estado = trainingStateFromProgress(progress);
       return {
@@ -1163,7 +1169,7 @@ async function handleReadTrainingStatus(request, response, courseId) {
         registro_actualizado_en: progress?.updated_at || null,
         tiene_registro: Boolean(progress)
       };
-    });
+      });
 
     sendJson(response, 200, { course: courseResult.data, users });
   } catch (error) {
@@ -1216,9 +1222,13 @@ async function handleBulkUpdateTraining(request, response) {
       return;
     }
 
-    const usersResult = await supabase.from("usuarios").select("id").in("id", userIds);
+    const usersResult = await supabase.from("usuarios").select("id,rol").in("id", userIds);
     if (usersResult.error) throw usersResult.error;
-    const validUserIds = new Set((usersResult.data || []).map((item) => Number(item.id)));
+    const validUserIds = new Set(
+      (usersResult.data || [])
+        .filter((item) => normalizeRole(item.rol) !== "administrador")
+        .map((item) => Number(item.id))
+    );
     const skipped = userIds.filter((id) => !validUserIds.has(id));
 
     const completed = requestedState === "finalizado";
@@ -1344,18 +1354,28 @@ async function handleReadFootwearDashboard(request, response) {
       selectAllDashboardRows("reglas_puntaje", { optional: true })
     ]);
 
+    const dashboardUsers = users.filter((user) => normalizeRole(user.rol) !== "administrador");
+    const dashboardUserIds = new Set(dashboardUsers.map((user) => Number(user.id)));
+    const visibleWorkerRecords = workerRecords.filter((row) => dashboardUserIds.has(Number(row.usuario_id || row.trabajador_id)));
+    const visibleLeaderRecords = leaderRecords.filter((row) => dashboardUserIds.has(Number(row.usuario_id || row.trabajador_id)));
+    const visibleAttendances = attendances.filter((row) => dashboardUserIds.has(Number(row.usuario_id)));
+    const visibleIncidents = incidents.filter((row) => !row.es_trabajador || dashboardUserIds.has(Number(row.usuario_id)));
+    const visibleWarnings = warnings.filter((row) => dashboardUserIds.has(Number(row.usuario_id)));
+    const visibleMovements = movements.filter((row) => dashboardUserIds.has(Number(row.usuario_id)));
+    const visibleTrainingAssignments = trainingAssignments.filter((row) => dashboardUserIds.has(Number(row.usuario_id)));
+
     const years = new Set([Number(currentLimaDate().slice(0, 4))]);
     const collectYear = (value) => {
       const date = dashboardDate(value);
       if (date) years.add(Number(date.slice(0, 4)));
     };
-    workerRecords.forEach((row) => collectYear(row.fecha_registro || row.created_at));
-    leaderRecords.forEach((row) => collectYear(row.fecha_registro || row.created_at));
-    attendances.forEach((row) => collectYear(row.fecha || row.created_at));
-    incidents.forEach((row) => collectYear(row.fecha_error || row.created_at));
-    warnings.forEach((row) => collectYear(row.fecha || row.created_at));
-    movements.forEach((row) => collectYear(row.fecha_movimiento || row.created_at));
-    trainingAssignments.forEach((row) => collectYear(row.completado_en || row.created_at));
+    visibleWorkerRecords.forEach((row) => collectYear(row.fecha_registro || row.created_at));
+    visibleLeaderRecords.forEach((row) => collectYear(row.fecha_registro || row.created_at));
+    visibleAttendances.forEach((row) => collectYear(row.fecha || row.created_at));
+    visibleIncidents.forEach((row) => collectYear(row.fecha_error || row.created_at));
+    visibleWarnings.forEach((row) => collectYear(row.fecha || row.created_at));
+    visibleMovements.forEach((row) => collectYear(row.fecha_movimiento || row.created_at));
+    visibleTrainingAssignments.forEach((row) => collectYear(row.completado_en || row.created_at));
     const dashboardYears = [...years].filter(Number.isFinite).sort((a, b) => a - b);
 
     const rulesByTaskId = new Map();
@@ -1369,7 +1389,7 @@ async function handleReadFootwearDashboard(request, response) {
       applyScoringRules(task, rulesByTaskId.get(Number(task.id)) || [])
     ]));
 
-    const safeWorkers = users.map((user) => ({
+    const safeWorkers = dashboardUsers.map((user) => ({
       id: Number(user.id),
       name: String(user.nombre || `Usuario ${user.id}`),
       alias: String(user.alias || user.nombre || `Usuario ${user.id}`),
@@ -1407,10 +1427,10 @@ async function handleReadFootwearDashboard(request, response) {
       };
     };
 
-    const incidentUserById = new Map(users.map((item) => [Number(item.id), item]));
+    const incidentUserById = new Map(dashboardUsers.map((item) => [Number(item.id), item]));
     const incidentAreaById = new Map(incidentAreas.map((item) => [Number(item.id), item]));
     const payrollYear = Number(currentLimaDate().slice(0, 4));
-    const payroll = buildDashboardPayroll(users, movements, [payrollYear], { normalizeRole });
+    const payroll = buildDashboardPayroll(dashboardUsers, visibleMovements, [payrollYear], { normalizeRole });
 
     response.setHeader("cache-control", "no-store, no-cache, must-revalidate");
     sendJson(response, 200, {
@@ -1430,14 +1450,14 @@ async function handleReadFootwearDashboard(request, response) {
       })),
       brands: brands.map((brand) => ({ id: Number(brand.id), name: String(brand.nombre || `Marca ${brand.id}`) })),
       activities: [
-        ...workerRecords.map((row) => normalizeActivity(row, "operante")),
-        ...leaderRecords.map((row) => normalizeActivity(row, "jefe-equipo"))
+        ...visibleWorkerRecords.map((row) => normalizeActivity(row, "operante")),
+        ...visibleLeaderRecords.map((row) => normalizeActivity(row, "jefe-equipo"))
       ].filter((row) => row.workerId && row.taskId && row.date),
-      attendances: attendances.map((row) => ({
+      attendances: visibleAttendances.map((row) => ({
         id: Number(row.id), workerId: Number(row.usuario_id), date: dashboardDate(row.fecha || row.created_at),
         state: String(row.estado || "FALTA").toUpperCase(), earlyExit: Boolean(row.retiro_anticipado)
       })).filter((row) => row.workerId && row.date),
-      incidents: incidents.map((row) => ({
+      incidents: visibleIncidents.map((row) => ({
         id: Number(row.id_error), workerId: Number(row.usuario_id) || null, taskId: Number(row.tarea_id),
         offenderName: String(row.es_trabajador
           ? incidentUserById.get(Number(row.usuario_id))?.nombre || `Usuario ${row.usuario_id}`
@@ -1448,13 +1468,13 @@ async function handleReadFootwearDashboard(request, response) {
         storeId: Number(row.tienda_id) || null,
         date: dashboardDate(row.fecha_error || row.created_at)
       })).filter((row) => row.date),
-      warnings: warnings.map((row) => ({
+      warnings: visibleWarnings.map((row) => ({
         id: Number(row.id),
         workerId: Number(row.usuario_id),
         date: dashboardDate(row.fecha || row.created_at),
         documentType: String(row.tipo_documento || "").trim().toUpperCase()
       })).filter((row) => row.workerId && row.date),
-      movements: movements.map((row) => ({
+      movements: visibleMovements.map((row) => ({
         id: Number(row.id), workerId: Number(row.usuario_id), type: String(row.tipo_movimiento || ""),
         reason: String(row.motivo || "Sin especificar"), date: dashboardDate(row.fecha_movimiento || row.created_at)
       })).filter((row) => row.date),
@@ -1466,7 +1486,7 @@ async function handleReadFootwearDashboard(request, response) {
           ? Number(row.numero_horas)
           : null
       })),
-      trainingAssignments: trainingAssignments.map((row) => ({
+      trainingAssignments: visibleTrainingAssignments.map((row) => ({
         id: Number(row.id), workerId: Number(row.usuario_id),
         trainingId: Number(row.capacitacion_id || row.curso_id),
         state: String(row.estado || (row.completado ? "finalizado" : "pendiente")).toLowerCase(),
@@ -1476,7 +1496,7 @@ async function handleReadFootwearDashboard(request, response) {
       payrollByWorker: payroll.byWorker,
       payrollWorkersByMonth: payroll.workersByMonth,
       dataQuality: {
-        activitiesWithoutStoredScore: [...workerRecords, ...leaderRecords]
+        activitiesWithoutStoredScore: [...visibleWorkerRecords, ...visibleLeaderRecords]
           .filter((row) => row.puntaje === null || row.puntaje === undefined).length
       }
     });
@@ -1980,9 +2000,19 @@ async function handleDeleteStore(request, response, storeId) {
 async function handleReadAmonestaciones(request, response) {
   try {
     if (!requireAdministrator(request, response)) return;
-    const result = await supabase.from("amonestaciones").select("*").order("created_at", { ascending: false });
-    if (result.error) throw result.error;
-    sendJson(response, 200, { amonestaciones: result.data || [] });
+    const [warningsResult, usersResult] = await Promise.all([
+      supabase.from("amonestaciones").select("*").order("created_at", { ascending: false }),
+      supabase.from("usuarios").select("id,rol")
+    ]);
+    if (warningsResult.error || usersResult.error) throw warningsResult.error || usersResult.error;
+    const allowedUserIds = new Set(
+      (usersResult.data || [])
+        .filter((user) => normalizeRole(user.rol) !== "administrador")
+        .map((user) => Number(user.id))
+    );
+    sendJson(response, 200, {
+      amonestaciones: (warningsResult.data || []).filter((warning) => allowedUserIds.has(Number(warning.usuario_id)))
+    });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron cargar las amonestaciones." });
   }
@@ -2019,10 +2049,14 @@ async function handleCreateAmonestacion(request, response) {
       return;
     }
 
-    const userResult = await supabase.from("usuarios").select("id,activo").eq("id", usuarioId).maybeSingle();
+    const userResult = await supabase.from("usuarios").select("id,activo,rol").eq("id", usuarioId).maybeSingle();
     if (userResult.error) throw userResult.error;
     if (!userResult.data || !isActive(userResult.data.activo)) {
       sendJson(response, 400, { error: "Selecciona un usuario activo." });
+      return;
+    }
+    if (normalizeRole(userResult.data.rol) === "administrador") {
+      sendJson(response, 400, { error: "El administrador no participa en las listas operativas." });
       return;
     }
 
@@ -3076,7 +3110,7 @@ async function loadGroupLeaderData() {
     // mismo. `workers`/`leaders` siguen restringidos para los selectores de
     // alta; esto es para poder mostrar y agrupar cualquier registro existente
     // (por ejemplo en el Ranking).
-    allUsers: users.map((item) => ({
+    allUsers: users.filter((item) => normalizeRole(item.rol) !== "administrador").map((item) => ({
       id: item.id,
       nombre: item.nombre,
       email: item.email,
