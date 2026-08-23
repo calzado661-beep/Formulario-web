@@ -133,6 +133,20 @@ export function getTaskFieldFlags(task) {
   };
 }
 
+// Las tareas creadas antes de incorporar esta configuracion siguen tratando
+// sus campos visibles como obligatorios. Asi no cambia su comportamiento.
+export function getTaskRequiredFlags(task) {
+  const required = (value) => value === undefined || value === null ? true : taskFlagEnabled(value);
+  return {
+    marca: required(task?.obligatorio_marca),
+    lote: required(task?.obligatorio_lote),
+    guia: required(task?.obligatorio_numero_guia),
+    hangtag: required(task?.obligatorio_hangtag),
+    tienda: required(task?.obligatorio_tienda),
+    tiempo: required(task?.obligatorio_tiempo)
+  };
+}
+
 // Una tarea pertenece al registro por tiempo del jefe de equipo cuando su
 // bandera `requiere_tiempo` esta activa.
 export function isGroupLeaderTimeTask(task) {

@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
-import { applyScoringRules, calculatePoints, getTaskFieldFlags } from "./src/lib/scoring.js";
+import { applyScoringRules, calculatePoints, getTaskFieldFlags, getTaskRequiredFlags } from "./src/lib/scoring.js";
 import { buildDashboardPayroll } from "./src/lib/dashboardMetrics.js";
 import {
   gmailConfiguration,
@@ -349,7 +349,13 @@ function taskPayloadForDb(body, tableName) {
         requiere_lote: body.requiere_lote,
         requiere_numero_guia: body.requiere_numero_guia,
         requiere_hangtag: body.requiere_hangtag,
-        requiere_tienda: body.requiere_tienda
+        requiere_tienda: body.requiere_tienda,
+        obligatorio_marca: body.obligatorio_marca,
+        obligatorio_tiempo: body.obligatorio_tiempo,
+        obligatorio_lote: body.obligatorio_lote,
+        obligatorio_numero_guia: body.obligatorio_numero_guia,
+        obligatorio_hangtag: body.obligatorio_hangtag,
+        obligatorio_tienda: body.obligatorio_tienda
       }
     : {
         nombre: taskName,
@@ -1401,14 +1407,10 @@ async function handleReadFootwearDashboard(request, response) {
     ]));
     const errorTaskById = new Map(errorTasks.map((task) => [Number(task.id), task]));
 
-    const dashboardWorkerName = (value, fallback) => {
-      const name = String(value || fallback);
-      return /^aaron\.o$/i.test(name.trim()) ? "Aaron Osorio" : name;
-    };
     const safeWorkers = dashboardUsers.map((user) => ({
       id: Number(user.id),
-      name: dashboardWorkerName(user.nombre, `Usuario ${user.id}`),
-      alias: dashboardWorkerName(user.alias || user.nombre, `Usuario ${user.id}`),
+      name: String(user.nombre || `Usuario ${user.id}`),
+      alias: String(user.alias || user.nombre || `Usuario ${user.id}`),
       role: normalizeRole(user.rol) || "otros",
       active: isActive(user.activo),
       joinedAt: dashboardDate(user.fecha_ingreso || user.created_at),
@@ -2854,8 +2856,10 @@ async function handleCreateActivityLog(request, response) {
     const storesQuantity = !scoringTypes.has("fijo") && !scoringTypes.has("turno") &&
       !["fijo", "turno", "cumplimiento"].includes(requestedType);
     const taskFields = getTaskFieldFlags(taskResult.data);
+    const requiredFields = getTaskRequiredFlags(taskResult.data);
     const isTimeTask = taskFields.tiempo;
-    const requiresStore = taskFields.tienda;
+    const allowsStore = taskFields.tienda;
+    const requiresStore = allowsStore && requiredFields.tienda;
     const allowsBrands = taskFields.marca;
     const allowsGuideNumber = taskFields.guia;
     const allowsLote = taskFields.lote;
@@ -2887,12 +2891,24 @@ async function handleCreateActivityLog(request, response) {
       sendJson(response, 400, { error: "El número de guía no está disponible para esta tarea." });
       return;
     }
-    if (taskFields.hangtag && !tipoEtiquetado) {
+    if (taskFields.hangtag && requiredFields.hangtag && !tipoEtiquetado) {
       sendJson(response, 400, { error: `Indica si ${taskTitle(taskResult.data)} va con hangtag o sin hangtag.` });
       return;
     }
     if (!taskFields.hangtag && tipoEtiquetado) {
       sendJson(response, 400, { error: `El hangtag no esta disponible para ${taskTitle(taskResult.data)}.` });
+      return;
+    }
+    if (taskFields.marca && requiredFields.marca && !singleBrandId && !brandItems.length) {
+      sendJson(response, 400, { error: `Selecciona una marca para ${taskTitle(taskResult.data)}.` });
+      return;
+    }
+    if (taskFields.lote && requiredFields.lote && !lote) {
+      sendJson(response, 400, { error: `Ingresa un lote para ${taskTitle(taskResult.data)}.` });
+      return;
+    }
+    if (taskFields.guia && requiredFields.guia && !singleGuideNumber && !guideItems.length) {
+      sendJson(response, 400, { error: `Ingresa el numero de guia para ${taskTitle(taskResult.data)}.` });
       return;
     }
     if (brandItems.length && guideItems.length) {
@@ -2921,7 +2937,7 @@ async function handleCreateActivityLog(request, response) {
       cantidad: requestedQuantity,
       turno: body.turno ? String(body.turno).trim() : null,
       cumplimiento: body.cumplimiento === undefined ? null : Boolean(body.cumplimiento),
-      tienda_id: requiresStore ? nullableNumber(body.tienda_id) : null,
+      tienda_id: allowsStore ? nullableNumber(body.tienda_id) : null,
       numero_guia: singleGuideNumber || null,
       marca_id: singleBrandId,
       tipo_etiquetado: tipoEtiquetado,
@@ -3386,8 +3402,11 @@ async function handleCreateGroupLeaderRecordLegacy(request, response) {
     // Los datos adicionales salen de las banderas de la tarea, igual que en el
     // registro del operante.
     const legacyFields = getTaskFieldFlags(taskResult.data);
-    const requiresBrand = legacyFields.marca;
-    const requiresStore = legacyFields.tienda;
+    const legacyRequired = getTaskRequiredFlags(taskResult.data);
+    const allowsBrand = legacyFields.marca;
+    const allowsStore = legacyFields.tienda;
+    const requiresBrand = allowsBrand && legacyRequired.marca;
+    const requiresStore = allowsStore && legacyRequired.tienda;
     const requestedBrandId = nullableNumber(body.marca_id);
     const requestedStoreId = nullableNumber(body.tienda_id);
 
@@ -3395,7 +3414,7 @@ async function handleCreateGroupLeaderRecordLegacy(request, response) {
       sendJson(response, 400, { error: `Selecciona una marca para ${taskTitle(taskResult.data)}.` });
       return;
     }
-    if (!requiresBrand && requestedBrandId) {
+    if (!allowsBrand && requestedBrandId) {
       sendJson(response, 400, { error: "La marca solo esta disponible para la tarea Etiquetado." });
       return;
     }
@@ -3403,7 +3422,7 @@ async function handleCreateGroupLeaderRecordLegacy(request, response) {
       sendJson(response, 400, { error: `Selecciona una tienda para ${taskTitle(taskResult.data)}.` });
       return;
     }
-    if (!requiresStore && requestedStoreId) {
+    if (!allowsStore && requestedStoreId) {
       sendJson(response, 400, { error: "La tienda no esta disponible para esta tarea." });
       return;
     }
@@ -3586,18 +3605,20 @@ export function groupLeaderRecordTiming(horaInicio, horaFin, { now = Date.now() 
 
 async function validateGroupRecordMetadata(body, task, current = null) {
   const fields = getTaskFieldFlags(task);
+  const required = getTaskRequiredFlags(task);
   const marcaId = nullableNumber(body.marca_id);
   const tiendaId = nullableNumber(body.tienda_id);
   const lote = String(body.lote || "").trim().toUpperCase() || null;
   const tipoEtiquetado = normalizeGroupHangtag(body.tipo_etiquetado);
   const observacion = String(body.detalle ?? body.observacion ?? "").trim() || null;
 
-  if (fields.marca && !marcaId) throw invalidGroupRecord(`Selecciona una marca para ${taskTitle(task)}.`);
+  if (fields.marca && required.marca && !marcaId) throw invalidGroupRecord(`Selecciona una marca para ${taskTitle(task)}.`);
   if (!fields.marca && marcaId) throw invalidGroupRecord(`La marca no esta disponible para ${taskTitle(task)}.`);
   if (!fields.lote && lote) throw invalidGroupRecord(`El lote no esta disponible para ${taskTitle(task)}.`);
-  if (fields.hangtag && !tipoEtiquetado) throw invalidGroupRecord(`Indica si ${taskTitle(task)} va con hangtag o sin hangtag.`);
+  if (fields.lote && required.lote && !lote) throw invalidGroupRecord(`Ingresa un lote para ${taskTitle(task)}.`);
+  if (fields.hangtag && required.hangtag && !tipoEtiquetado) throw invalidGroupRecord(`Indica si ${taskTitle(task)} va con hangtag o sin hangtag.`);
   if (!fields.hangtag && tipoEtiquetado) throw invalidGroupRecord(`El hangtag no esta disponible para ${taskTitle(task)}.`);
-  if (fields.tienda && !tiendaId) throw invalidGroupRecord(`Selecciona una tienda para ${taskTitle(task)}.`);
+  if (fields.tienda && required.tienda && !tiendaId) throw invalidGroupRecord(`Selecciona una tienda para ${taskTitle(task)}.`);
   if (!fields.tienda && tiendaId) throw invalidGroupRecord(`La tienda no esta disponible para ${taskTitle(task)}.`);
   if (lote && lote.length > 100) throw invalidGroupRecord("El codigo de lote no puede superar 100 caracteres.");
   if (observacion && observacion.length > 1000) throw invalidGroupRecord("El detalle no puede superar 1,000 caracteres.");
@@ -3974,7 +3995,9 @@ async function handleCreateLiveGroupLeaderActivity(request, response) {
     }
 
     const liveFields = getTaskFieldFlags(task);
-    const requiresStore = liveFields.tienda;
+    const liveRequired = getTaskRequiredFlags(task);
+    const allowsStore = liveFields.tienda;
+    const requiresStore = allowsStore && liveRequired.tienda;
     const tiendaId = nullableNumber(body.tienda_id);
     const guideNumber = String(body.numero_guia || body.codigo_guia || "").trim();
     if (requiresStore && !tiendaId) {
@@ -4003,7 +4026,7 @@ async function handleCreateLiveGroupLeaderActivity(request, response) {
       numero_guia: guideNumber || null,
       lote: null,
       marca_id: null,
-      tienda_id: requiresStore ? tiendaId : null,
+      tienda_id: allowsStore ? tiendaId : null,
       observacion: String(body.observacion || body.detalle || "").trim() || null,
       estado: "EN_CURSO",
       updated_at: new Date().toISOString()
@@ -4063,6 +4086,7 @@ async function handleUpdateLiveGroupLeaderActivity(request, response, activityId
       return;
     }
     const fields = getTaskFieldFlags(task);
+    const required = getTaskRequiredFlags(task);
     const supportsMetadata = fields.marca || fields.lote;
     const hasBrandField = Object.hasOwn(body, "marca_id");
     const hasLoteField = Object.hasOwn(body, "lote");
@@ -4113,6 +4137,14 @@ async function handleUpdateLiveGroupLeaderActivity(request, response, activityId
       return;
     }
     const finishRequested = Boolean(body.finalizar) || Boolean(body.hora_fin);
+    if (finishRequested && fields.marca && required.marca && !marcaId) {
+      sendJson(response, 400, { error: `Selecciona una marca para ${taskTitle(task)}.` });
+      return;
+    }
+    if (finishRequested && fields.lote && required.lote && !lote) {
+      sendJson(response, 400, { error: `Ingresa un lote para ${taskTitle(task)}.` });
+      return;
+    }
     if (metadataOnly && finishRequested) {
       sendJson(response, 400, { error: "Guarda los datos o finaliza la actividad, pero no ambas acciones en modo solo datos." });
       return;

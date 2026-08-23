@@ -27,6 +27,7 @@ import { downloadCsv } from "../lib/csv";
 import {
   getGroupLeaderTaskMode,
   getTaskFieldFlags,
+  getTaskRequiredFlags,
   getTaskTitle,
   isGroupLeaderTimeTask,
   normalizeMeasurementType,
@@ -833,9 +834,11 @@ function GroupTimeDashboard({ user }) {
       return { error: "La hora de inicio no puede estar en el futuro." };
     }
     const fields = getTaskFieldFlags(task);
-    if (fields.marca && !draft.marca_id) return { error: `Selecciona una marca para ${getTaskTitle(task)}.` };
-    if (fields.tienda && !draft.tienda_id) return { error: `Selecciona una tienda para ${getTaskTitle(task)}.` };
-    if (fields.hangtag && !draft.tipo_etiquetado) {
+    const required = getTaskRequiredFlags(task);
+    if (fields.marca && required.marca && !draft.marca_id) return { error: `Selecciona una marca para ${getTaskTitle(task)}.` };
+    if (fields.tienda && required.tienda && !draft.tienda_id) return { error: `Selecciona una tienda para ${getTaskTitle(task)}.` };
+    if (fields.lote && required.lote && !String(draft.lote || "").trim()) return { error: `Ingresa un lote para ${getTaskTitle(task)}.` };
+    if (fields.hangtag && required.hangtag && !draft.tipo_etiquetado) {
       return { error: `Indica si ${getTaskTitle(task)} va con hangtag o sin hangtag.` };
     }
     const base = {
@@ -1467,6 +1470,7 @@ function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, 
   const mine = String(activity.encargado_id) === String(currentUserId);
   const task = tasks.find((item) => String(item.id) === String(activity.tarea_id)) || { nombre: activity.tarea_nombre };
   const fields = getTaskFieldFlags(task);
+  const required = getTaskRequiredFlags(task);
   const usesBrand = fields.marca;
   const usesLote = fields.lote;
   const minFinishDate = recordDateInput(activity);
@@ -1493,8 +1497,12 @@ function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, 
       onStatus({ type: "error", message: `La hora fin de la actividad #${activity.id} debe ser posterior al inicio y no puede estar en el futuro.` });
       return;
     }
-    if (usesBrand && !draft.marca_id) {
+    if (usesBrand && required.marca && !draft.marca_id) {
       onStatus({ type: "error", message: `Selecciona la marca para finalizar la actividad #${activity.id}.` });
+      return;
+    }
+    if (usesLote && required.lote && !String(draft.lote || "").trim()) {
+      onStatus({ type: "error", message: `Ingresa el lote para finalizar la actividad #${activity.id}.` });
       return;
     }
     setBusy(true);

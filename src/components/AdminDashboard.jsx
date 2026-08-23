@@ -60,6 +60,7 @@ import {
   normalizeText,
   quantityRangesFromRules,
   getTaskFieldFlags,
+  getTaskRequiredFlags,
   validateQuantityRanges
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
@@ -74,6 +75,7 @@ import {
   Metric,
   Panel,
   SelectInput,
+  SwitchInput,
   Tabs,
   TextArea,
   TextInput
@@ -1534,6 +1536,12 @@ function defaultTaskForm() {
     requiere_numero_guia: false,
     requiere_hangtag: false,
     requiere_tienda: false,
+    obligatorio_marca: true,
+    obligatorio_tiempo: true,
+    obligatorio_lote: true,
+    obligatorio_numero_guia: true,
+    obligatorio_hangtag: true,
+    obligatorio_tienda: true,
     ranges: emptyQuantityRanges(),
     puntaje_fijo: 1,
     puntaje_turno_simple: 1,
@@ -1544,13 +1552,20 @@ function defaultTaskForm() {
 // Lee las banderas guardadas en Supabase para precargar el formulario.
 function getTaskFieldFlagsForm(task) {
   const flags = getTaskFieldFlags(task);
+  const required = getTaskRequiredFlags(task);
   return {
     requiere_marca: flags.marca,
     requiere_tiempo: flags.tiempo,
     requiere_lote: flags.lote,
     requiere_numero_guia: flags.guia,
     requiere_hangtag: flags.hangtag,
-    requiere_tienda: flags.tienda
+    requiere_tienda: flags.tienda,
+    obligatorio_marca: required.marca,
+    obligatorio_tiempo: required.tiempo,
+    obligatorio_lote: required.lote,
+    obligatorio_numero_guia: required.guia,
+    obligatorio_hangtag: required.hangtag,
+    obligatorio_tienda: required.tienda
   };
 }
 
@@ -1571,7 +1586,13 @@ function taskPayloadFromForm(form) {
     requiere_lote: Boolean(form.requiere_lote),
     requiere_numero_guia: Boolean(form.requiere_numero_guia),
     requiere_hangtag: Boolean(form.requiere_hangtag),
-    requiere_tienda: Boolean(form.requiere_tienda)
+    requiere_tienda: Boolean(form.requiere_tienda),
+    obligatorio_marca: Boolean(form.obligatorio_marca),
+    obligatorio_tiempo: Boolean(form.obligatorio_tiempo),
+    obligatorio_lote: Boolean(form.obligatorio_lote),
+    obligatorio_numero_guia: Boolean(form.obligatorio_numero_guia),
+    obligatorio_hangtag: Boolean(form.obligatorio_hangtag),
+    obligatorio_tienda: Boolean(form.obligatorio_tienda)
   };
 }
 
@@ -1906,44 +1927,40 @@ function TaskForm({ form, setForm, onSubmit, saving, submitLabel }) {
           placeholder="Pares, cajas, bultos o Ninguna"
         />
         <CheckboxInput label="Tarea activa" checked={form.activo} onChange={(activo) => setForm({ ...form, activo })} />
-        <CheckboxInput
-          label="Requiere marca"
-          checked={form.requiere_marca}
-          onChange={(requiere_marca) => setForm({ ...form, requiere_marca })}
-        />
-        <CheckboxInput
-          label="Requiere tiempo"
-          checked={form.requiere_tiempo}
-          onChange={(requiere_tiempo) => setForm({ ...form, requiere_tiempo })}
-          hint="Solo el jefe de equipo registra el tiempo de estas tareas."
-        />
-        <CheckboxInput
-          label="Requiere lote"
-          checked={form.requiere_lote}
-          onChange={(requiere_lote) => setForm({ ...form, requiere_lote })}
-        />
-        <CheckboxInput
-          label="Requiere numero de guia"
-          checked={form.requiere_numero_guia}
-          onChange={(requiere_numero_guia) => setForm({ ...form, requiere_numero_guia })}
-        />
-        <CheckboxInput
-          label="Requiere hangtag"
-          checked={form.requiere_hangtag}
-          onChange={(requiere_hangtag) => setForm({ ...form, requiere_hangtag })}
-          hint="Muestra el selector con hangtag / sin hangtag."
-        />
-        <CheckboxInput
-          label="Requiere tienda"
-          checked={form.requiere_tienda}
-          onChange={(requiere_tienda) => setForm({ ...form, requiere_tienda })}
-        />
+        <TaskFieldControl form={form} setForm={setForm} label="Marca" requestedKey="requiere_marca" requiredKey="obligatorio_marca" />
+        <TaskFieldControl form={form} setForm={setForm} label="Tiempo" requestedKey="requiere_tiempo" requiredKey="obligatorio_tiempo" hint="Solo el jefe de equipo registra el tiempo de estas tareas." />
+        <TaskFieldControl form={form} setForm={setForm} label="Lote" requestedKey="requiere_lote" requiredKey="obligatorio_lote" />
+        <TaskFieldControl form={form} setForm={setForm} label="Número de guía" requestedKey="requiere_numero_guia" requiredKey="obligatorio_numero_guia" />
+        <TaskFieldControl form={form} setForm={setForm} label="Hangtag" requestedKey="requiere_hangtag" requiredKey="obligatorio_hangtag" hint="Muestra el selector con hangtag / sin hangtag." />
+        <TaskFieldControl form={form} setForm={setForm} label="Tienda" requestedKey="requiere_tienda" requiredKey="obligatorio_tienda" />
       </div>
       <ScoreFields form={form} setForm={setForm} />
       <div className="form-actions">
         <Button type="submit" icon={Save} loading={saving}>{submitLabel}</Button>
       </div>
     </form>
+  );
+}
+
+function TaskFieldControl({ form, setForm, label, requestedKey, requiredKey, hint }) {
+  const requested = Boolean(form[requestedKey]);
+  return (
+    <div className={`task-field-control${requested ? " enabled" : ""}`}>
+      <CheckboxInput
+        label={`Pedir ${label.toLowerCase()}`}
+        checked={requested}
+        onChange={(checked) => setForm({ ...form, [requestedKey]: checked })}
+        hint={hint}
+      />
+      <SwitchInput
+        label="Ingreso de datos"
+        checked={Boolean(form[requiredKey])}
+        disabled={!requested}
+        onChange={(checked) => setForm({ ...form, [requiredKey]: checked })}
+        onLabel="Obligatorio"
+        offLabel="Opcional"
+      />
+    </div>
   );
 }
 

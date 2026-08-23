@@ -41,36 +41,6 @@ const CURRENT_LIMA_MONTH = CURRENT_LIMA_PARTS.month;
 const PREVIOUS_LIMA_MONTH = CURRENT_LIMA_MONTH === 1 ? 12 : CURRENT_LIMA_MONTH - 1;
 const PREVIOUS_LIMA_MONTH_YEAR = CURRENT_LIMA_MONTH === 1 ? CURRENT_LIMA_YEAR - 1 : CURRENT_LIMA_YEAR;
 
-const INCIDENT_RECORDS = [
-  [72, "luis.v", 14, "Cargar Bultos", "Liberado", "regular", 26],
-  [63, "danny.a", 3, "Etiquetado", "Contenido", "extra", 26],
-  [63, "danny.a", 8, "Picking", "Liberado", "extra", 25],
-  [75, "alexander.r", 2, "Clasificado", "Contenido", "regular", 25],
-  [63, "danny.a", 14, "Cargar Bultos", "Contenido", "extra", 27],
-  [75, "alexander.r", 3, "Etiquetado", "Contenido", "regular", 28],
-  [75, "alexander.r", 8, "Picking", "Contenido", "regular", 27],
-  [72, "luis.v", 2, "Clasificado", "Liberado", "regular", 27],
-  [63, "danny.a", 2, "Clasificado", "Contenido", "regular", 20],
-  [75, "alexander.r", 14, "Cargar Bultos", "Contenido", "regular", 23],
-  [72, "luis.v", 8, "Picking", "Contenido", "extra", 23],
-  [72, "luis.v", 3, "Etiquetado", "Liberado", "regular", 23],
-  [75, "alexander.r", 14, "Cargar Bultos", "Contenido", "regular", 24],
-  [72, "luis.v", 3, "Etiquetado", "Contenido", "regular", 25],
-  [63, "danny.a", 2, "Clasificado", "Contenido", "regular", 24],
-  [72, "luis.v", 8, "Picking", "Liberado", "extra", 24]
-].map(([workerId, workerAlias, taskId, taskName, errorType, shift, day]) => ({ workerId, workerAlias, taskId, taskName, errorType, shift, day }));
-
-const WARNINGS = [
-  { alias: "saul.m", value: 2 },
-  { alias: "usuario.o", value: 1 },
-  { alias: "danny.a", value: 1 },
-  { alias: "marlon.v", value: 1 },
-  { alias: "estefani.o", value: 1 },
-  { alias: "daniel.c", value: 1 },
-  { alias: "alexandra.p", value: 1 },
-  { alias: "Aaron Osorio", value: 1 }
-];
-
 const STAFF_ROTATION = [
   { name: "Ene", primary: 11, secondary: 10 },
   { name: "Feb", primary: 8, secondary: 1 },
@@ -96,20 +66,6 @@ const EXIT_REASONS = [
   { name: "Mal desempeño", value: 3 }
 ];
 
-const ATTENDANCE_BY_WORKER = [
-  { name: "sair.r", absent: 5, punctual: 10, late: 4 },
-  { name: "alexander.r", absent: 0, punctual: 14, late: 2 },
-  { name: "luis.v", absent: 0, punctual: 12, late: 1 },
-  { name: "jafet.p", absent: 3, punctual: 5, late: 1, augustPunctual: 1 },
-  { name: "saul.m", absent: 3, punctual: 6, late: 2, augustPunctual: 1 },
-  { name: "giancarlos.t", absent: 2, punctual: 5, late: 1 },
-  { name: "Aaron Osorio", absent: 4, punctual: 2, late: 0, augustPunctual: 1 },
-  { name: "dylan.v", absent: 0, punctual: 10, late: 1 },
-  { name: "renzo.c", absent: 3, punctual: 1, late: 0 },
-  { name: "sebastian.a", absent: 5, punctual: 0, late: 0 },
-  { name: "alexandra.p", absent: 1, punctual: 1, late: 0, augustPunctual: 1 }
-];
-
 const TRAINING_COURSES = [
   { id: 1, course: "Power BI Básico", competence: "Análisis de Datos", hours: 16 },
   { id: 2, course: "Power BI Intermedio", competence: "Business Intelligence", hours: 20 },
@@ -133,18 +89,6 @@ const PENDING_TRAINING_BY_WORKER = {
   76: [7],
   77: []
 };
-
-const TRAINING_PROGRESS_BY_WORKER = [
-  { workerId: 69, name: "saul.m", completed: 5, pending: 2 },
-  { workerId: 70, name: "jafet.p", completed: 7, pending: 0 },
-  { workerId: 71, name: "renzo.c", completed: 6, pending: 1 },
-  { workerId: 72, name: "luis.v", completed: 7, pending: 0 },
-  { workerId: 73, name: "sair.r", completed: 7, pending: 0 },
-  { workerId: 74, name: "giancarlos.t", completed: 7, pending: 0 },
-  { workerId: 75, name: "alexander.r", completed: 3, pending: 4 },
-  { workerId: 76, name: "dylan.v", completed: 6, pending: 1 },
-  { workerId: 77, name: "sebastian.a", completed: 7, pending: 0 }
-];
 
 const BRAND_PAIRS = [
   { name: "Under Armour", value: 56 },

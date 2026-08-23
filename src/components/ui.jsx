@@ -178,6 +178,29 @@ export function CheckboxInput({ label, checked, onChange, hint, disabled = false
   );
 }
 
+export function SwitchInput({ label, checked, onChange, hint, disabled = false, onLabel = "Obligatorio", offLabel = "No obligatorio" }) {
+  return (
+    <label className={`switch-row ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}`}>
+      <span className="switch-copy">
+        <strong>{label}</strong>
+        {hint ? <small>{hint}</small> : null}
+      </span>
+      <span className="switch-control">
+        <input
+          type="checkbox"
+          role="switch"
+          checked={checked}
+          disabled={disabled}
+          onChange={(event) => onChange?.(event.target.checked)}
+          aria-label={`${label}: ${checked ? onLabel : offLabel}`}
+        />
+        <span className="switch-track" aria-hidden="true"><i /></span>
+        <b>{checked ? onLabel : offLabel}</b>
+      </span>
+    </label>
+  );
+}
+
 export function Tabs({ tabs, active, onChange }) {
   return (
     <div className="tabs" role="tablist">

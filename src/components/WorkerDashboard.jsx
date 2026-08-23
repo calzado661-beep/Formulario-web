@@ -19,6 +19,7 @@ import {
   FULL_SHIFT,
   getActivityCaptureMode,
   getTaskFieldFlags,
+  getTaskRequiredFlags,
   getTaskTitle,
   isGroupLeaderTimeTask,
   isFullShift,
@@ -141,7 +142,7 @@ function RegisterActivity({ user }) {
           ? {
               ...emptyRecord(),
               taskKey,
-              usaGuias: recordFieldFlags(task).guia && taskSplitsQuantity(task)
+              usaGuias: recordFieldFlags(task).guia && getTaskRequiredFlags(task).guia && taskSplitsQuantity(task)
             }
           : record
       )
@@ -177,6 +178,7 @@ function RegisterActivity({ user }) {
     const type = recordCaptureType(task);
     const unit = task?.unidad_medida || task?.unidad_base || task?.unidad || fallbackUnit;
     const flags = recordFieldFlags(task);
+    const required = getTaskRequiredFlags(task);
     const splitsQuantity = taskSplitsQuantity(task);
     const guias = flags.guia && splitsQuantity && record.usaGuias
       ? record.guias.map((item) => ({ numero_guia: String(item.numero_guia || "").trim(), cantidad: Number(item.cantidad) }))
@@ -228,6 +230,7 @@ function RegisterActivity({ user }) {
       turno,
       guias,
       flags,
+      required,
       splitsQuantity,
       marcaId,
       numeroGuia,
@@ -249,7 +252,10 @@ function RegisterActivity({ user }) {
       seen.add(record.taskKey);
 
       const shape = recordPayloadShape(record);
-      if (shape.usesStore && !stores.some((store) => String(store.id) === String(record.tiendaId))) {
+      if (shape.usesStore && shape.required.tienda && !record.tiendaId) {
+        return `Selecciona una tienda para ${shape.title}.`;
+      }
+      if (shape.usesStore && record.tiendaId && !stores.some((store) => String(store.id) === String(record.tiendaId))) {
         return `Selecciona una tienda valida para ${shape.title}.`;
       }
       if (shape.guias.length) {
@@ -261,11 +267,17 @@ function RegisterActivity({ user }) {
           return `No puedes repetir un número de guía en ${shape.title}.`;
         }
       }
-      if (shape.flags.hangtag && !shape.tipoEtiquetado) {
+      if (shape.flags.hangtag && shape.required.hangtag && !shape.tipoEtiquetado) {
         return `Indica si ${shape.title} va con hangtag o sin hangtag.`;
       }
-      if (shape.flags.marca && !shape.marcaId) {
+      if (shape.flags.marca && shape.required.marca && !shape.marcaId) {
         return `Selecciona una marca para ${shape.title}.`;
+      }
+      if (shape.flags.lote && shape.required.lote && !shape.lote) {
+        return `Ingresa un lote para ${shape.title}.`;
+      }
+      if (shape.flags.guia && shape.required.guia && !shape.guias.length && !shape.numeroGuia) {
+        return `Ingresa el número de guía para ${shape.title}.`;
       }
       if (shape.type === "cantidad" && !shape.guias.length && (record.cantidad === "" || Number(record.cantidad) < 0)) {
         return `Ingresa una cantidad valida para ${shape.title}.`;

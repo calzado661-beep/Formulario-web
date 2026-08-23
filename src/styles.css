@@ -871,6 +871,125 @@ input:-webkit-autofill:focus {
   cursor: not-allowed;
 }
 
+.switch-row {
+  display: flex;
+  min-height: 76px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(222, 238, 226, 0.065);
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.switch-row.checked {
+  border-color: rgba(45, 212, 191, 0.42);
+  background: rgba(45, 212, 191, 0.09);
+}
+
+.switch-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.2rem;
+}
+
+.switch-copy small {
+  color: var(--muted);
+}
+
+.switch-control {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  gap: 0.25rem;
+}
+
+.switch-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.switch-track {
+  position: relative;
+  width: 50px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.switch-track i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+
+.switch-row.checked .switch-track {
+  border-color: var(--accent);
+  background: rgba(45, 212, 191, 0.28);
+}
+
+.switch-row.checked .switch-track i {
+  background: var(--accent);
+  transform: translateX(22px);
+}
+
+.switch-control b {
+  color: var(--muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.switch-row.checked .switch-control b {
+  color: var(--accent);
+}
+
+.switch-row:has(input:focus-visible) {
+  outline: 3px solid rgba(45, 212, 191, 0.3);
+  outline-offset: 2px;
+}
+
+.switch-row.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.task-field-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.75fr);
+  gap: 0.55rem;
+  padding: 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(7, 19, 16, 0.28);
+}
+
+.task-field-control.enabled {
+  border-color: rgba(45, 212, 191, 0.32);
+}
+
+.task-field-control .check-row,
+.task-field-control .switch-row {
+  min-height: 72px;
+}
+
+@media (max-width: 700px) {
+  .task-field-control {
+    grid-template-columns: 1fr;
+  }
+}
+
 .alert {
   display: grid;
   grid-template-columns: 20px 1fr;
