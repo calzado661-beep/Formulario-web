@@ -68,7 +68,7 @@ const WARNINGS = [
   { alias: "estefani.o", value: 1 },
   { alias: "daniel.c", value: 1 },
   { alias: "alexandra.p", value: 1 },
-  { alias: "aaron.o", value: 1 }
+  { alias: "Aaron Osorio", value: 1 }
 ];
 
 const STAFF_ROTATION = [
@@ -103,7 +103,7 @@ const ATTENDANCE_BY_WORKER = [
   { name: "jafet.p", absent: 3, punctual: 5, late: 1, augustPunctual: 1 },
   { name: "saul.m", absent: 3, punctual: 6, late: 2, augustPunctual: 1 },
   { name: "giancarlos.t", absent: 2, punctual: 5, late: 1 },
-  { name: "aaron.o", absent: 4, punctual: 2, late: 0, augustPunctual: 1 },
+  { name: "Aaron Osorio", absent: 4, punctual: 2, late: 0, augustPunctual: 1 },
   { name: "dylan.v", absent: 0, punctual: 10, late: 1 },
   { name: "renzo.c", absent: 3, punctual: 1, late: 0 },
   { name: "sebastian.a", absent: 5, punctual: 0, late: 0 },

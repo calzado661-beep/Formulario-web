@@ -197,6 +197,7 @@ function UsersPanel() {
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [createForm, setCreateForm] = useState({
     nombre: "",
     email: "",
@@ -240,6 +241,15 @@ function UsersPanel() {
       ...personalDataFromUser(selectedUser)
     });
   }, [selectedUser?.id]);
+
+  useEffect(() => {
+    if (!confirmingDelete) return undefined;
+    function closeOnEscape(event) {
+      if (event.key === "Escape" && !saving) setConfirmingDelete(false);
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [confirmingDelete, saving]);
 
   async function handleCreate(event) {
     event.preventDefault();
@@ -342,6 +352,7 @@ function UsersPanel() {
     setSaving(true);
     try {
       const result = await deleteUser(selectedUser.id);
+      setConfirmingDelete(false);
       setEditId("");
       setStatus({
         type: result?.archived ? "warning" : "success",
@@ -521,12 +532,37 @@ function UsersPanel() {
             {tab === "Eliminar" && selectedUser ? (
               <div className="danger-zone">
                 <p>Eliminaras a {selectedUser.email}. Esta accion depende de las reglas de la base de datos.</p>
-                <Button variant="danger" icon={Trash2} loading={saving} onClick={handleDelete}>Eliminar usuario</Button>
+                <Button variant="danger" icon={Trash2} loading={saving} onClick={() => setConfirmingDelete(true)}>Eliminar usuario</Button>
               </div>
             ) : null}
           </div>
         ) : null}
       </Panel>
+      {confirmingDelete && selectedUser ? (
+        <div
+          className="delete-confirm-overlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !saving) setConfirmingDelete(false);
+          }}
+        >
+          <section className="delete-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-user-title" aria-describedby="delete-user-description">
+            <span className="delete-confirm-icon" aria-hidden="true"><AlertTriangle /></span>
+            <div className="delete-confirm-copy">
+              <p className="eyebrow">Confirmar eliminación</p>
+              <h2 id="delete-user-title">¿Eliminar este usuario?</h2>
+              <p id="delete-user-description">
+                Vas a eliminar a <strong>{selectedUser.nombre || selectedUser.email}</strong> ({selectedUser.email}).
+                Si tiene historial relacionado, se desactivará para conservar sus registros.
+              </p>
+            </div>
+            <div className="delete-confirm-actions">
+              <Button variant="secondary" disabled={saving} onClick={() => setConfirmingDelete(false)}>Cancelar</Button>
+              <Button variant="danger" icon={Trash2} loading={saving} onClick={handleDelete}>Sí, eliminar</Button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1988,14 +2024,14 @@ function ScoreFields({ form, setForm }) {
 }
 
 const attendanceStateOptions = [
-  { value: "FALTA", label: "Falta" },
-  { value: "ASISTENCIA", label: "Asistencia" },
-  { value: "TARDANZA", label: "Tardanza" },
-  { value: "MEDIO_TURNO", label: "Medio turno" },
-  { value: "APOYO", label: "Apoyo" },
-  { value: "PERMISO", label: "Permiso" },
-  { value: "DESCANSO_MEDICO", label: "Descanso Médico" },
-  { value: "SUSPENSION", label: "Suspensión" }
+  { value: "FALTA", label: "Falta", abbreviation: "F" },
+  { value: "ASISTENCIA", label: "Asistencia", abbreviation: "A" },
+  { value: "TARDANZA", label: "Tardanza", abbreviation: "AT" },
+  { value: "MEDIO_TURNO", label: "Medio turno", abbreviation: "MT" },
+  { value: "APOYO", label: "Apoyo", abbreviation: "TDA" },
+  { value: "PERMISO", label: "Permiso", abbreviation: "P" },
+  { value: "DESCANSO_MEDICO", label: "Descanso Médico", abbreviation: "DM" },
+  { value: "SUSPENSION", label: "Suspensión", abbreviation: "S" }
 ];
 const ATTENDANCE_PRESENT_STATES = new Set(["ASISTENCIA", "TARDANZA", "MEDIO_TURNO", "APOYO"]);
 
@@ -2008,6 +2044,8 @@ function AttendancePanel() {
   const [workerStatusFilter, setWorkerStatusFilter] = useState("activos");
   const [workerSearch, setWorkerSearch] = useState("");
   const [historyUserId, setHistoryUserId] = useState("todos");
+  const [historyMonth, setHistoryMonth] = useState("todos");
+  const [historyDay, setHistoryDay] = useState("todos");
   const [historyWorkerStatus, setHistoryWorkerStatus] = useState("todos");
   const [historyDateOrder, setHistoryDateOrder] = useState("desc");
   const [attendanceValues, setAttendanceValues] = useState({});
@@ -2048,7 +2086,7 @@ function AttendancePanel() {
     const currentMap = Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.estado || "FALTA").toUpperCase()]));
     const nextValues = {};
     (data.workers || []).forEach((worker) => {
-      nextValues[worker.id] = currentMap[worker.id] || "FALTA";
+      nextValues[worker.id] = currentMap[worker.id] || "";
     });
     setAttendanceValues(nextValues);
   }, [data.current, data.workers]);
@@ -2075,7 +2113,7 @@ function AttendancePanel() {
     { value: "inactivos", label: `Inactivos (${inactiveWorkersCount})` },
     { value: "todos", label: `Todos (${workers.length})` }
   ];
-  const markedCount = statusFilteredWorkers.filter((worker) => (attendanceValues[worker.id] || "FALTA") !== "FALTA").length;
+  const markedCount = statusFilteredWorkers.filter((worker) => Boolean(attendanceValues[worker.id])).length;
 
   function markWorker(worker, estado) {
     setAttendanceValues((current) => ({ ...current, [worker.id]: estado }));
@@ -2119,9 +2157,22 @@ function AttendancePanel() {
   const historyUsers = [...historyPeople].sort((left, right) =>
     String(left.nombre || left.email || "").localeCompare(String(right.nombre || right.email || ""), "es")
   );
+  const historyUsersForStatus = historyUsers.filter((worker) => {
+    if (historyWorkerStatus === "todos") return true;
+    return historyWorkerStatus === "activos" ? boolValue(worker.activo) : !boolValue(worker.activo);
+  });
+  const historyRecords = (data.attendances || []).filter((item) => !administratorIds.has(Number(item.usuario_id)));
+  const historyMonths = [...new Set(
+    historyRecords.map((item) => String(item.fecha || "").slice(0, 7)).filter((value) => /^\d{4}-\d{2}$/.test(value))
+  )].sort((left, right) => right.localeCompare(left));
+  const historyDays = [...new Set(
+    historyRecords.map((item) => String(item.fecha || "").slice(8, 10)).filter((value) => /^\d{2}$/.test(value))
+  )].sort((left, right) => Number(left) - Number(right));
   const filteredAttendances = (data.attendances || [])
     .filter((item) => !administratorIds.has(Number(item.usuario_id)))
     .filter((item) => historyUserId === "todos" || String(item.usuario_id) === historyUserId)
+    .filter((item) => historyMonth === "todos" || String(item.fecha || "").startsWith(`${historyMonth}-`))
+    .filter((item) => historyDay === "todos" || String(item.fecha || "").slice(8, 10) === historyDay)
     .filter((item) => {
       if (historyWorkerStatus === "todos") return true;
       const worker = workerById[item.usuario_id];
@@ -2152,6 +2203,17 @@ function AttendancePanel() {
     downloadExcelTable("historial_asistencia.xls", columns, attendanceRows);
   }
 
+  function changeHistoryWorkerStatus(value) {
+    setHistoryWorkerStatus(value);
+    if (historyUserId === "todos") return;
+    const selectedWorker = historyUsers.find((worker) => String(worker.id) === historyUserId);
+    const remainsVisible = selectedWorker && (
+      value === "todos"
+      || (value === "activos" ? boolValue(selectedWorker.activo) : !boolValue(selectedWorker.activo))
+    );
+    if (!remainsVisible) setHistoryUserId("todos");
+  }
+
   return (
     <div className="stack">
       <Panel title="Gestion de asistencia" eyebrow="Control diario">
@@ -2169,7 +2231,7 @@ function AttendancePanel() {
         {loading ? <LoadingBlock /> : null}
         {error ? <Alert type="error">{error}</Alert> : null}
         {!loading && !workers.length ? <Alert>No hay trabajadores registrados.</Alert> : null}
-        <Alert>Elige un estado para cada trabajador y guarda. El estado quedará seleccionado; si luego eliges otro y vuelves a guardar, se actualizará.</Alert>
+        <Alert>Marca un estado por trabajador. Para cambiar una selección, desmárcala primero y elige otra casilla.</Alert>
         <div className="attendance-search-row">
           <label className="field attendance-search-field">
             <span className="field-label">Buscar trabajador</span>
@@ -2190,27 +2252,46 @@ function AttendancePanel() {
         {!loading && workers.length && !visibleWorkers.length ? (
           <Alert>No se encontraron trabajadores {workerStatusFilter === "activos" ? "activos" : workerStatusFilter === "inactivos" ? "inactivos" : ""} para "{workerSearch}".</Alert>
         ) : null}
-        <div className="attendance-list">
-          {visibleWorkers.map((worker) => {
-            const estado = attendanceValues[worker.id] || "FALTA";
-            const marked = estado !== "FALTA";
-            return (
-              <div key={worker.id} className={`attendance-row${marked ? " marked" : ""}`} data-estado={estado}>
-                <span>
-                  <strong>{worker.nombre || "Sin nombre"}</strong>
-                  <small>{worker.email} · {boolValue(worker.activo) ? "Activo" : "Inactivo"}</small>
-                </span>
-                <span className="attendance-row-controls">
-                  <SelectInput
-                    label="Estado"
-                    value={estado}
-                    onChange={(value) => markWorker(worker, value)}
-                    options={attendanceStateOptions}
-                  />
-                </span>
-              </div>
-            );
-          })}
+        <div className="attendance-matrix-scroll">
+          <div className="attendance-matrix" role="table" aria-label="Estados de asistencia por trabajador">
+            <div className="attendance-matrix-header" role="row">
+              <span role="columnheader">Trabajador</span>
+              {attendanceStateOptions.map((option) => (
+                <abbr key={option.value} role="columnheader" title={option.label}>{option.abbreviation}</abbr>
+              ))}
+            </div>
+            {visibleWorkers.map((worker) => {
+              const estado = attendanceValues[worker.id] || "";
+              return (
+                <div key={worker.id} className={`attendance-matrix-row${estado ? " marked" : ""}`} role="row" data-estado={estado || "SIN_MARCAR"}>
+                  <span className="attendance-worker" role="rowheader">
+                    <strong>{worker.nombre || "Sin nombre"}</strong>
+                    <small>{worker.email} · {boolValue(worker.activo) ? "Activo" : "Inactivo"}</small>
+                  </span>
+                  {attendanceStateOptions.map((option) => {
+                    const checked = estado === option.value;
+                    const disabled = Boolean(estado) && !checked;
+                    return (
+                      <label
+                        key={option.value}
+                        className={`attendance-state-check${checked ? " checked" : ""}`}
+                        title={`${option.label} para ${worker.nombre || worker.email}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={disabled}
+                          onChange={(event) => markWorker(worker, event.target.checked ? option.value : "")}
+                          aria-label={`${option.label} para ${worker.nombre || worker.email}`}
+                        />
+                        <span aria-hidden="true">✓</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
         </div>
         <div className="form-actions">
           <Button icon={Save} loading={saving} onClick={handleSave}>Guardar asistencia</Button>
@@ -2227,17 +2308,39 @@ function AttendancePanel() {
             value={historyUserId}
             onChange={setHistoryUserId}
             options={[
-              { value: "todos", label: `Todos (${historyUsers.length})` },
-              ...historyUsers.map((worker) => ({
+              { value: "todos", label: `Todos (${historyUsersForStatus.length})` },
+              ...historyUsersForStatus.map((worker) => ({
                 value: String(worker.id),
                 label: worker.nombre || worker.email || `Usuario ${worker.id}`
               }))
             ]}
           />
           <SelectInput
+            label="Mes"
+            value={historyMonth}
+            onChange={setHistoryMonth}
+            options={[
+              { value: "todos", label: "Todos" },
+              ...historyMonths.map((month) => ({
+                value: month,
+                label: new Intl.DateTimeFormat("es-PE", { month: "long", year: "numeric", timeZone: "UTC" })
+                  .format(new Date(`${month}-01T12:00:00Z`))
+              }))
+            ]}
+          />
+          <SelectInput
+            label="Día"
+            value={historyDay}
+            onChange={setHistoryDay}
+            options={[
+              { value: "todos", label: "Todos" },
+              ...historyDays.map((day) => ({ value: day, label: String(Number(day)) }))
+            ]}
+          />
+          <SelectInput
             label="Estado del usuario"
             value={historyWorkerStatus}
-            onChange={setHistoryWorkerStatus}
+            onChange={changeHistoryWorkerStatus}
             options={[
               { value: "todos", label: "Todos" },
               { value: "activos", label: "Activos" },

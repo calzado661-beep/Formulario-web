@@ -1075,6 +1075,147 @@ tbody tr:hover {
   flex: 0 0 auto;
 }
 
+.attendance-matrix-scroll {
+  max-height: min(62vh, 680px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(7, 19, 16, 0.45);
+}
+
+.attendance-matrix {
+  min-width: 760px;
+}
+
+.attendance-matrix-header,
+.attendance-matrix-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) repeat(8, minmax(52px, 68px));
+  align-items: center;
+}
+
+.attendance-matrix-header {
+  position: sticky;
+  z-index: 4;
+  top: 0;
+  min-height: 54px;
+  color: var(--accent-strong);
+  background: #14241f;
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.24);
+}
+
+.attendance-matrix-header > span,
+.attendance-matrix-header > abbr {
+  padding: 0.7rem 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-align: center;
+  text-decoration: none;
+  cursor: help;
+}
+
+.attendance-matrix-header > span {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  padding-left: 1rem;
+  text-align: left;
+  background: #14241f;
+}
+
+.attendance-matrix-row {
+  min-height: 68px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.18s ease;
+}
+
+.attendance-matrix-row:last-child {
+  border-bottom: 0;
+}
+
+.attendance-matrix-row.marked {
+  background: rgba(45, 212, 191, 0.08);
+}
+
+.attendance-worker {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  align-self: stretch;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0.65rem 1rem;
+  background: #11201b;
+  border-right: 1px solid var(--border);
+}
+
+.attendance-worker strong,
+.attendance-worker small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attendance-worker small {
+  color: var(--muted);
+}
+
+.attendance-state-check {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  margin: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.attendance-state-check:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.attendance-state-check.checked {
+  color: #05201b;
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.attendance-state-check:has(input:disabled) {
+  opacity: 0.32;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.attendance-state-check input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.attendance-state-check span {
+  opacity: 0;
+  font-size: 1.1rem;
+  font-weight: 1000;
+}
+
+.attendance-state-check.checked span {
+  opacity: 1;
+}
+
+.attendance-state-check:has(input:focus-visible) {
+  outline: 3px solid rgba(45, 212, 191, 0.35);
+  outline-offset: 2px;
+}
+
 .attendance-marked-badge svg {
   width: 14px;
   height: 14px;
@@ -1705,6 +1846,91 @@ tbody tr:hover {
   backdrop-filter: blur(8px);
   overscroll-behavior: contain;
   animation: save-overlay-in 0.2s ease-out;
+}
+
+.delete-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(3, 10, 9, 0.82);
+  backdrop-filter: blur(8px);
+  animation: save-overlay-in 0.2s ease-out;
+}
+
+.delete-confirm-dialog {
+  width: min(520px, calc(100vw - 2rem));
+  display: grid;
+  justify-items: center;
+  gap: 1.25rem;
+  padding: clamp(1.5rem, 4vw, 2.25rem);
+  border: 1px solid rgba(251, 113, 133, 0.48);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top, rgba(251, 113, 133, 0.16), transparent 48%),
+    linear-gradient(145deg, #221c1d, #0d1715);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.62);
+  text-align: center;
+  animation: save-dialog-in 0.25s ease-out;
+}
+
+.delete-confirm-icon {
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(251, 113, 133, 0.48);
+  border-radius: 50%;
+  color: var(--coral);
+  background: rgba(251, 113, 133, 0.12);
+}
+
+.delete-confirm-icon svg {
+  width: 38px;
+  height: 38px;
+}
+
+.delete-confirm-copy {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.delete-confirm-copy h2,
+.delete-confirm-copy p {
+  margin: 0;
+}
+
+.delete-confirm-copy h2 {
+  color: var(--text-strong);
+  font-size: clamp(1.45rem, 4vw, 2rem);
+}
+
+.delete-confirm-copy p:not(.eyebrow) {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.delete-confirm-copy strong {
+  color: var(--text-strong);
+}
+
+.delete-confirm-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+@media (max-width: 520px) {
+  .delete-confirm-actions {
+    flex-direction: column-reverse;
+  }
+
+  .delete-confirm-actions .btn {
+    width: 100%;
+  }
 }
 
 .save-success-dialog {
@@ -4160,6 +4386,19 @@ tbody tr:hover {
   .attendance-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .attendance-matrix-scroll {
+    max-height: 68vh;
+  }
+
+  .attendance-matrix {
+    min-width: 700px;
+  }
+
+  .attendance-matrix-header,
+  .attendance-matrix-row {
+    grid-template-columns: minmax(220px, 1fr) repeat(8, 56px);
   }
 
   .attendance-today-list,

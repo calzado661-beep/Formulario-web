@@ -1401,10 +1401,14 @@ async function handleReadFootwearDashboard(request, response) {
     ]));
     const errorTaskById = new Map(errorTasks.map((task) => [Number(task.id), task]));
 
+    const dashboardWorkerName = (value, fallback) => {
+      const name = String(value || fallback);
+      return /^aaron\.o$/i.test(name.trim()) ? "Aaron Osorio" : name;
+    };
     const safeWorkers = dashboardUsers.map((user) => ({
       id: Number(user.id),
-      name: String(user.nombre || `Usuario ${user.id}`),
-      alias: String(user.alias || user.nombre || `Usuario ${user.id}`),
+      name: dashboardWorkerName(user.nombre, `Usuario ${user.id}`),
+      alias: dashboardWorkerName(user.alias || user.nombre, `Usuario ${user.id}`),
       role: normalizeRole(user.rol) || "otros",
       active: isActive(user.activo),
       joinedAt: dashboardDate(user.fecha_ingreso || user.created_at),
