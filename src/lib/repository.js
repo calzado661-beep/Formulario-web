@@ -713,6 +713,25 @@ export async function deleteLote(loteId) {
   return apiResult;
 }
 
+export async function listGuias() {
+  const apiResult = await requestLocalApi("/api/guias", {}, { requiredBackend: true });
+  if (!Array.isArray(apiResult?.guias)) {
+    throw new Error("No se pudieron cargar las guias.");
+  }
+  return apiResult.guias;
+}
+
+export async function importGuias(entries, archivo) {
+  const apiResult = await requestLocalApi("/api/guias/import", {
+    method: "POST",
+    body: JSON.stringify({ entries, archivo })
+  }, { requiredBackend: true });
+  if (typeof apiResult?.imported !== "number") {
+    throw new Error("No se pudieron importar las guias.");
+  }
+  return apiResult;
+}
+
 export async function listAmonestaciones() {
   const apiResult = await requestLocalApi("/api/amonestaciones");
   if (apiResult?.amonestaciones) return apiResult.amonestaciones;

@@ -2197,6 +2197,53 @@ async function handleDeleteLote(request, response, loteId) {
   }
 }
 
+async function handleReadGuias(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const result = await supabase
+      .from("guias")
+      .select("id,codigo,fecha,archivo_origen")
+      .order("fecha", { ascending: false });
+    if (result.error) throw result.error;
+    sendJson(response, 200, { guias: result.data || [] });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudieron cargar las guias." });
+  }
+}
+
+async function handleImportGuias(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const archivo = body.archivo ? String(body.archivo).trim().slice(0, 200) || null : null;
+    const rawEntries = Array.isArray(body.entries) ? body.entries : [];
+
+    const seen = new Set();
+    const rows = [];
+    for (const entry of rawEntries) {
+      const codigo = String(entry?.codigo || "").trim();
+      const fecha = String(entry?.fecha || "").trim();
+      if (!codigo || !/^\d{4}-\d{2}-\d{2}$/.test(fecha) || seen.has(codigo)) continue;
+      seen.add(codigo);
+      rows.push({ codigo, fecha, archivo_origen: archivo });
+    }
+    if (!rows.length) {
+      sendJson(response, 400, { error: "No se encontraron guias validas para importar. Revisa que el archivo tenga las columnas ESTADO y TDA ORIGEN." });
+      return;
+    }
+
+    const result = await supabase
+      .from("guias")
+      .upsert(rows, { onConflict: "codigo", ignoreDuplicates: true })
+      .select("id");
+    if (result.error) throw result.error;
+    const imported = (result.data || []).length;
+    sendJson(response, 200, { imported, omitted: rows.length - imported, total: rows.length });
+  } catch (error) {
+    sendJson(response, error.statusCode || 500, { error: error.message || "No se pudieron importar las guias." });
+  }
+}
+
 async function handleReadAmonestaciones(request, response) {
   try {
     if (!requireAdministrator(request, response)) return;
@@ -4795,6 +4842,16 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (request.url?.startsWith("/api/lotes") && request.method === "POST") {
     await handleCreateLote(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/guias/import") && request.method === "POST") {
+    await handleImportGuias(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/guias") && request.method === "GET") {
+    await handleReadGuias(request, response);
     return;
   }
 

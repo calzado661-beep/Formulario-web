@@ -14,6 +14,7 @@ import {
   PanelLeftOpen,
   ShieldCheck,
   Store,
+  Truck,
   UserCog,
   UsersRound
 } from "lucide-react";
@@ -31,6 +32,7 @@ const adminItems = [
   { key: "Notificaciones", icon: BellRing },
   { key: "Tiendas", icon: Store },
   { key: "Lotes", icon: Package },
+  { key: "Guias", icon: Truck },
   { key: "Amonestaciones", icon: AlertTriangle },
   { key: "Documentos", icon: FileSpreadsheet }
 ];

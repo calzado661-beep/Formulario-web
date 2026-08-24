@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CalendarCheck2, CheckCircle2, ClipboardCheck, Clock3, Eye, EyeOff, FileSpreadsheet, GraduationCap, LockKeyhole, Mail, Pencil, Plus, RefreshCcw, Save, Search, Send, Trash2, UsersRound, X } from "lucide-react";
+import { AlertTriangle, CalendarCheck2, CheckCircle2, ClipboardCheck, Clock3, Eye, EyeOff, FileSpreadsheet, GraduationCap, LockKeyhole, Mail, Pencil, Plus, RefreshCcw, Save, Search, Send, Trash2, Upload, UsersRound, X } from "lucide-react";
 import {
   bulkSetTrainingStatus,
   createActivityReportSettings,
@@ -26,11 +26,13 @@ import {
   getAttendanceReportSettings,
   getTrainingStatusByCourse,
   getUserTrainingProfile,
+  importGuias,
   listAllActivityLogs,
   listAmonestaciones,
   listAttendances,
   listBrands,
   listEncargados,
+  listGuias,
   listLotes,
   listPenalizaciones,
   listTasks,
@@ -108,6 +110,7 @@ export default function AdminDashboard({ section }) {
   if (section === "Notificaciones") return <NotificationsPanel />;
   if (section === "Tiendas") return <StoresPanel />;
   if (section === "Lotes") return <LotesPanel />;
+  if (section === "Guias") return <GuiasPanel />;
   if (section === "Amonestaciones") return <WarningsPanel />;
   if (section === "Documentos") return <DocumentsPanel />;
   return <FootwearDashboard />;
@@ -4074,6 +4077,204 @@ function LotesPanel() {
             </div>
           ) : null}
         </form>
+      </Panel>
+    </div>
+  );
+}
+
+const GUIA_MESES = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Setiembre", "Octubre", "Noviembre", "Diciembre"
+];
+const GUIA_DATE_HEADER = "ESTADO";
+const GUIA_CODE_HEADER = "TDA ORIGEN";
+
+function guiaColLetter(ref) {
+  return String(ref || "").match(/[A-Za-z]+/)?.[0] || "";
+}
+
+function guiaExcelSerialToISODate(serial) {
+  const value = Number(serial);
+  if (!Number.isFinite(value)) return null;
+  const date = new Date(Date.UTC(1899, 11, 30) + value * 86400000);
+  if (Number.isNaN(date.getTime())) return null;
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+// El reporte "Salidas AAAA mes.xlsx" lo exporta un sistema externo cuyo zip
+// no abre exceljs (falla en silencio, 0 hojas). Se descomprime a mano con
+// jszip y se lee el XML de la hoja para no depender de esa libreria aqui.
+async function parseGuiasWorkbook(file) {
+  const JSZipModule = await import("jszip");
+  const JSZip = JSZipModule.default || JSZipModule;
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+
+  const sheetPath = Object.keys(zip.files).find((name) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(name));
+  if (!sheetPath) throw new Error("El archivo no tiene una hoja de calculo valida.");
+
+  const sharedStringsEntry = zip.file("xl/sharedStrings.xml");
+  const shared = [];
+  if (sharedStringsEntry) {
+    const sharedDoc = new DOMParser().parseFromString(await sharedStringsEntry.async("string"), "application/xml");
+    sharedDoc.querySelectorAll("si").forEach((si) => {
+      shared.push(Array.from(si.querySelectorAll("t")).map((t) => t.textContent || "").join(""));
+    });
+  }
+
+  const sheetDoc = new DOMParser().parseFromString(await zip.file(sheetPath).async("string"), "application/xml");
+  const rows = Array.from(sheetDoc.querySelectorAll("sheetData > row"));
+  if (!rows.length) throw new Error("El archivo no tiene filas de datos.");
+
+  function cellValue(cellEl) {
+    const valueEl = cellEl.querySelector("v");
+    if (!valueEl) return null;
+    const raw = valueEl.textContent;
+    return cellEl.getAttribute("t") === "s" ? (shared[Number(raw)] ?? "") : raw;
+  }
+
+  const headerByCol = {};
+  Array.from(rows[0].querySelectorAll("c")).forEach((cell) => {
+    headerByCol[guiaColLetter(cell.getAttribute("r"))] = String(cellValue(cell) || "").trim().toUpperCase();
+  });
+  const dateCol = Object.keys(headerByCol).find((col) => headerByCol[col] === GUIA_DATE_HEADER);
+  const codeCol = Object.keys(headerByCol).find((col) => headerByCol[col] === GUIA_CODE_HEADER);
+  if (!dateCol || !codeCol) {
+    throw new Error(`No se encontraron las columnas "${GUIA_DATE_HEADER}" y "${GUIA_CODE_HEADER}" en el archivo.`);
+  }
+
+  const entriesByCode = new Map();
+  for (const row of rows.slice(1)) {
+    let dateRaw = null;
+    let codeRaw = null;
+    row.querySelectorAll("c").forEach((cell) => {
+      const col = guiaColLetter(cell.getAttribute("r"));
+      if (col === dateCol) dateRaw = cellValue(cell);
+      else if (col === codeCol) codeRaw = cellValue(cell);
+    });
+    const codigo = String(codeRaw || "").trim();
+    const fecha = guiaExcelSerialToISODate(dateRaw);
+    if (!codigo || !fecha) continue;
+    if (!entriesByCode.has(codigo)) entriesByCode.set(codigo, fecha);
+  }
+
+  return Array.from(entriesByCode, ([codigo, fecha]) => ({ codigo, fecha }));
+}
+
+function GuiasPanel() {
+  const { data: guias = [], loading, error, reload } = useAsyncData(listGuias, [], []);
+  const [file, setFile] = useState(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const [importing, setImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState(null);
+  const [anioFilter, setAnioFilter] = useState("todos");
+  const [mesFilter, setMesFilter] = useState("todos");
+
+  async function handleImport() {
+    setImportStatus(null);
+    if (!file) {
+      setImportStatus({ type: "error", message: "Selecciona un archivo Excel (.xlsx)." });
+      return;
+    }
+    setImporting(true);
+    try {
+      const entries = await parseGuiasWorkbook(file);
+      if (!entries.length) {
+        setImportStatus({
+          type: "error",
+          message: `No se encontraron guias validas en el archivo. Verifica que tenga las columnas "${GUIA_DATE_HEADER}" y "${GUIA_CODE_HEADER}".`
+        });
+        return;
+      }
+      const result = await importGuias(entries, file.name);
+      setImportStatus({
+        type: "success",
+        message: `${result.imported} guia(s) nueva(s) importada(s) de ${result.total} encontradas en el archivo. ${result.omitted} ya existian y no se duplicaron.`
+      });
+      setFile(null);
+      setFileInputKey((key) => key + 1);
+      reload();
+    } catch (err) {
+      setImportStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  const withParts = guias.map((guia) => {
+    const [anio, mes] = String(guia.fecha || "").split("-");
+    return { ...guia, anio, mes: Number(mes) };
+  });
+
+  const years = Array.from(new Set(withParts.map((guia) => guia.anio).filter(Boolean))).sort((a, b) => b.localeCompare(a));
+
+  const summaryMap = new Map();
+  withParts.forEach((guia) => {
+    if (!guia.anio || !guia.mes) return;
+    const key = `${guia.anio}-${String(guia.mes).padStart(2, "0")}`;
+    summaryMap.set(key, (summaryMap.get(key) || 0) + 1);
+  });
+  const summaryRows = Array.from(summaryMap, ([key, count]) => ({ key, Mes: `${GUIA_MESES[Number(key.slice(5)) - 1]} ${key.slice(0, 4)}`, Cantidad: count }))
+    .sort((a, b) => b.key.localeCompare(a.key))
+    .map(({ key: _key, ...rest }) => rest);
+
+  const tableRows = withParts
+    .filter((guia) => anioFilter === "todos" || guia.anio === anioFilter)
+    .filter((guia) => mesFilter === "todos" || String(guia.mes) === mesFilter)
+    .sort((a, b) => (b.fecha || "").localeCompare(a.fecha || "") || String(a.codigo).localeCompare(String(b.codigo)))
+    .map((guia) => ({
+      Codigo: guia.codigo,
+      Fecha: formatDateLima(guia.fecha),
+      Mes: guia.mes ? GUIA_MESES[guia.mes - 1] : "",
+      Año: guia.anio || ""
+    }));
+
+  return (
+    <div className="stack">
+      <Panel title="Importar guias" eyebrow="Reporte de salidas">
+        <Alert>
+          Sube el Excel de salidas (por ejemplo "Salidas 2026 enero.xlsx"). Cada guia se identifica por su codigo en
+          la columna "{GUIA_CODE_HEADER}" y su fecha se toma de la columna "{GUIA_DATE_HEADER}". Puedes importar el
+          mismo archivo mas de una vez o archivos de distintos meses: lo que ya existe no se sobrescribe ni se
+          duplica, solo se agrega lo que falte.
+        </Alert>
+        <div className="toolbar">
+          <input
+            key={fileInputKey}
+            className="input"
+            type="file"
+            accept=".xlsx"
+            onChange={(event) => setFile(event.target.files?.[0] || null)}
+          />
+          <Button icon={Upload} loading={importing} onClick={handleImport}>Importar</Button>
+        </div>
+        <StatusAlert status={importStatus} />
+      </Panel>
+
+      <Panel title="Guias por mes" eyebrow="Resumen" actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
+        {loading ? <LoadingBlock /> : null}
+        {error ? <Alert type="error">{error}</Alert> : null}
+        <DataTable rows={summaryRows} empty="Todavia no se importaron guias." />
+      </Panel>
+
+      <Panel title="Guias" eyebrow="Detalle">
+        <div className="toolbar">
+          <SelectInput
+            label="Año"
+            value={anioFilter}
+            onChange={setAnioFilter}
+            options={[{ value: "todos", label: "Todos" }, ...years.map((year) => ({ value: year, label: year }))]}
+          />
+          <SelectInput
+            label="Mes"
+            value={mesFilter}
+            onChange={setMesFilter}
+            options={[{ value: "todos", label: "Todos" }, ...GUIA_MESES.map((mes, index) => ({ value: String(index + 1), label: mes }))]}
+          />
+        </div>
+        <DataTable rows={tableRows} columns={["Codigo", "Fecha", "Mes", "Año"]} pageSize={25} empty="No hay guias para estos filtros." />
       </Panel>
     </div>
   );
