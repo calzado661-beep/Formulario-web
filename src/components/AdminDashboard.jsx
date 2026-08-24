@@ -27,12 +27,14 @@ import {
   getTrainingStatusByCourse,
   getUserTrainingProfile,
   importGuias,
+  importGuiaItems,
   listAllActivityLogs,
   listAmonestaciones,
   listAttendances,
   listBrands,
   listEncargados,
   listGuias,
+  listGuiaItemsForExport,
   listLotes,
   listPenalizaciones,
   listTasks,
@@ -4088,9 +4090,27 @@ const GUIA_MESES = [
 ];
 const GUIA_DATE_HEADER = "ESTADO";
 const GUIA_CODE_HEADER = "TDA ORIGEN";
+const GUIA_ITEM_BATCH_SIZE = 1000;
 
 function guiaColLetter(ref) {
   return String(ref || "").match(/[A-Za-z]+/)?.[0] || "";
+}
+
+// Varias columnas del reporte tienen el encabezado desalineado de su propio
+// dato (p.ej. "CODIGO NISSEI" trae en realidad el codigo de tienda, no un
+// codigo de producto), asi que no se puede confiar en ningun encabezado
+// salvo "ESTADO" y "TDA ORIGEN" (los que confirmo quien pidio esta
+// funcion). Para identificar cada linea de forma unica dentro de una guia
+// se usa una huella (hash) del contenido completo de la fila en vez de
+// adivinar cual columna es "el codigo del producto".
+function guiaLineFingerprint(text) {
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= BigInt(text.charCodeAt(index));
+    hash = (hash * prime) & 0xffffffffffffffffn;
+  }
+  return hash.toString(16).padStart(16, "0");
 }
 
 function guiaExcelSerialToISODate(serial) {
@@ -4135,32 +4155,52 @@ async function parseGuiasWorkbook(file) {
     return cellEl.getAttribute("t") === "s" ? (shared[Number(raw)] ?? "") : raw;
   }
 
+  // Los encabezados vienen tal como los escribio el sistema que genera el
+  // reporte, incluyendo el escape "_x000a_" que Excel usa para un salto de
+  // linea dentro de una celda (p.ej. "TDA_x000a_DESTINO"); se limpia para
+  // que las columnas exportadas despues se lean bien.
+  const headerCols = [];
   const headerByCol = {};
+  const headerLabelByCol = {};
   Array.from(rows[0].querySelectorAll("c")).forEach((cell) => {
-    headerByCol[guiaColLetter(cell.getAttribute("r"))] = String(cellValue(cell) || "").trim().toUpperCase();
+    const col = guiaColLetter(cell.getAttribute("r"));
+    const label = String(cellValue(cell) || "").replace(/_x000a_/gi, " ").trim();
+    headerCols.push(col);
+    headerByCol[col] = label.toUpperCase();
+    headerLabelByCol[col] = label;
   });
-  const dateCol = Object.keys(headerByCol).find((col) => headerByCol[col] === GUIA_DATE_HEADER);
-  const codeCol = Object.keys(headerByCol).find((col) => headerByCol[col] === GUIA_CODE_HEADER);
+  const dateCol = headerCols.find((col) => headerByCol[col] === GUIA_DATE_HEADER);
+  const codeCol = headerCols.find((col) => headerByCol[col] === GUIA_CODE_HEADER);
   if (!dateCol || !codeCol) {
     throw new Error(`No se encontraron las columnas "${GUIA_DATE_HEADER}" y "${GUIA_CODE_HEADER}" en el archivo.`);
   }
 
-  const entriesByCode = new Map();
+  const guidesByCode = new Map();
+  const itemsByKey = new Map();
   for (const row of rows.slice(1)) {
-    let dateRaw = null;
-    let codeRaw = null;
+    const valuesByCol = {};
     row.querySelectorAll("c").forEach((cell) => {
-      const col = guiaColLetter(cell.getAttribute("r"));
-      if (col === dateCol) dateRaw = cellValue(cell);
-      else if (col === codeCol) codeRaw = cellValue(cell);
+      valuesByCol[guiaColLetter(cell.getAttribute("r"))] = cellValue(cell);
     });
-    const codigo = String(codeRaw || "").trim();
-    const fecha = guiaExcelSerialToISODate(dateRaw);
+    const codigo = String(valuesByCol[codeCol] || "").trim();
+    const fecha = guiaExcelSerialToISODate(valuesByCol[dateCol]);
     if (!codigo || !fecha) continue;
-    if (!entriesByCode.has(codigo)) entriesByCode.set(codigo, fecha);
+    if (!guidesByCode.has(codigo)) guidesByCode.set(codigo, fecha);
+
+    const datos = {};
+    headerCols.forEach((col) => {
+      datos[headerLabelByCol[col]] = valuesByCol[col] ?? "";
+    });
+    const codigoItem = guiaLineFingerprint(headerCols.map((col) => valuesByCol[col] ?? "").join("|"));
+    const key = `${codigo}::${codigoItem}`;
+    if (itemsByKey.has(key)) continue;
+    itemsByKey.set(key, { codigoGuia: codigo, codigoItem, fecha, datos });
   }
 
-  return Array.from(entriesByCode, ([codigo, fecha]) => ({ codigo, fecha }));
+  return {
+    guides: Array.from(guidesByCode, ([codigo, fecha]) => ({ codigo, fecha })),
+    items: Array.from(itemsByKey.values())
+  };
 }
 
 function GuiasPanel() {
@@ -4169,6 +4209,8 @@ function GuiasPanel() {
   const [fileInputKey, setFileInputKey] = useState(0);
   const [importing, setImporting] = useState(false);
   const [importStatus, setImportStatus] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportStatus, setExportStatus] = useState(null);
   const [anioFilter, setAnioFilter] = useState("todos");
   const [mesFilter, setMesFilter] = useState("todos");
 
@@ -4180,18 +4222,34 @@ function GuiasPanel() {
     }
     setImporting(true);
     try {
-      const entries = await parseGuiasWorkbook(file);
-      if (!entries.length) {
+      const { guides, items } = await parseGuiasWorkbook(file);
+      if (!guides.length) {
         setImportStatus({
           type: "error",
           message: `No se encontraron guias validas en el archivo. Verifica que tenga las columnas "${GUIA_DATE_HEADER}" y "${GUIA_CODE_HEADER}".`
         });
         return;
       }
-      const result = await importGuias(entries, file.name);
+      setImportStatus({ type: "info", message: `Importando ${guides.length} guia(s)...` });
+      const guideResult = await importGuias(guides, file.name);
+
+      let itemsImported = 0;
+      let itemsOmitted = 0;
+      for (let start = 0; start < items.length; start += GUIA_ITEM_BATCH_SIZE) {
+        const batch = items.slice(start, start + GUIA_ITEM_BATCH_SIZE);
+        setImportStatus({
+          type: "info",
+          message: `Importando detalle: ${Math.min(start + GUIA_ITEM_BATCH_SIZE, items.length)} de ${items.length} linea(s)...`
+        });
+        const batchResult = await importGuiaItems(batch, file.name);
+        itemsImported += batchResult.imported;
+        itemsOmitted += batchResult.omitted;
+      }
+
       setImportStatus({
         type: "success",
-        message: `${result.imported} guia(s) nueva(s) importada(s) de ${result.total} encontradas en el archivo. ${result.omitted} ya existian y no se duplicaron.`
+        message: `Guias: ${guideResult.imported} nueva(s) de ${guideResult.total} (${guideResult.omitted} ya existian). `
+          + `Detalle: ${itemsImported} linea(s) nueva(s) de ${items.length} (${itemsOmitted} ya existian).`
       });
       setFile(null);
       setFileInputKey((key) => key + 1);
@@ -4200,6 +4258,39 @@ function GuiasPanel() {
       setImportStatus({ type: "error", message: friendlyError(err) });
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function handleExport() {
+    setExportStatus(null);
+    if (anioFilter === "todos" || mesFilter === "todos") {
+      setExportStatus({ type: "error", message: "Selecciona un año y un mes especificos para exportar." });
+      return;
+    }
+    setExporting(true);
+    try {
+      const items = await listGuiaItemsForExport(anioFilter, mesFilter);
+      if (!items.length) {
+        setExportStatus({ type: "error", message: "No hay detalle de guias importado para ese mes." });
+        return;
+      }
+      const columns = [];
+      const seenColumns = new Set();
+      items.forEach((item) => {
+        Object.keys(item || {}).forEach((key) => {
+          if (!seenColumns.has(key)) {
+            seenColumns.add(key);
+            columns.push(key);
+          }
+        });
+      });
+      const mesLabel = GUIA_MESES[Number(mesFilter) - 1] || mesFilter;
+      downloadExcelTable(`guias_${mesLabel.toLowerCase()}_${anioFilter}.xls`, columns, items, "Guias");
+      setExportStatus({ type: "success", message: `${items.length} linea(s) exportada(s) de ${mesLabel} ${anioFilter}.` });
+    } catch (err) {
+      setExportStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -4236,9 +4327,10 @@ function GuiasPanel() {
       <Panel title="Importar guias" eyebrow="Reporte de salidas">
         <Alert>
           Sube el Excel de salidas (por ejemplo "Salidas 2026 enero.xlsx"). Cada guia se identifica por su codigo en
-          la columna "{GUIA_CODE_HEADER}" y su fecha se toma de la columna "{GUIA_DATE_HEADER}". Puedes importar el
-          mismo archivo mas de una vez o archivos de distintos meses: lo que ya existe no se sobrescribe ni se
-          duplica, solo se agrega lo que falte.
+          la columna "{GUIA_CODE_HEADER}" y su fecha se toma de la columna "{GUIA_DATE_HEADER}". Tambien se guarda
+          cada linea de producto de la guia, con todas las demas columnas del archivo. Puedes importar el mismo
+          archivo mas de una vez o archivos de distintos meses: lo que ya existe no se sobrescribe ni se duplica,
+          solo se agrega lo que falte.
         </Alert>
         <div className="toolbar">
           <input
@@ -4260,6 +4352,9 @@ function GuiasPanel() {
       </Panel>
 
       <Panel title="Guias" eyebrow="Detalle">
+        <Alert>
+          Elige un año y un mes especificos para exportar a Excel solo el detalle (linea por linea) de ese mes.
+        </Alert>
         <div className="toolbar">
           <SelectInput
             label="Año"
@@ -4273,7 +4368,9 @@ function GuiasPanel() {
             onChange={setMesFilter}
             options={[{ value: "todos", label: "Todos" }, ...GUIA_MESES.map((mes, index) => ({ value: String(index + 1), label: mes }))]}
           />
+          <Button variant="secondary" icon={FileSpreadsheet} loading={exporting} onClick={handleExport}>Exportar Excel del mes</Button>
         </div>
+        <StatusAlert status={exportStatus} />
         <DataTable rows={tableRows} columns={["Codigo", "Fecha", "Mes", "Año"]} pageSize={25} empty="No hay guias para estos filtros." />
       </Panel>
     </div>

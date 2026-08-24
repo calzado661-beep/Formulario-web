@@ -2216,31 +2216,92 @@ async function handleImportGuias(request, response) {
     if (!requireAdministrator(request, response)) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const archivo = body.archivo ? String(body.archivo).trim().slice(0, 200) || null : null;
-    const rawEntries = Array.isArray(body.entries) ? body.entries : [];
+    const rawEntries = Array.isArray(body.entries) ? body.entries : null;
+    const rawItems = Array.isArray(body.items) ? body.items : null;
 
-    const seen = new Set();
-    const rows = [];
-    for (const entry of rawEntries) {
-      const codigo = String(entry?.codigo || "").trim();
-      const fecha = String(entry?.fecha || "").trim();
-      if (!codigo || !/^\d{4}-\d{2}-\d{2}$/.test(fecha) || seen.has(codigo)) continue;
-      seen.add(codigo);
-      rows.push({ codigo, fecha, archivo_origen: archivo });
-    }
-    if (!rows.length) {
-      sendJson(response, 400, { error: "No se encontraron guias validas para importar. Revisa que el archivo tenga las columnas ESTADO y TDA ORIGEN." });
+    if (rawEntries) {
+      const seen = new Set();
+      const rows = [];
+      for (const entry of rawEntries) {
+        const codigo = String(entry?.codigo || "").trim();
+        const fecha = String(entry?.fecha || "").trim();
+        if (!codigo || !/^\d{4}-\d{2}-\d{2}$/.test(fecha) || seen.has(codigo)) continue;
+        seen.add(codigo);
+        rows.push({ codigo, fecha, archivo_origen: archivo });
+      }
+      if (!rows.length) {
+        sendJson(response, 400, { error: "No se encontraron guias validas para importar. Revisa que el archivo tenga las columnas ESTADO y TDA ORIGEN." });
+        return;
+      }
+      const result = await supabase
+        .from("guias")
+        .upsert(rows, { onConflict: "codigo", ignoreDuplicates: true })
+        .select("id");
+      if (result.error) throw result.error;
+      const imported = (result.data || []).length;
+      sendJson(response, 200, { imported, omitted: rows.length - imported, total: rows.length });
       return;
     }
 
-    const result = await supabase
-      .from("guias")
-      .upsert(rows, { onConflict: "codigo", ignoreDuplicates: true })
-      .select("id");
-    if (result.error) throw result.error;
-    const imported = (result.data || []).length;
-    sendJson(response, 200, { imported, omitted: rows.length - imported, total: rows.length });
+    if (rawItems) {
+      const seen = new Set();
+      const rows = [];
+      for (const item of rawItems) {
+        const codigoGuia = String(item?.codigoGuia || "").trim();
+        const codigoItem = String(item?.codigoItem || "").trim();
+        const fecha = String(item?.fecha || "").trim();
+        const key = `${codigoGuia}::${codigoItem}`;
+        if (!codigoGuia || !codigoItem || !/^\d{4}-\d{2}-\d{2}$/.test(fecha) || seen.has(key)) continue;
+        seen.add(key);
+        const datos = item?.datos && typeof item.datos === "object" && !Array.isArray(item.datos) ? item.datos : {};
+        rows.push({ codigo_guia: codigoGuia, codigo_item: codigoItem, fecha, datos, archivo_origen: archivo });
+      }
+      if (!rows.length) {
+        sendJson(response, 400, { error: "No se encontraron lineas de detalle validas para importar." });
+        return;
+      }
+      const result = await supabase
+        .from("guias_items")
+        .upsert(rows, { onConflict: "codigo_guia,codigo_item", ignoreDuplicates: true })
+        .select("id");
+      if (result.error) throw result.error;
+      const imported = (result.data || []).length;
+      sendJson(response, 200, { imported, omitted: rows.length - imported, total: rows.length });
+      return;
+    }
+
+    sendJson(response, 400, { error: "Envia 'entries' (guias) o 'items' (detalle) para importar." });
   } catch (error) {
     sendJson(response, error.statusCode || 500, { error: error.message || "No se pudieron importar las guias." });
+  }
+}
+
+async function handleReadGuiaItems(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    const anio = Number(url.searchParams.get("anio"));
+    const mes = Number(url.searchParams.get("mes"));
+    if (!Number.isInteger(anio) || !Number.isInteger(mes) || mes < 1 || mes > 12) {
+      sendJson(response, 400, { error: "Indica un año y mes validos para exportar." });
+      return;
+    }
+    const desde = `${anio}-${String(mes).padStart(2, "0")}-01`;
+    const hastaMes = mes === 12 ? 1 : mes + 1;
+    const hastaAnio = mes === 12 ? anio + 1 : anio;
+    const hasta = `${hastaAnio}-${String(hastaMes).padStart(2, "0")}-01`;
+
+    const result = await supabase
+      .from("guias_items")
+      .select("codigo_guia,codigo_item,fecha,datos")
+      .gte("fecha", desde)
+      .lt("fecha", hasta)
+      .order("fecha", { ascending: true })
+      .order("codigo_guia", { ascending: true });
+    if (result.error) throw result.error;
+    sendJson(response, 200, { items: (result.data || []).map((row) => row.datos || {}) });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo exportar el detalle de guias." });
   }
 }
 
@@ -4847,6 +4908,11 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (request.url?.startsWith("/api/guias/import") && request.method === "POST") {
     await handleImportGuias(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/guias/items") && request.method === "GET") {
+    await handleReadGuiaItems(request, response);
     return;
   }
 

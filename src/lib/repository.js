@@ -732,6 +732,29 @@ export async function importGuias(entries, archivo) {
   return apiResult;
 }
 
+export async function importGuiaItems(items, archivo) {
+  const apiResult = await requestLocalApi("/api/guias/import", {
+    method: "POST",
+    body: JSON.stringify({ items, archivo })
+  }, { requiredBackend: true });
+  if (typeof apiResult?.imported !== "number") {
+    throw new Error("No se pudo importar el detalle de las guias.");
+  }
+  return apiResult;
+}
+
+export async function listGuiaItemsForExport(anio, mes) {
+  const apiResult = await requestLocalApi(
+    `/api/guias/items?anio=${encodeURIComponent(anio)}&mes=${encodeURIComponent(mes)}`,
+    {},
+    { requiredBackend: true }
+  );
+  if (!Array.isArray(apiResult?.items)) {
+    throw new Error("No se pudo obtener el detalle de guias para exportar.");
+  }
+  return apiResult.items;
+}
+
 export async function listAmonestaciones() {
   const apiResult = await requestLocalApi("/api/amonestaciones");
   if (apiResult?.amonestaciones) return apiResult.amonestaciones;
