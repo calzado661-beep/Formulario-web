@@ -1719,8 +1719,14 @@ h2.pbi-section-heading {
 }
 
 .pbi-attendance-period-filter {
-  grid-template-columns: auto minmax(150px, 1fr);
+  grid-template-columns: auto minmax(90px, 0.7fr) auto minmax(120px, 1fr) auto minmax(105px, 0.8fr);
   margin-bottom: 0.35rem;
+}
+
+@media (max-width: 720px) {
+  .pbi-attendance-period-filter {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
 }
 
 .pbi-ranking-records-dialog {

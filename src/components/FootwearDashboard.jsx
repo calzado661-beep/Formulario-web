@@ -1719,7 +1719,9 @@ export default function FootwearDashboard() {
   const [trainingStatuses, setTrainingStatuses] = useState([]);
   const [selectedMovementMonths, setSelectedMovementMonths] = useState([]);
   const [selectedMovementDetail, setSelectedMovementDetail] = useState(null);
-  const [attendancePeriod, setAttendancePeriod] = useState("current");
+  const [attendanceYear, setAttendanceYear] = useState(String(CURRENT_LIMA_YEAR));
+  const [attendancePeriod, setAttendancePeriod] = useState(String(CURRENT_LIMA_MONTH));
+  const [attendanceDay, setAttendanceDay] = useState("all");
   const [selectedErrorDetail, setSelectedErrorDetail] = useState(null);
 
   const refreshDashboard = useCallback(async ({ silent = false } = {}) => {
@@ -2150,14 +2152,26 @@ export default function FootwearDashboard() {
     return totals;
   }, new Map()).values()];
   const filteredAttendance = aggregateAttendance((dashboardData?.attendances || []).filter((row) => matchesPeopleDate(row.date) && matchesPeopleWorker(row.workerId)));
-  const attendanceChartRows = (dashboardData?.attendances || []).filter((row) => {
+  const attendanceAvailableYears = [...new Set([
+    CURRENT_LIMA_YEAR,
+    ...(dashboardData?.attendances || []).map((row) => Number(String(row.date || "").slice(0, 4))).filter(Number.isFinite)
+  ])].sort((left, right) => right - left);
+  const attendancePeriodRows = (dashboardData?.attendances || []).filter((row) => {
     if (!matchesPeopleWorker(row.workerId)) return false;
-    if (attendancePeriod === "all") return true;
     const [year, month] = String(row.date || "").split("-").map(Number);
-    return attendancePeriod === "previous"
-      ? year === PREVIOUS_LIMA_MONTH_YEAR && month === PREVIOUS_LIMA_MONTH
-      : year === CURRENT_LIMA_YEAR && month === CURRENT_LIMA_MONTH;
+    if (attendanceYear !== "all" && year !== Number(attendanceYear)) return false;
+    if (attendancePeriod === "all") return true;
+    return month === Number(attendancePeriod);
   });
+  const attendanceMonthDays = attendancePeriod === "all"
+    ? 31
+    : new Date(attendanceYear === "all" ? 2024 : Number(attendanceYear), Number(attendancePeriod), 0).getDate();
+  const attendanceChartRows = attendanceDay === "all"
+    ? attendancePeriodRows
+    : attendancePeriodRows.filter((row) => {
+      const [, , day] = String(row.date || "").split("-").map(Number);
+      return day === Number(attendanceDay);
+    });
   const attendanceChartData = aggregateAttendance(attendanceChartRows);
   const trainingById = new Map((dashboardData?.trainings || []).map((course) => [course.id, course]));
   const normalizeTrainingStatus = (state) => ["finalizado", "completado"].includes(state) ? "completado" : state === "en_curso" ? "en_curso" : "pendiente";
@@ -2326,7 +2340,9 @@ export default function FootwearDashboard() {
     setTrainingCourseIds([]);
     setTrainingStatuses([]);
     setSelectedMovementMonths([]);
-    setAttendancePeriod("current");
+    setAttendanceYear(String(CURRENT_LIMA_YEAR));
+    setAttendancePeriod(String(CURRENT_LIMA_MONTH));
+    setAttendanceDay("all");
   }
 
   function selectWorkerFromChart(item, setter = setSelectedWorkerIds) {
@@ -2756,11 +2772,40 @@ export default function FootwearDashboard() {
                   className="pbi-card--chart pbi-card--attendance-compact pbi-card--span-6"
                 >
                   <div className="pbi-ranking-task-filter pbi-attendance-period-filter">
-                    <label htmlFor="pbi-attendance-period">Periodo</label>
-                    <select id="pbi-attendance-period" value={attendancePeriod} onChange={(event) => setAttendancePeriod(event.target.value)}>
-                      <option value="current">Mes actual</option>
-                      <option value="previous">Mes anterior</option>
+                    <label htmlFor="pbi-attendance-year">Año</label>
+                    <select
+                      id="pbi-attendance-year"
+                      value={attendanceYear}
+                      onChange={(event) => {
+                        setAttendanceYear(event.target.value);
+                        setAttendanceDay("all");
+                      }}
+                    >
                       <option value="all">General</option>
+                      {attendanceAvailableYears.map((year) => <option key={year} value={String(year)}>{year}</option>)}
+                    </select>
+                    <label htmlFor="pbi-attendance-period">Periodo</label>
+                    <select
+                      id="pbi-attendance-period"
+                      value={attendancePeriod}
+                      onChange={(event) => {
+                        setAttendancePeriod(event.target.value);
+                        setAttendanceDay("all");
+                      }}
+                    >
+                      <option value="all">General</option>
+                      {MONTHLY_TASKS.map((month, index) => (
+                        <option key={month.label} value={String(index + 1)}>
+                          {month.name.charAt(0).toUpperCase() + month.name.slice(1)}
+                        </option>
+                      ))}
+                    </select>
+                    <label htmlFor="pbi-attendance-day">Fecha</label>
+                    <select id="pbi-attendance-day" value={attendanceDay} onChange={(event) => setAttendanceDay(event.target.value)}>
+                      <option value="all">Todos</option>
+                      {Array.from({ length: attendanceMonthDays }, (_, index) => index + 1).map((day) => (
+                        <option key={day} value={String(day)}>{day}</option>
+                      ))}
                     </select>
                   </div>
                   <AttendanceBars data={attendanceChartData} onSelect={(item) => selectWorkerFromChart(item, setPeopleWorkerIds)} selectedNames={selectedPeopleWorkerNames} />
