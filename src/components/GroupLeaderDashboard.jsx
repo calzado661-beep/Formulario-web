@@ -16,6 +16,7 @@ import {
   createIncident,
   deleteGroupLeaderRecord,
   friendlyError,
+  listLotes,
   loadIncidentContext,
   loadGroupLeaderContext,
   updateGroupLeaderActivity,
@@ -726,6 +727,7 @@ function GroupTimeDashboard({ user }) {
       historyMigrationRequired: false, averageReferenceByTask: {}, averageReferenceMigrationRequired: false
     }
   );
+  const { data: lotes = [] } = useAsyncData(() => listLotes().catch(() => []), [], []);
   const workers = data.workers || [];
   const tasks = data.tasks || [];
   const recordTasks = data.recordTasks || tasks;
@@ -1023,7 +1025,8 @@ function GroupTimeDashboard({ user }) {
         form,
         updateForm,
         brands,
-        stores
+        stores,
+        lotes
       }
     ) : null, /* @__PURE__ */ React.createElement(
       TextArea,
@@ -1150,6 +1153,7 @@ function GroupTimeDashboard({ user }) {
         tasks: recordTasks,
         brands,
         stores,
+        lotes,
         averageReferenceByTask,
         currentUserId: user.id,
         editingDisabled: data.historyMigrationRequired,
@@ -1176,6 +1180,7 @@ function EditableGroupHistory({
   tasks,
   brands,
   stores,
+  lotes,
   averageReferenceByTask,
   currentUserId,
   editingDisabled,
@@ -1226,6 +1231,7 @@ function EditableGroupHistory({
                     activity={row.activity}
                     tasks={tasks}
                     brands={brands}
+                    lotes={lotes}
                     currentUserId={currentUserId}
                     onReload={onReload}
                     onStatus={onStatus}
@@ -1244,6 +1250,7 @@ function EditableGroupHistory({
                     tasks={tasks}
                     brands={brands}
                     stores={stores}
+                    lotes={lotes}
                     saving={saving}
                     onDraft={onDraft}
                     onSave={() => onSave(record)}
@@ -1340,10 +1347,18 @@ function HistoryRow({ record, editable, busy, average, readonlyReason, onEdit, o
     </tr>
   );
 }
-function EditableHistoryRow({ record, draft, tasks, brands, stores, saving, onDraft, onSave, onCancel }) {
+function EditableHistoryRow({ record, draft, tasks, brands, stores, lotes, saving, onDraft, onSave, onCancel }) {
   const selectedTask = tasks.find((task) => String(task.id) === String(draft.tarea_id));
   const fields = getTaskFieldFlags(selectedTask);
   const updateDraft = (changes) => onDraft((current) => ({ ...current, ...changes }));
+  const availableLotes = (lotes || []).filter((lote) => (
+    lote.estado === "pendiente" && (!draft.marca_id || Number(lote.marca_id) === Number(draft.marca_id))
+  ));
+  // El lote ya guardado se mantiene visible aunque ya no este disponible
+  // (por ejemplo, si se marco agotado despues), para no perder el dato.
+  const loteOptions = draft.lote && !availableLotes.some((lote) => lote.codigo_lote === draft.lote)
+    ? [{ id: draft.lote, codigo_lote: draft.lote, marca_nombre: "no disponible" }, ...availableLotes]
+    : availableLotes;
   const start = limaDateTimeToISO(draft.fecha_registro, draft.hora_inicio);
   const finish = limaDateTimeToISO(draft.fecha_fin || draft.fecha_registro, draft.hora_fin);
   return (
@@ -1417,13 +1432,17 @@ function EditableHistoryRow({ record, draft, tasks, brands, stores, saving, onDr
       </td>
       <td>
         {fields.lote ? (
-          <input
-            className="history-cell-input"
+          <select
+            className="history-cell-input history-select-input"
             aria-label={`Codigo de lote del registro ${record.id}`}
-            value={draft.lote}
-            onChange={(event) => updateDraft({ lote: event.target.value.toUpperCase() })}
-            placeholder="Opcional"
-          />
+            value={draft.lote || ""}
+            onChange={(event) => updateDraft({ lote: event.target.value })}
+          >
+            <option value="">{loteOptions.length ? "Selecciona" : "Sin lotes"}</option>
+            {loteOptions.map((lote) => (
+              <option key={lote.id} value={lote.codigo_lote}>{lote.codigo_lote} - {lote.marca_nombre}</option>
+            ))}
+          </select>
         ) : <span className="muted">No aplica</span>}
       </td>
       <td>
@@ -1466,7 +1485,7 @@ function EditableHistoryRow({ record, draft, tasks, brands, stores, saving, onDr
     </tr>
   );
 }
-function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, onStatus }) {
+function PendingActivityRow({ activity, tasks, brands, lotes, currentUserId, onReload, onStatus }) {
   const mine = String(activity.encargado_id) === String(currentUserId);
   const task = tasks.find((item) => String(item.id) === String(activity.tarea_id)) || { nombre: activity.tarea_nombre };
   const fields = getTaskFieldFlags(task);
@@ -1483,6 +1502,12 @@ function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, 
   }));
   const [busy, setBusy] = useState(false);
   const updateDraft = (changes) => setDraft((current) => ({ ...current, ...changes }));
+  const availableLotes = (lotes || []).filter((lote) => (
+    lote.estado === "pendiente" && (!draft.marca_id || Number(lote.marca_id) === Number(draft.marca_id))
+  ));
+  const loteOptions = draft.lote && !availableLotes.some((lote) => lote.codigo_lote === draft.lote)
+    ? [{ id: draft.lote, codigo_lote: draft.lote, marca_nombre: "no disponible" }, ...availableLotes]
+    : availableLotes;
   const finishIso = limaDateTimeToISO(draft.fecha_fin, draft.hora_fin);
   const finishValid = Boolean(finishIso) && new Date(finishIso) > new Date(activity.hora_inicio);
   const durationPreview = finishValid ? formatDurationFromDates(activity.hora_inicio, finishIso) : "Pendiente";
@@ -1598,14 +1623,18 @@ function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, 
       <td>
         {usesLote ? (
           mine ? (
-            <input
-              className="history-cell-input"
-              value={draft.lote}
+            <select
+              className="history-cell-input history-select-input"
+              value={draft.lote || ""}
               disabled={busy}
-              placeholder="Opcional"
               aria-label={`Lote actividad ${activity.id}`}
-              onChange={(event) => updateDraft({ lote: event.target.value.toUpperCase() })}
-            />
+              onChange={(event) => updateDraft({ lote: event.target.value })}
+            >
+              <option value="">{loteOptions.length ? "Selecciona" : "Sin lotes"}</option>
+              {loteOptions.map((lote) => (
+                <option key={lote.id} value={lote.codigo_lote}>{lote.codigo_lote} - {lote.marca_nombre}</option>
+              ))}
+            </select>
           ) : (activity.lote || "-")
         ) : <span className="muted">No aplica</span>}
       </td>
@@ -1633,10 +1662,13 @@ function PendingActivityRow({ activity, tasks, brands, currentUserId, onReload, 
     </tr>
   );
 }
-function DynamicGroupFields({ mode, task, form, updateForm, brands, stores }) {
+function DynamicGroupFields({ mode, task, form, updateForm, brands, stores, lotes }) {
   if (mode.completedOnly) {
     return /* @__PURE__ */ React.createElement("div", { className: "form-span" }, /* @__PURE__ */ React.createElement(Alert, null, "Esta tarea se guarda como realizado."));
   }
+  const availableLotes = (lotes || []).filter((lote) => (
+    lote.estado === "pendiente" && (!form.marca_id || Number(lote.marca_id) === Number(form.marca_id))
+  ));
   return /* @__PURE__ */ React.createElement(React.Fragment, null, mode.requiresBrand ? /* @__PURE__ */ React.createElement(
     SelectInput,
     {
@@ -1659,12 +1691,15 @@ function DynamicGroupFields({ mode, task, form, updateForm, brands, stores }) {
       hint: "Obligatorio para guardar esta tarea."
     }
   ) : null, mode.requiresLote ? /* @__PURE__ */ React.createElement(
-    TextInput,
+    SelectInput,
     {
       label: "Codigo de lote",
       value: form.lote,
-      onChange: (lote) => updateForm({ lote: lote.toUpperCase() }),
-      placeholder: "Ej. A05",
+      onChange: (lote) => updateForm({ lote }),
+      options: [
+        { value: "", label: availableLotes.length ? "Selecciona un lote" : "No hay lotes disponibles" },
+        ...availableLotes.map((lote) => ({ value: lote.codigo_lote, label: `${lote.codigo_lote} - ${lote.marca_nombre}` }))
+      ],
       hint: "Opcional."
     }
   ) : null, mode.requiresStore ? /* @__PURE__ */ React.createElement(

@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Package,
   PanelLeftClose,
   PanelLeftOpen,
   ShieldCheck,
@@ -29,6 +30,7 @@ const adminItems = [
   { key: "Asistencia", icon: CalendarCheck2 },
   { key: "Notificaciones", icon: BellRing },
   { key: "Tiendas", icon: Store },
+  { key: "Lotes", icon: Package },
   { key: "Amonestaciones", icon: AlertTriangle },
   { key: "Documentos", icon: FileSpreadsheet }
 ];

@@ -6,6 +6,7 @@ import {
   createAmonestacion,
   createAttendanceReportSettings,
   createEncargado,
+  createLote,
   createTask,
   createTienda,
   createTrainingCourse,
@@ -13,6 +14,7 @@ import {
   deleteActivityReportSettings,
   deleteAmonestacion,
   deleteAttendanceReportSettings,
+  deleteLote,
   deleteTask,
   deleteTienda,
   deleteTrainingCourse,
@@ -27,7 +29,9 @@ import {
   listAllActivityLogs,
   listAmonestaciones,
   listAttendances,
+  listBrands,
   listEncargados,
+  listLotes,
   listPenalizaciones,
   listTasks,
   listTiendas,
@@ -46,11 +50,12 @@ import {
   updateAttendanceReportSettings,
   updateActivityReportSettings,
   updateEncargado,
+  updateLote,
   updateTienda,
   updateTrainingCourse,
   updateUser
 } from "../lib/repository";
-import { birthdayMaxISO, formatDateTimeLima, todayLimaISO } from "../lib/dates";
+import { birthdayMaxISO, formatDateLima, formatDateTimeLima, todayLimaISO } from "../lib/dates";
 import {
   emptyQuantityRanges,
   getTaskTitle,
@@ -102,6 +107,7 @@ export default function AdminDashboard({ section }) {
   if (section === "Asistencia") return <AttendancePanel />;
   if (section === "Notificaciones") return <NotificationsPanel />;
   if (section === "Tiendas") return <StoresPanel />;
+  if (section === "Lotes") return <LotesPanel />;
   if (section === "Amonestaciones") return <WarningsPanel />;
   if (section === "Documentos") return <DocumentsPanel />;
   return <FootwearDashboard />;
@@ -186,6 +192,39 @@ function personalDataPayload(form) {
     const trimmed = String(form[key] || "").trim();
     return [key, trimmed || null];
   }));
+}
+
+const userColumnLabels = {
+  id: "ID",
+  nombre: "Nombres",
+  nombres_completos: "Nombres y apellidos",
+  email: "Usuario o correo",
+  rol: "Rol",
+  activo: "Activo",
+  fecha_cumpleanos: "Fecha de nacimiento",
+  sueldo: "Sueldo",
+  dni: "DNI",
+  sexo: "Sexo",
+  telefono: "Telefono",
+  telefono_emergencia: "Telefono de emergencia",
+  direccion: "Direccion",
+  distrito: "Distrito",
+  grado_academico: "Grado academico",
+  ciclo_semestre: "Ciclo / semestre",
+  puesto: "Puesto",
+  estado_civil: "Estado civil",
+  hijos: "Numero de hijos",
+  talla_zapatillas: "Talla de zapatillas",
+  talla_polo: "Talla de polo",
+  fecha_ingreso: "Fecha de ingreso",
+  fecha_salida: "Fecha de salida",
+  motivo_salida: "Motivo de salida",
+  created_at: "Creado el",
+  updated_at: "Actualizado el"
+};
+
+function userColumnLabel(key) {
+  return userColumnLabels[key] || String(key).replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function StatusAlert({ status }) {
@@ -372,17 +411,17 @@ function UsersPanel() {
 
   const inactiveCount = users.filter((user) => !boolValue(user.activo)).length;
   const visibleUsers = showInactive ? users : users.filter((user) => boolValue(user.activo));
-  const rows = visibleUsers.map((user) => ({
-    id: user.id,
-    Nombre: user.nombre,
-    "Nombres completos": user.nombres_completos || "",
-    Usuario: user.email,
-    Rol: normalizeRole(user.rol),
-    Sueldo: Number(user.sueldo || 0).toLocaleString("es-PE", { style: "currency", currency: "PEN" }),
-    Activo: boolValue(user.activo),
-    "Fecha nacimiento": user.fecha_cumpleanos || "",
-    "Telefono emergencia": user.telefono_emergencia || ""
-  }));
+  const userColumns = Array.from(new Set(visibleUsers.flatMap((user) => Object.keys(user))));
+  const rows = visibleUsers.map((user) => Object.fromEntries(
+    userColumns.map((key) => {
+      const label = userColumnLabel(key);
+      if (key === "rol") return [label, normalizeRole(user[key])];
+      if (key === "activo") return [label, boolValue(user[key])];
+      if (key === "sueldo") return [label, Number(user[key] || 0).toLocaleString("es-PE", { style: "currency", currency: "PEN" })];
+      return [label, user[key]];
+    })
+  ));
+  const tableColumns = userColumns.map(userColumnLabel);
 
   return (
     <div className="stack">
@@ -404,7 +443,7 @@ function UsersPanel() {
         ) : (
           <DataTable
             rows={rows}
-            columns={["Nombre", "Nombres completos", "Usuario", "Rol", "Activo", "Fecha nacimiento", "Telefono emergencia"]}
+            columns={tableColumns}
             empty={showInactive ? "No hay usuarios registrados." : "No hay usuarios activos. Presiona \"Mostrar inactivos\" para verlos."}
           />
         )}
@@ -3807,6 +3846,230 @@ function StoresPanel() {
             <div className="danger-zone form-span">
               <p>Eliminaras la tienda {selectedStore.nombre}.</p>
               <Button type="button" variant="danger" icon={Trash2} loading={saving} onClick={submitDelete}>Eliminar tienda</Button>
+            </div>
+          ) : null}
+        </form>
+      </Panel>
+    </div>
+  );
+}
+
+const LOTE_ESTADOS = [
+  { value: "pendiente", label: "Pendiente" },
+  { value: "completado", label: "Completado" }
+];
+
+function emptyLoteForm() {
+  return {
+    codigo_lote: "", cantidad_lote: "", marca_id: "", fecha_ingreso: todayLimaISO(),
+    proveedor: "", usuario_id: "", estado: "pendiente"
+  };
+}
+
+function LotesPanel() {
+  const { data: lotes = [], loading, error, reload } = useAsyncData(listLotes, [], []);
+  const { data: brands = [] } = useAsyncData(listBrands, [], []);
+  const { data: users = [] } = useAsyncData(selectUsers, [], []);
+  const [tab, setTab] = useState("Crear");
+  const [status, setStatus] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [selectedId, setSelectedId] = useState("");
+  const [form, setForm] = useState(emptyLoteForm);
+
+  const teamLeaders = users.filter((user) => normalizeRole(user.rol) === "jefe de equipo" && boolValue(user.activo));
+  const selectedLote = lotes.find((lote) => String(lote.id) === String(selectedId));
+
+  useEffect(() => {
+    if (!selectedLote) return;
+    setForm({
+      codigo_lote: selectedLote.codigo_lote || "",
+      cantidad_lote: String(selectedLote.cantidad_lote ?? ""),
+      marca_id: String(selectedLote.marca_id || ""),
+      fecha_ingreso: selectedLote.fecha_ingreso || "",
+      proveedor: selectedLote.proveedor || "",
+      usuario_id: String(selectedLote.usuario_id || ""),
+      estado: selectedLote.estado || "pendiente"
+    });
+  }, [selectedLote?.id]);
+
+  function validateForm() {
+    if (!form.codigo_lote.trim()) return "El codigo de lote es obligatorio.";
+    if (!Number.isInteger(Number(form.cantidad_lote)) || Number(form.cantidad_lote) < 0) {
+      return "La cantidad debe ser un numero entero mayor o igual a cero.";
+    }
+    if (!form.marca_id) return "Selecciona una marca.";
+    if (!form.fecha_ingreso) return "Selecciona una fecha de ingreso.";
+    if (!form.proveedor.trim()) return "El proveedor es obligatorio.";
+    if (!form.usuario_id) return "Selecciona el jefe de equipo responsable del lote.";
+    if (!LOTE_ESTADOS.some((option) => option.value === form.estado)) return "Selecciona un estado valido.";
+    return null;
+  }
+
+  function buildPayload() {
+    return {
+      codigo_lote: form.codigo_lote.trim(),
+      cantidad_lote: Number(form.cantidad_lote),
+      marca_id: Number(form.marca_id),
+      fecha_ingreso: form.fecha_ingreso,
+      proveedor: form.proveedor.trim(),
+      usuario_id: Number(form.usuario_id),
+      estado: form.estado
+    };
+  }
+
+  async function submitCreate(event) {
+    event.preventDefault();
+    setStatus(null);
+    const validationError = validateForm();
+    if (validationError) {
+      setStatus({ type: "error", message: validationError });
+      return;
+    }
+    setSaving(true);
+    try {
+      await createLote(buildPayload());
+      setForm(emptyLoteForm());
+      setStatus({ type: "success", message: "Lote creado correctamente." });
+      reload();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitEdit(event) {
+    event.preventDefault();
+    if (!selectedLote) return;
+    setStatus(null);
+    const validationError = validateForm();
+    if (validationError) {
+      setStatus({ type: "error", message: validationError });
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateLote(selectedLote.id, buildPayload());
+      setStatus({ type: "success", message: "Lote actualizado correctamente." });
+      reload();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitDelete() {
+    if (!selectedLote) return;
+    if (!window.confirm(`Eliminar el lote "${selectedLote.codigo_lote}" (${selectedLote.marca_nombre})? Esta accion no se puede deshacer.`)) return;
+    setStatus(null);
+    setSaving(true);
+    try {
+      await deleteLote(selectedLote.id);
+      setSelectedId("");
+      setForm(emptyLoteForm());
+      setStatus({ type: "success", message: "Lote eliminado correctamente." });
+      reload();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const rows = lotes.map((lote) => ({
+    id: lote.id,
+    "Codigo de lote": lote.codigo_lote,
+    Cantidad: lote.cantidad_lote,
+    Marca: lote.marca_nombre,
+    Estado: LOTE_ESTADOS.find((option) => option.value === lote.estado)?.label || lote.estado,
+    "Fecha de ingreso": formatDateLima(lote.fecha_ingreso),
+    Proveedor: lote.proveedor,
+    "Jefe de equipo": lote.usuario_nombre
+  }));
+
+  return (
+    <div className="stack">
+      <Panel
+        title="Catalogo de lotes"
+        eyebrow="Inventario"
+        actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}
+      >
+        {loading ? (
+          <LoadingBlock />
+        ) : (
+          <DataTable
+            rows={rows}
+            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Proveedor", "Jefe de equipo"]}
+            onRowClick={(row) => {
+              setSelectedId(String(row.id));
+              setTab("Editar");
+            }}
+            empty="No hay lotes registrados."
+          />
+        )}
+        {error ? <Alert type="error">{error}</Alert> : null}
+      </Panel>
+
+      <Panel>
+        <Tabs tabs={["Crear", "Editar", "Eliminar"]} active={tab} onChange={setTab} />
+        <StatusAlert status={status} />
+        <form className="form-grid" onSubmit={tab === "Crear" ? submitCreate : submitEdit}>
+          {tab !== "Crear" ? (
+            <SelectInput
+              label="Lote"
+              value={selectedId}
+              onChange={setSelectedId}
+              options={[
+                { value: "", label: "Selecciona un lote" },
+                ...lotes.map((lote) => ({ value: String(lote.id), label: `${lote.codigo_lote} - ${lote.marca_nombre}` }))
+              ]}
+            />
+          ) : null}
+          {tab !== "Eliminar" ? (
+            <>
+              <TextInput label="Codigo de lote" value={form.codigo_lote} onChange={(codigo_lote) => setForm({ ...form, codigo_lote })} />
+              <TextInput
+                label="Cantidad"
+                type="number"
+                min="0"
+                value={form.cantidad_lote}
+                onChange={(cantidad_lote) => setForm({ ...form, cantidad_lote })}
+              />
+              <SelectInput
+                label="Marca"
+                value={form.marca_id}
+                onChange={(marca_id) => setForm({ ...form, marca_id })}
+                options={[
+                  { value: "", label: "Selecciona una marca" },
+                  ...brands.map((brand) => ({ value: String(brand.id), label: brand.nombre }))
+                ]}
+              />
+              <TextInput
+                label="Fecha de ingreso"
+                type="date"
+                value={form.fecha_ingreso}
+                onChange={(fecha_ingreso) => setForm({ ...form, fecha_ingreso })}
+              />
+              <TextInput label="Proveedor" value={form.proveedor} onChange={(proveedor) => setForm({ ...form, proveedor })} />
+              <SelectInput
+                label="Jefe de equipo"
+                value={form.usuario_id}
+                onChange={(usuario_id) => setForm({ ...form, usuario_id })}
+                options={[
+                  { value: "", label: teamLeaders.length ? "Selecciona un jefe de equipo" : "No hay jefes de equipo activos" },
+                  ...teamLeaders.map((leader) => ({ value: String(leader.id), label: leader.nombre || leader.email }))
+                ]}
+              />
+              <SelectInput label="Estado" value={form.estado} onChange={(estado) => setForm({ ...form, estado })} options={LOTE_ESTADOS} />
+              <div className="form-span">
+                <FormActions saving={saving} saveLabel={tab === "Crear" ? "Crear lote" : "Guardar cambios"} />
+              </div>
+            </>
+          ) : selectedLote ? (
+            <div className="danger-zone form-span">
+              <p>Eliminaras el lote {selectedLote.codigo_lote} ({selectedLote.marca_nombre}).</p>
+              <Button type="button" variant="danger" icon={Trash2} loading={saving} onClick={submitDelete}>Eliminar lote</Button>
             </div>
           ) : null}
         </form>

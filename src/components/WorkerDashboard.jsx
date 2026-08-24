@@ -5,6 +5,7 @@ import {
   friendlyError,
   getTasksForUser,
   listBrands,
+  listLotes,
   listTiendas,
   listTaskScoreRanges,
   listTasks,
@@ -103,15 +104,18 @@ export default function WorkerDashboard({ user, embedded = false }) {
 function RegisterActivity({ user }) {
   const { data, loading, error, reload } = useAsyncData(
     async () => {
-      const [tasks, brands, stores] = await Promise.all([getTasksForUser(user), listBrands(), listTiendas()]);
-      return { tasks, brands, stores: stores.filter((store) => String(store.activo ?? true) !== "false") };
+      const [tasks, brands, stores, lotes] = await Promise.all([
+        getTasksForUser(user), listBrands(), listTiendas(), listLotes().catch(() => [])
+      ]);
+      return { tasks, brands, stores: stores.filter((store) => String(store.activo ?? true) !== "false"), lotes };
     },
     [user?.id],
-    { tasks: [], brands: [], stores: [] }
+    { tasks: [], brands: [], stores: [], lotes: [] }
   );
   const tasks = data.tasks || [];
   const brands = data.brands || [];
   const stores = data.stores || [];
+  const lotes = data.lotes || [];
   const [records, setRecords] = useState([emptyRecord()]);
   const [status, setStatus] = useState(null);
   const [successDialog, setSuccessDialog] = useState(null);
@@ -465,6 +469,7 @@ function RegisterActivity({ user }) {
                   task={selectedTask}
                   brands={brands}
                   stores={stores}
+                  lotes={lotes}
                   onChange={(changes) => updateRecord(index, changes)}
                 />
               )}
@@ -513,7 +518,7 @@ function RegisterActivity({ user }) {
   );
 }
 
-function DynamicRecordFields({ record, task, brands, stores, onChange }) {
+function DynamicRecordFields({ record, task, brands, stores, lotes, onChange }) {
   const title = getTaskTitle(task);
   const [, fallbackUnit] = getActivityCaptureMode(title);
   const type = recordCaptureType(task);
@@ -537,7 +542,7 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
         {flags.marca ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
         {usesGuideBreakdown ? <GuideFields record={record} onChange={onChange} /> : null}
-        {flags.lote ? <LoteField record={record} onChange={onChange} /> : null}
+        {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
@@ -560,7 +565,7 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
         {flags.marca ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
         {usesGuideBreakdown ? <GuideFields record={record} onChange={onChange} /> : null}
-        {flags.lote ? <LoteField record={record} onChange={onChange} /> : null}
+        {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
@@ -579,7 +584,7 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
         {flags.marca ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
         {flags.guia ? <SingleGuideField record={record} onChange={onChange} /> : null}
-        {flags.lote ? <LoteField record={record} onChange={onChange} /> : null}
+        {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
         <Alert>Esta tarea usa el puntaje fijo definido por administracion.</Alert>
@@ -598,7 +603,7 @@ function DynamicRecordFields({ record, task, brands, stores, onChange }) {
       {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
       {flags.marca ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
       {flags.guia ? <SingleGuideField record={record} onChange={onChange} /> : null}
-      {flags.lote ? <LoteField record={record} onChange={onChange} /> : null}
+      {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
       <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
       <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       <Alert>
@@ -646,13 +651,22 @@ function GuideFields({ record, onChange }) {
   );
 }
 
-function LoteField({ record, onChange }) {
+function LoteField({ record, lotes, onChange }) {
+  // Si la tarea tambien pide marca, solo se ofrecen los lotes de esa marca;
+  // sin marca seleccionada (o si la tarea no la pide) se ofrecen todos los
+  // lotes disponibles.
+  const availableLotes = (lotes || []).filter((lote) => (
+    lote.estado === "pendiente" && (!record.marcaId || Number(lote.marca_id) === Number(record.marcaId))
+  ));
   return (
-    <TextInput
+    <SelectInput
       label="Lote"
-      value={record.lote}
-      onChange={(lote) => onChange({ lote: lote.toUpperCase() })}
-      placeholder="Ej. A05"
+      value={record.lote || ""}
+      onChange={(lote) => onChange({ lote })}
+      options={[
+        { value: "", label: availableLotes.length ? "Selecciona un lote" : "No hay lotes disponibles" },
+        ...availableLotes.map((lote) => ({ value: lote.codigo_lote, label: `${lote.codigo_lote} - ${lote.marca_nombre}` }))
+      ]}
     />
   );
 }

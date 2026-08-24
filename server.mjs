@@ -385,7 +385,9 @@ async function selectUsers() {
   const [usersResult, movementsResult] = await Promise.all([
     supabase
       .from("usuarios")
-      .select("id,nombre,email,rol,activo,created_at,fecha_cumpleanos,sueldo,dni,sexo,telefono,telefono_emergencia,direccion,distrito,grado_academico,ciclo_semestre,puesto,estado_civil,hijos,talla_zapatillas,talla_polo,nombres_completos")
+      // La gestion administrativa debe reflejar todos los campos del perfil.
+      // Los campos de acceso se eliminan antes de devolver la respuesta.
+      .select("*")
       .order("id", { ascending: true }),
     supabase
       .from("movimientos_personal")
@@ -411,8 +413,9 @@ async function selectUsers() {
     const ingreso = summary.ingreso?.fecha_movimiento || null;
     const salida = summary.salida?.fecha_movimiento || null;
     const salidaValida = Boolean(ingreso && salida && salida >= ingreso);
+    const safeUser = Object.fromEntries(Object.entries(user).filter(([key]) => !/password|secret|token|api[_-]?key/i.test(key)));
     return {
-      ...user,
+      ...safeUser,
       fecha_ingreso: ingreso,
       fecha_salida: salidaValida ? salida : null,
       motivo_salida: salidaValida ? (summary.salida?.motivo || null) : null
@@ -1351,7 +1354,8 @@ async function handleReadFootwearDashboard(request, response) {
       trainingAssignments,
       scoringRules,
       penalties,
-      averageReferences
+      averageReferences,
+      lotes
     ] = await Promise.all([
       selectAllDashboardRows("usuarios"),
       selectAllDashboardRows(taskTable),
@@ -1368,7 +1372,8 @@ async function handleReadFootwearDashboard(request, response) {
       selectAllDashboardRows("usuario_capacitaciones", { optional: true }),
       selectAllDashboardRows("reglas_puntaje", { optional: true }),
       selectAllDashboardRows("penalizaciones", { optional: true }),
-      selectAverageReferencesByTask()
+      selectAverageReferencesByTask(),
+      selectAllDashboardRows("lotes", { optional: true })
     ]);
 
     const dashboardUsers = users.filter((user) => normalizeRole(user.rol) !== "administrador");
@@ -1473,6 +1478,12 @@ async function handleReadFootwearDashboard(request, response) {
         active: isActive(task.activo)
       })),
       brands: brands.map((brand) => ({ id: Number(brand.id), name: String(brand.nombre || `Marca ${brand.id}`) })),
+      lotes: lotes.map((lote) => ({
+        id: Number(lote.id),
+        code: String(lote.codigo_lote || "").trim().toUpperCase(),
+        quantity: Number(lote.cantidad_lote || 0),
+        status: String(lote.estado || "pendiente").trim().toLowerCase()
+      })).filter((lote) => lote.code),
       penalties: penalties.map((item) => ({ key: String(item.clave || ""), points: Number(item.puntos || 0) })),
       averageReferenceByTask: averageReferences.byTask,
       averageReferenceMigrationRequired: averageReferences.migrationRequired,
@@ -1493,6 +1504,9 @@ async function handleReadFootwearDashboard(request, response) {
         taskName: String(taskTitle(errorTaskById.get(Number(row.tarea_error_id))) || ""), errorType: String(row.tipo_error || "Sin tipo"),
         shift: String(row.turno || "Sin turno").trim().toLowerCase(),
         storeId: Number(row.tienda_id) || null,
+        // Conserva todas las columnas de registro_errores para el detalle del
+        // grafico, incluso si en el futuro se agregan campos al esquema.
+        details: row,
         date: dashboardDate(row.fecha_error || row.created_at)
       })).filter((row) => row.date),
       warnings: visibleWarnings.map((row) => ({
@@ -2024,6 +2038,162 @@ async function handleDeleteStore(request, response, storeId) {
     sendJson(response, 200, { deleted: true, archived: false });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo eliminar la tienda." });
+  }
+}
+
+const LOTE_SELECT_COLUMNS = "id,codigo_lote,cantidad_lote,marca_id,fecha_ingreso,proveedor,usuario_id,estado";
+const LOTE_ESTADOS = ["pendiente", "completado"];
+
+async function enrichLotes(rows) {
+  const marcaIds = Array.from(new Set(rows.map((row) => Number(row.marca_id)).filter(Boolean)));
+  const usuarioIds = Array.from(new Set(rows.map((row) => Number(row.usuario_id)).filter(Boolean)));
+  const [brandsResult, usersResult] = await Promise.all([
+    marcaIds.length ? supabase.from("marcas").select("id,nombre").in("id", marcaIds) : Promise.resolve({ data: [] }),
+    usuarioIds.length ? supabase.from("usuarios").select("id,nombre,email").in("id", usuarioIds) : Promise.resolve({ data: [] })
+  ]);
+  if (brandsResult.error) throw brandsResult.error;
+  if (usersResult.error) throw usersResult.error;
+  const brandById = new Map((brandsResult.data || []).map((brand) => [Number(brand.id), brand.nombre]));
+  const userById = new Map((usersResult.data || []).map((user) => [Number(user.id), user.nombre || user.email]));
+  return rows.map((row) => ({
+    ...row,
+    marca_nombre: brandById.get(Number(row.marca_id)) || `Marca ${row.marca_id}`,
+    usuario_nombre: userById.get(Number(row.usuario_id)) || `Usuario ${row.usuario_id}`
+  }));
+}
+
+async function handleReadLotes(request, response) {
+  try {
+    if (!requireSessionRole(request, response, ["administrador", "operante", "jefe de equipo", "jefe de grupo"])) return;
+    const result = await supabase.from("lotes").select(LOTE_SELECT_COLUMNS).order("id", { ascending: false });
+    if (result.error) throw result.error;
+    sendJson(response, 200, { lotes: await enrichLotes(result.data || []) });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudieron cargar los lotes." });
+  }
+}
+
+function invalidLote(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
+
+function validateLotePayload(body) {
+  const codigoLote = String(body.codigo_lote || "").trim().toUpperCase();
+  const proveedor = String(body.proveedor || "").trim();
+  const cantidadLote = Number(body.cantidad_lote);
+  const marcaId = Number(body.marca_id);
+  const fechaIngreso = String(body.fecha_ingreso || "").trim();
+  const usuarioId = Number(body.usuario_id);
+  const estado = String(body.estado || "pendiente").trim().toLowerCase();
+  if (!codigoLote) throw invalidLote("El codigo de lote es obligatorio.");
+  if (!Number.isInteger(cantidadLote) || cantidadLote < 0) {
+    throw invalidLote("La cantidad del lote debe ser un numero entero mayor o igual a cero.");
+  }
+  if (!Number.isInteger(marcaId) || marcaId <= 0) throw invalidLote("Selecciona una marca.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaIngreso)) throw invalidLote("Selecciona una fecha de ingreso valida.");
+  if (!proveedor) throw invalidLote("El proveedor es obligatorio.");
+  if (!Number.isInteger(usuarioId) || usuarioId <= 0) throw invalidLote("Selecciona el jefe de equipo responsable del lote.");
+  if (!LOTE_ESTADOS.includes(estado)) throw invalidLote("El estado del lote no es valido.");
+  return {
+    codigo_lote: codigoLote,
+    cantidad_lote: cantidadLote,
+    marca_id: marcaId,
+    fecha_ingreso: fechaIngreso,
+    proveedor,
+    usuario_id: usuarioId,
+    estado
+  };
+}
+
+async function validateLoteResponsible(usuarioId) {
+  const result = await supabase.from("usuarios").select("id,rol,activo").eq("id", usuarioId).maybeSingle();
+  if (result.error) throw result.error;
+  if (!result.data || normalizeRole(result.data.rol) !== "jefe de equipo" || !isActive(result.data.activo)) {
+    throw invalidLote("Selecciona un jefe de equipo activo y valido.");
+  }
+}
+
+async function handleCreateLote(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const payload = validateLotePayload(body);
+    const brandResult = await supabase.from("marcas").select("id").eq("id", payload.marca_id).maybeSingle();
+    if (brandResult.error) throw brandResult.error;
+    if (!brandResult.data) {
+      sendJson(response, 400, { error: "Selecciona una marca valida." });
+      return;
+    }
+    await validateLoteResponsible(payload.usuario_id);
+    let result = await supabase.from("lotes").insert(payload).select(LOTE_SELECT_COLUMNS).single();
+    if (isPrimaryKeySequenceConflict(result.error)) {
+      result = await supabase
+        .from("lotes")
+        .insert({ ...payload, id: await nextTableId("lotes") })
+        .select(LOTE_SELECT_COLUMNS)
+        .single();
+    }
+    if (result.error) {
+      sendJson(response, result.error.code === "23514" ? 400 : 500, {
+        error: result.error.code === "23514" ? "La cantidad del lote no puede ser negativa." : result.error.message || "No se pudo crear el lote."
+      });
+      return;
+    }
+    const [lote] = await enrichLotes([result.data]);
+    sendJson(response, 201, { lote });
+  } catch (error) {
+    sendJson(response, error.statusCode || 500, { error: error.message || "No se pudo crear el lote." });
+  }
+}
+
+async function handleUpdateLote(request, response, loteId) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const payload = validateLotePayload(body);
+    const brandResult = await supabase.from("marcas").select("id").eq("id", payload.marca_id).maybeSingle();
+    if (brandResult.error) throw brandResult.error;
+    if (!brandResult.data) {
+      sendJson(response, 400, { error: "Selecciona una marca valida." });
+      return;
+    }
+    await validateLoteResponsible(payload.usuario_id);
+    const result = await supabase.from("lotes").update(payload).eq("id", loteId).select(LOTE_SELECT_COLUMNS).maybeSingle();
+    if (result.error) {
+      sendJson(response, result.error.code === "23514" ? 400 : 500, {
+        error: result.error.code === "23514" ? "La cantidad del lote no puede ser negativa." : result.error.message || "No se pudo actualizar el lote."
+      });
+      return;
+    }
+    if (!result.data) {
+      sendJson(response, 404, { error: "Lote no encontrado." });
+      return;
+    }
+    const [lote] = await enrichLotes([result.data]);
+    sendJson(response, 200, { lote });
+  } catch (error) {
+    sendJson(response, error.statusCode || 500, { error: error.message || "No se pudo actualizar el lote." });
+  }
+}
+
+async function handleDeleteLote(request, response, loteId) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const result = await supabase.from("lotes").delete().eq("id", loteId).select("id").maybeSingle();
+    if (result.error?.code === "23503") {
+      sendJson(response, 409, { error: "No se puede eliminar: hay registros relacionados con este lote." });
+      return;
+    }
+    if (result.error) throw result.error;
+    if (!result.data) {
+      sendJson(response, 404, { error: "Lote no encontrado." });
+      return;
+    }
+    sendJson(response, 200, { deleted: true });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo eliminar el lote." });
   }
 }
 
@@ -4608,6 +4778,23 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (request.url?.startsWith("/api/stores") && request.method === "POST") {
     await handleCreateStore(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/lotes/") && ["PATCH", "DELETE"].includes(request.method)) {
+    const loteId = Number(new URL(request.url, `http://${request.headers.host}`).pathname.split("/").pop());
+    if (request.method === "PATCH") await handleUpdateLote(request, response, loteId);
+    else await handleDeleteLote(request, response, loteId);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/lotes") && request.method === "GET") {
+    await handleReadLotes(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/lotes") && request.method === "POST") {
+    await handleCreateLote(request, response);
     return;
   }
 

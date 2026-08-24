@@ -38,8 +38,28 @@ const MONTHLY_TASKS = [
 const CURRENT_LIMA_PARTS = dashboardDateParts();
 const CURRENT_LIMA_YEAR = CURRENT_LIMA_PARTS.year;
 const CURRENT_LIMA_MONTH = CURRENT_LIMA_PARTS.month;
-const PREVIOUS_LIMA_MONTH = CURRENT_LIMA_MONTH === 1 ? 12 : CURRENT_LIMA_MONTH - 1;
-const PREVIOUS_LIMA_MONTH_YEAR = CURRENT_LIMA_MONTH === 1 ? CURRENT_LIMA_YEAR - 1 : CURRENT_LIMA_YEAR;
+const CURRENT_LIMA_DAY = CURRENT_LIMA_PARTS.day;
+function monthWeekOptions(year, month) {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return [];
+  const firstDay = new Date(Date.UTC(year, month - 1, 1));
+  const lastDay = new Date(Date.UTC(year, month, 0));
+  const firstMonday = new Date(firstDay);
+  firstMonday.setUTCDate(firstDay.getUTCDate() - ((firstDay.getUTCDay() + 6) % 7));
+  const options = [];
+  for (let start = new Date(firstMonday), index = 1; start <= lastDay; start.setUTCDate(start.getUTCDate() + 7), index += 1) {
+    const end = new Date(start);
+    end.setUTCDate(start.getUTCDate() + 6);
+    const visibleStart = start < firstDay ? firstDay : start;
+    const visibleEnd = end > lastDay ? lastDay : end;
+    options.push({
+      value: String(index),
+      start: start.toISOString().slice(0, 10),
+      end: end.toISOString().slice(0, 10),
+      label: `Semana ${index} (${visibleStart.getUTCDate()}-${visibleEnd.getUTCDate()})`
+    });
+  }
+  return options;
+}
 
 const STAFF_ROTATION = [
   { name: "Ene", primary: 11, secondary: 10 },
@@ -650,14 +670,42 @@ function tooltipAtFocus(event, setTooltip, label, value, detail = "") {
   setTooltip({ x, y, label, value, detail });
 }
 
-function PersonnelKpi({ label, value, detail }) {
+function PersonnelKpi({ label, value, detail, attendance }) {
   return (
     <article className="pbi-kpi pbi-kpi--personnel" aria-label={`${label}: ${value}${detail ? `. ${detail}` : ""}`}>
       <span className="pbi-kpi-label">
         <span>{label}</span>
         {detail ? <small className="pbi-personnel-kpi-detail">{detail}</small> : null}
+        {attendance ? <small className="pbi-personnel-attendance">
+          <b className="is-present">● {attendance.present} asistencia/tardanza</b>
+          <b className="is-absent">● {attendance.absent} ausente</b>
+        </small> : null}
       </span>
       <strong className="pbi-kpi-value">{numberFormatter.format(value)}</strong>
+    </article>
+  );
+}
+
+function LotProgressCard({ lots, selectedCode, onChange, labeledPairs, compact = false }) {
+  const selectedLot = lots.find((lot) => lot.code === selectedCode);
+  const target = Number(selectedLot?.quantity || 0);
+  const progress = target ? Math.min(100, (labeledPairs / target) * 100) : 0;
+  return (
+    <article className={`pbi-lot-progress${compact ? " pbi-lot-progress--compact" : ""}`} aria-label={`Avance de lote ${selectedLot?.code || "sin seleccionar"}: ${labeledPairs} de ${target} pares`}>
+      <div className="pbi-lot-progress-head">
+        <div>
+          <span>Avance de pares por lote</span>
+          <strong>{selectedLot?.code || "Sin lotes registrados"}</strong>
+        </div>
+        <label>
+          <span>Lote</span>
+          <select value={selectedCode} onChange={(event) => onChange(event.target.value)} disabled={!lots.length}>
+            {lots.map((lot) => <option key={lot.id} value={lot.code}>{lot.code}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="pbi-lot-progress-values"><strong>{numberFormatter.format(labeledPairs)}</strong><span>de {numberFormatter.format(target)} pares</span><b>{progress.toFixed(1)}%</b></div>
+      <div className="pbi-lot-progress-track" aria-hidden="true"><i style={{ width: `${progress}%` }} /></div>
     </article>
   );
 }
@@ -1596,6 +1644,11 @@ function ErrorRecordsModal({ shiftLabel, errorType, rows, onClose }) {
     offender: row.offenderName || "Sin identificar",
     offenderType: row.offenderType || "Usuario/Área",
     date: formatCalendarDate(row.date),
+    task: row.taskName || "-",
+    ...Object.fromEntries(Object.entries(row.details || {}).map(([key, value]) => [
+      key,
+      key === "fecha_error" ? formatCalendarDate(value || row.date) : value
+    ])),
     rawDate: row.date
   })).sort((a, b) => String(b.rawDate).localeCompare(String(a.rawDate)));
   return createPortal(
@@ -1612,6 +1665,17 @@ function ErrorRecordsModal({ shiftLabel, errorType, rows, onClose }) {
           <button type="button" className="pbi-ranking-records-close" onClick={onClose} aria-label="Cerrar detalle">×</button>
         </header>
         <DataTable caption={`${errorType} en ${shiftLabel}`} columns={[
+          { key: "task", label: "Tarea" },
+          ...Array.from(new Set(rows.flatMap((row) => Object.keys(row.details || {}))))
+            .map((key) => ({
+              key,
+              label: ({
+                id_error: "ID de error", fecha_error: "Fecha de error", tipo_error: "Tipo de error",
+                usuario_id: "ID de usuario", area_id: "ID de area", tarea_error_id: "ID de tarea de error",
+                tienda_id: "ID de tienda", numero_guia: "Numero de guia", observacion: "Observacion",
+                created_at: "Creado el", updated_at: "Actualizado el"
+              })[key] || key.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
+            })),
           { key: "offender", label: "Usuario o área" },
           { key: "offenderType", label: "Tipo" },
           { key: "date", label: "Fecha" }
@@ -1688,13 +1752,16 @@ export default function FootwearDashboard() {
   const [dashboardData, setDashboardData] = useState(null);
   const [dashboardError, setDashboardError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [selectedWorkerIds, setSelectedWorkerIds] = useState([]);
   const [selectedRoles, setSelectedRoles] = useState([]);
-  const [selectedWorkerStatus, setSelectedWorkerStatus] = useState([]);
-  const [selectedYears, setSelectedYears] = useState([CURRENT_LIMA_YEAR]);
-  const [productionMonths, setProductionMonths] = useState([CURRENT_LIMA_MONTH]);
+  const [globalPeriodYear, setGlobalPeriodYear] = useState(String(CURRENT_LIMA_YEAR));
+  const [globalPeriodMonth, setGlobalPeriodMonth] = useState(String(CURRENT_LIMA_MONTH));
+  const [globalPeriodDay, setGlobalPeriodDay] = useState("all");
+  const [globalPeriodWeek, setGlobalPeriodWeek] = useState("all");
+  const [globalWorkerId, setGlobalWorkerId] = useState("all");
+  const [globalIncludeInactiveWorkers, setGlobalIncludeInactiveWorkers] = useState(false);
+  const [selectedLotCode, setSelectedLotCode] = useState("");
+  const [periodPanelCollapsed, setPeriodPanelCollapsed] = useState(false);
   const [selectedProductionRoles, setSelectedProductionRoles] = useState([]);
-  const [taskVolumePeriod, setTaskVolumePeriod] = useState("current");
   const [hourlyRankingTaskId, setHourlyRankingTaskId] = useState("");
   const [hourlyRankingWorkerId, setHourlyRankingWorkerId] = useState(null);
   const [hourlyRankingHangtag, setHourlyRankingHangtag] = useState("CON_HANGTAG");
@@ -1704,24 +1771,12 @@ export default function FootwearDashboard() {
   const [quantityRankingTaskId, setQuantityRankingTaskId] = useState("");
   const [detailTaskIds, setDetailTaskIds] = useState([]);
   const [selectedTaskTypes, setSelectedTaskTypes] = useState([]);
-  const [productionWorkerScope, setProductionWorkerScope] = useState("active");
   const [selectedIncidentTaskIds, setSelectedIncidentTaskIds] = useState([]);
-  const [peopleWorkerIds, setPeopleWorkerIds] = useState([]);
-  const [peopleYears, setPeopleYears] = useState([]);
-  const [qualityWorkerIds, setQualityWorkerIds] = useState([]);
-  const [qualityPeriod, setQualityPeriod] = useState("current");
-  const [incidentUserIds, setIncidentUserIds] = useState([]);
   const [incidentAreaIds, setIncidentAreaIds] = useState([]);
-  const [trainingYears, setTrainingYears] = useState([]);
-  const [trainingMonths, setTrainingMonths] = useState([]);
-  const [trainingDays, setTrainingDays] = useState([]);
   const [trainingCourseIds, setTrainingCourseIds] = useState([]);
   const [trainingStatuses, setTrainingStatuses] = useState([]);
   const [selectedMovementMonths, setSelectedMovementMonths] = useState([]);
   const [selectedMovementDetail, setSelectedMovementDetail] = useState(null);
-  const [attendanceYear, setAttendanceYear] = useState(String(CURRENT_LIMA_YEAR));
-  const [attendancePeriod, setAttendancePeriod] = useState(String(CURRENT_LIMA_MONTH));
-  const [attendanceDay, setAttendanceDay] = useState("all");
   const [selectedErrorDetail, setSelectedErrorDetail] = useState(null);
 
   const refreshDashboard = useCallback(async ({ silent = false } = {}) => {
@@ -1784,69 +1839,84 @@ export default function FootwearDashboard() {
   const yearsFromRows = (rows) => [...new Set((rows || [])
     .map((row) => Number(String(row.date || "").slice(0, 4)))
     .filter(Number.isFinite))].sort((a, b) => a - b);
-  const peopleAvailableYears = useMemo(() => yearsFromRows([
+  const globalAvailableYears = useMemo(() => [...new Set([
+    CURRENT_LIMA_YEAR,
+    ...yearsFromRows([
+      ...(dashboardData?.activities || []),
+      ...(dashboardData?.attendances || []),
+      ...(dashboardData?.incidents || []),
+      ...(dashboardData?.movements || []),
+      ...(dashboardData?.trainingAssignments || [])
+    ])
+  ])].sort((a, b) => b - a), [dashboardData]);
+  const globalPeriodRows = [
+    ...(dashboardData?.activities || []),
     ...(dashboardData?.attendances || []),
-    ...(dashboardData?.warnings || []),
-    ...(dashboardData?.movements || [])
-  ]), [dashboardData]);
-  const trainingAvailableYears = useMemo(() => yearsFromRows(dashboardData?.trainingAssignments), [dashboardData]);
+    ...(dashboardData?.incidents || []),
+    ...(dashboardData?.movements || []),
+    ...(dashboardData?.trainingAssignments || [])
+  ];
+  // No se ofrecen meses futuros del año actual: un registro con fecha mal
+  // cargada (o programada a futuro, como un ingreso de personal) no deberia
+  // habilitar un mes que todavia no llega.
+  const globalAvailableMonths = [...new Set(globalPeriodRows
+    .filter((row) => globalPeriodYear === "all" || Number(String(row.date || "").slice(0, 4)) === Number(globalPeriodYear))
+    .map((row) => Number(String(row.date || "").slice(5, 7)))
+    .filter((month) => month >= 1 && month <= 12))]
+    .filter((month) => globalPeriodYear !== String(CURRENT_LIMA_YEAR) || month <= CURRENT_LIMA_MONTH)
+    .sort((a, b) => a - b);
+  const isCurrentMonthSelected = globalPeriodYear === String(CURRENT_LIMA_YEAR) && globalPeriodMonth === String(CURRENT_LIMA_MONTH);
+  // En el mes actual no se ofrecen semanas que todavia no empiezan.
+  const monthWeeks = monthWeekOptions(Number(globalPeriodYear), Number(globalPeriodMonth))
+    .filter((week) => !isCurrentMonthSelected || week.start <= CURRENT_LIMA_PARTS.iso);
+  const selectedMonthWeek = monthWeeks.find((week) => week.value === globalPeriodWeek);
+  // Dias del calendario del mes elegido, no solo los que ya tienen datos: el
+  // filtro debe poder elegir cualquier dia real del mes (recortado a la
+  // semana si hay una seleccionada). En el mes actual se recorta al dia de
+  // hoy para no ofrecer fechas que todavia no pasan.
+  const globalAvailableDays = globalPeriodMonth === "all" ? [] : (() => {
+    const year = globalPeriodYear === "all" ? CURRENT_LIMA_YEAR : Number(globalPeriodYear);
+    const month = Number(globalPeriodMonth);
+    const totalDays = new Date(year, month, 0).getDate();
+    const lastSelectableDay = isCurrentMonthSelected ? Math.min(totalDays, CURRENT_LIMA_DAY) : totalDays;
+    return Array.from({ length: lastSelectableDay }, (_, index) => index + 1).filter((day) => {
+      if (!selectedMonthWeek) return true;
+      const isoDate = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      return isoDate >= selectedMonthWeek.start && isoDate <= selectedMonthWeek.end;
+    });
+  })();
+  useEffect(() => {
+    if (globalPeriodMonth !== "all" && globalPeriodMonth !== String(CURRENT_LIMA_MONTH) && !globalAvailableMonths.includes(Number(globalPeriodMonth))) {
+      setGlobalPeriodMonth("all");
+    }
+  }, [globalPeriodMonth, globalAvailableMonths.join("|")]);
+  useEffect(() => {
+    if (globalPeriodDay !== "all" && !globalAvailableDays.includes(Number(globalPeriodDay))) setGlobalPeriodDay("all");
+  }, [globalPeriodDay, globalAvailableDays.join("|")]);
   const workerById = useMemo(() => new Map(WORKERS.map((worker) => [worker.id, worker])), [WORKERS]);
   const taskById = useMemo(() => new Map(TASK_CATALOG.map((task) => [task.id, task])), [TASK_CATALOG]);
   const errorTaskById = useMemo(() => new Map(INCIDENT_TASKS.map((task) => [task.id, task])), [INCIDENT_TASKS]);
   const brandById = useMemo(() => new Map((dashboardData?.brands || []).map((brand) => [brand.id, brand.name])), [dashboardData]);
-
-  const trainingCalendarRows = useMemo(() => (dashboardData?.trainingAssignments || []).map((row) => {
-      const [year, month, day] = String(row.date || "").split("-").map(Number);
-      return { year, month, day };
-    }).filter((row) => row.year && row.month && row.day), [dashboardData]);
-  const trainingMonthOptions = [...new Set(trainingCalendarRows
-    .filter((row) => !trainingYears.length || trainingYears.includes(row.year))
-    .map((row) => row.month))].sort((a, b) => a - b).map((month) => ({ value: month, label: MONTHLY_TASKS[month - 1].name }));
-  const trainingDayOptions = [...new Set(trainingCalendarRows
-    .filter((row) => (!trainingYears.length || trainingYears.includes(row.year)) && (!trainingMonths.length || trainingMonths.includes(row.month)))
-    .map((row) => row.day))].sort((a, b) => a - b).map((day) => ({ value: day, label: String(day) }));
-
-  useEffect(() => {
-    const validMonths = new Set(trainingMonthOptions.map((option) => option.value));
-    const validDays = new Set(trainingDayOptions.map((option) => option.value));
-    setTrainingMonths((current) => {
-      const next = current.filter((value) => validMonths.has(value));
-      return next.length === current.length ? current : next;
-    });
-    setTrainingDays((current) => {
-      const next = current.filter((value) => validDays.has(value));
-      return next.length === current.length ? current : next;
-    });
-  }, [trainingYears, trainingMonthOptions.map((option) => option.value).join("|"), trainingDayOptions.map((option) => option.value).join("|")]);
-
-  function matchesSectionDate(date, years, availableYears, parts = {}) {
-    const [year, month, day] = String(date || "").split("-").map(Number);
-    const allowedYears = years.length ? years : availableYears;
-    if (!year || !allowedYears.includes(year)) return false;
-    if (!Object.keys(parts).length) return true;
-    if (!Object.prototype.hasOwnProperty.call(parts, month)) return false;
-    return parts[month] === null || parts[month].includes(day);
-  }
-
-  const matchesProductionDate = (date) => {
-    const [year, month] = String(date || "").split("-").map(Number);
-    return (!selectedYears.length || selectedYears.includes(year))
-      && (!productionMonths.length || productionMonths.includes(month));
+  const matchesGlobalPeriodDate = (date) => {
+    const isoDate = String(date || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return false;
+    const [year, month, day] = isoDate.split("-").map(Number);
+    const matchesMonth = (globalPeriodYear === "all" || year === Number(globalPeriodYear))
+      && (globalPeriodMonth === "all" || month === Number(globalPeriodMonth));
+    return matchesMonth
+      && (globalPeriodDay === "all" || day === Number(globalPeriodDay))
+      && (!selectedMonthWeek || (isoDate >= selectedMonthWeek.start && isoDate <= selectedMonthWeek.end));
   };
-  const matchesPeopleDate = (date) => matchesSectionDate(date, peopleYears, peopleAvailableYears);
-  const matchesQualityDate = (date) => {
-    if (qualityPeriod === "all") return true;
-    const [year, month] = String(date || "").split("-").map(Number);
-    return qualityPeriod === "previous"
-      ? year === PREVIOUS_LIMA_MONTH_YEAR && month === PREVIOUS_LIMA_MONTH
-      : year === CURRENT_LIMA_YEAR && month === CURRENT_LIMA_MONTH;
-  };
+  const matchesProductionDate = matchesGlobalPeriodDate;
+  const matchesPeopleDate = matchesGlobalPeriodDate;
+  const matchesQualityDate = matchesGlobalPeriodDate;
+  const matchesGlobalWorker = (workerId) => globalWorkerId === "all" || Number(workerId) === Number(globalWorkerId);
 
   function matchesPeopleWorker(workerId) {
     const worker = workerById.get(Number(workerId));
-    return (!peopleWorkerIds.length || peopleWorkerIds.includes(Number(workerId)))
+    return matchesGlobalWorker(workerId)
       && (!selectedRoles.length || (worker && selectedRoles.includes(worker.role)))
-      && (!selectedWorkerStatus.length || (worker && selectedWorkerStatus.includes(worker.active ? "activo" : "inactivo")));
+      && (globalIncludeInactiveWorkers || (worker && worker.active));
   }
 
   const tasksAllowedByFilters = OPERATIONAL_TASKS.filter((task) => (
@@ -1858,10 +1928,10 @@ export default function FootwearDashboard() {
     .map((task) => task.id));
   const visibleActivities = (dashboardData?.activities || []).filter((row) => (
     matchesProductionDate(row.date)
-    && (!selectedWorkerIds.length || selectedWorkerIds.includes(Number(row.workerId)))
+    && matchesGlobalWorker(row.workerId)
     && (!selectedProductionRoles.length || selectedProductionRoles.includes(workerById.get(Number(row.workerId))?.role))
     && ["operante", "jefe de equipo"].includes(workerById.get(Number(row.workerId))?.role)
-    && (productionWorkerScope === "all" || workerById.get(Number(row.workerId))?.active)
+    && (globalIncludeInactiveWorkers || workerById.get(Number(row.workerId))?.active)
     && allowedTaskIds.has(row.taskId)
   ));
   // Calidad comparable usa registros operativos reales de ambas fuentes. No
@@ -1869,6 +1939,7 @@ export default function FootwearDashboard() {
   // responsables, no necesariamente a usuarios operativos.
   const qualityActivities = (dashboardData?.activities || []).filter((row) => (
     matchesQualityDate(row.date)
+    && matchesGlobalWorker(row.workerId)
     && allowedIncidentTaskIds.has(row.taskId)
   ));
 
@@ -1879,14 +1950,9 @@ export default function FootwearDashboard() {
   const eligibleProductionWorkers = WORKERS.filter((worker) => (
     ["operante", "jefe de equipo"].includes(worker.role)
     && (!selectedProductionRoles.length || selectedProductionRoles.includes(worker.role))
-    && (productionWorkerScope === "all" || worker.active)
+    && (globalIncludeInactiveWorkers || worker.active)
     && operationalWorkerIds.has(Number(worker.id))
   ));
-  const workerOptions = eligibleProductionWorkers.map((worker) => ({
-    value: worker.id,
-    label: worker.name,
-    count: (dashboardData?.activities || []).filter((row) => row.workerId === worker.id && matchesProductionDate(row.date)).reduce((sum, row) => sum + row.points, 0)
-  }));
   const operationalTaskTypeOptions = [...new Set(OPERATIONAL_TASKS.map((task) => task.type))]
     .sort((a, b) => a.localeCompare(b, "es"))
     .map((type) => ({ value: type, label: type }));
@@ -1897,19 +1963,6 @@ export default function FootwearDashboard() {
   const operationalTaskOptions = OPERATIONAL_TASKS
     .filter((task) => !selectedTaskTypes.length || selectedTaskTypes.includes(task.type))
     .map((task) => ({ value: task.id, label: task.shortName }));
-  const peopleWorkerOptions = WORKERS.filter((worker) => (
-    (!selectedRoles.length || selectedRoles.includes(worker.role))
-    && (!selectedWorkerStatus.length || selectedWorkerStatus.includes(worker.active ? "activo" : "inactivo"))
-  )).map((worker) => ({
-    value: worker.id,
-    label: worker.name,
-    count: (dashboardData?.attendances || []).filter((row) => row.workerId === worker.id && matchesPeopleDate(row.date)).length
-  }));
-  const qualityWorkerOptions = WORKERS.map((worker) => ({ value: worker.id, label: worker.name }));
-  const incidentUserOptions = WORKERS.filter((worker) => (
-    worker.active
-    && (dashboardData?.incidents || []).some((incident) => Number(incident.workerId) === Number(worker.id))
-  )).map((worker) => ({ value: worker.id, label: worker.name }));
   const incidentAreaOptions = [...(dashboardData?.incidents || []).reduce((areas, incident) => {
     if (incident.areaId && incident.offenderType === "Área") {
       areas.set(Number(incident.areaId), incident.offenderName || `Área ${incident.areaId}`);
@@ -1929,13 +1982,10 @@ export default function FootwearDashboard() {
     value, active, label: value.replace(/\b\w/g, (letter) => letter.toUpperCase())
   }));
   const roleOptions = ROLE_OPTIONS.map((role) => ({ value: role.value, label: role.label, count: role.active }));
-  const statusOptions = [
-    { value: "activo", label: "Activo", count: WORKERS.filter((worker) => worker.active).length },
-    { value: "inactivo", label: "Inactivo", count: WORKERS.filter((worker) => !worker.active).length }
-  ];
-  const productionWorkers = eligibleProductionWorkers.filter((worker) => !selectedWorkerIds.length || selectedWorkerIds.includes(worker.id));
+  const productionWorkers = eligibleProductionWorkers.filter((worker) => matchesGlobalWorker(worker.id));
   const peopleWorkers = WORKERS.filter((worker) => matchesPeopleWorker(worker.id));
-  const workerProduction = workerProductionRows(productionWorkers, visibleActivities, selectedWorkerIds);
+  const highlightedWorkerIds = globalWorkerId === "all" ? [] : [Number(globalWorkerId)];
+  const workerProduction = workerProductionRows(productionWorkers, visibleActivities, highlightedWorkerIds);
   const penaltyByKey = new Map((dashboardData?.penalties || []).map((item) => [item.key, Number(item.points || 0)]));
   const filteredTopWorkers = workerProduction.map((item) => {
     const attendanceRows = (dashboardData?.attendances || []).filter((row) => Number(row.workerId) === Number(item.id) && matchesProductionDate(row.date));
@@ -1971,11 +2021,7 @@ export default function FootwearDashboard() {
   const taskVolumeActivities = (dashboardData?.activities || []).filter((row) => {
     if (!operationalTaskIds.has(Number(row.taskId))) return false;
     if (selectedProductionRoles.length && !selectedProductionRoles.includes(workerById.get(Number(row.workerId))?.role)) return false;
-    if (taskVolumePeriod === "all") return true;
-    const [year, month] = String(row.date || "").split("-").map(Number);
-    return taskVolumePeriod === "previous"
-      ? year === PREVIOUS_LIMA_MONTH_YEAR && month === PREVIOUS_LIMA_MONTH
-      : year === CURRENT_LIMA_YEAR && month === CURRENT_LIMA_MONTH;
+    return matchesGlobalPeriodDate(row.date);
   });
   const staticTaskVolume = taskVolumeRows(
     OPERATIONAL_TASKS,
@@ -2004,11 +2050,14 @@ export default function FootwearDashboard() {
     return { id: worker.id, name: worker.alias || worker.name, workerName: worker.name, value: timedActivityKpi(rows).hourly, records: rows.length };
   }).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
   const selectedHourlyRankingWorker = workerById.get(Number(hourlyRankingWorkerId));
+  const selectedYears = globalPeriodYear === "all" ? [] : [Number(globalPeriodYear)];
+  const productionMonths = globalPeriodMonth === "all" ? [] : [Number(globalPeriodMonth)];
   const selectedHourlyRankingRows = hourlyTaskActivities
     .filter((row) => Number(row.workerId) === Number(hourlyRankingWorkerId))
     .filter((row) => !hourlyTaskIsLabeling || row.labelingType === effectiveHourlyHangtagKey)
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
   const productionPeriodLabel = `${selectedYears.length ? selectedYears.join(", ") : "Todos los años"} · ${productionMonths.length ? productionMonths.map((month) => MONTHLY_TASKS[month - 1]?.name).filter(Boolean).join(", ") : "Todos los meses"}`;
+  const globalPeriodLabel = selectedMonthWeek ? `${productionPeriodLabel} · ${selectedMonthWeek.label}` : productionPeriodLabel;
   async function saveHourlyReference() {
     const value = Number(hourlyReferenceDraft);
     if (hourlyReferenceDraft === "" || !Number.isFinite(value) || value < 0) {
@@ -2070,24 +2119,22 @@ export default function FootwearDashboard() {
         source: row.source === "jefe-equipo" ? "Jefe de equipo" : "Operante"
       };
     });
-  const averageActivities = (dashboardData?.activities || []).filter((row) => (
-    !selectedWorkerIds.length || selectedWorkerIds.includes(Number(row.workerId))
-  ));
+  const averageActivities = visibleActivities;
   const filteredActivityKpis = OPERATIONAL_TASKS.filter((task) => task.requiresTime).slice(0, 5).map((task) => {
     const rows = averageActivities.filter((row) => row.taskId === task.id);
     return { label: task.shortName, unit: String(task.unit || "").trim() || productionUnit(task), ...timedActivityKpi(rows) };
   });
 
-  const selectedWorkerNames = selectedWorkerIds.map((id) => workerById.get(id)?.name).filter(Boolean);
-  const selectedPeopleWorkerNames = peopleWorkerIds.map((id) => workerById.get(id)?.name).filter(Boolean);
-  const selectedQualityWorkerNames = qualityWorkerIds.map((id) => workerById.get(id)?.name).filter(Boolean);
+  const selectedWorkerNames = globalWorkerId === "all"
+    ? []
+    : [workerById.get(Number(globalWorkerId))?.name].filter(Boolean);
   const visibleIncidentRecords = (dashboardData?.incidents || []).filter((incident) => (
     matchesQualityDate(incident.date)
     && allowedIncidentTaskIds.has(incident.taskId)
     && (
-      (!incidentUserIds.length && !incidentAreaIds.length)
-      || incidentUserIds.includes(Number(incident.workerId))
-      || incidentAreaIds.includes(Number(incident.areaId))
+      (globalWorkerId === "all" && !incidentAreaIds.length)
+      || (globalWorkerId !== "all" && Number(incident.workerId) === Number(globalWorkerId))
+      || (incidentAreaIds.length > 0 && incidentAreaIds.includes(Number(incident.areaId)))
     )
   ));
   const comparableIncidentMetrics = buildComparableIncidentMetrics(visibleIncidentRecords, qualityActivities);
@@ -2152,38 +2199,14 @@ export default function FootwearDashboard() {
     return totals;
   }, new Map()).values()];
   const filteredAttendance = aggregateAttendance((dashboardData?.attendances || []).filter((row) => matchesPeopleDate(row.date) && matchesPeopleWorker(row.workerId)));
-  const attendanceAvailableYears = [...new Set([
-    CURRENT_LIMA_YEAR,
-    ...(dashboardData?.attendances || []).map((row) => Number(String(row.date || "").slice(0, 4))).filter(Number.isFinite)
-  ])].sort((left, right) => right - left);
-  const attendancePeriodRows = (dashboardData?.attendances || []).filter((row) => {
-    if (!matchesPeopleWorker(row.workerId)) return false;
-    const [year, month] = String(row.date || "").split("-").map(Number);
-    if (attendanceYear !== "all" && year !== Number(attendanceYear)) return false;
-    if (attendancePeriod === "all") return true;
-    return month === Number(attendancePeriod);
-  });
-  const attendanceMonthDays = attendancePeriod === "all"
-    ? 31
-    : new Date(attendanceYear === "all" ? 2024 : Number(attendanceYear), Number(attendancePeriod), 0).getDate();
-  const attendanceChartRows = attendanceDay === "all"
-    ? attendancePeriodRows
-    : attendancePeriodRows.filter((row) => {
-      const [, , day] = String(row.date || "").split("-").map(Number);
-      return day === Number(attendanceDay);
-    });
-  const attendanceChartData = aggregateAttendance(attendanceChartRows);
   const trainingById = new Map((dashboardData?.trainings || []).map((course) => [course.id, course]));
   const normalizeTrainingStatus = (state) => ["finalizado", "completado"].includes(state) ? "completado" : state === "en_curso" ? "en_curso" : "pendiente";
-  const visibleAssignments = (dashboardData?.trainingAssignments || []).filter((row) => {
-    const [year, month, day] = String(row.date || "").split("-").map(Number);
-    return (!qualityWorkerIds.length || qualityWorkerIds.includes(Number(row.workerId)))
-      && (!trainingCourseIds.length || trainingCourseIds.includes(Number(row.trainingId)))
-      && (!trainingStatuses.length || trainingStatuses.includes(normalizeTrainingStatus(row.state)))
-      && (!trainingYears.length || trainingYears.includes(year))
-      && (!trainingMonths.length || trainingMonths.includes(month))
-      && (!trainingDays.length || trainingDays.includes(day));
-  });
+  const visibleAssignments = (dashboardData?.trainingAssignments || []).filter((row) => (
+    matchesGlobalPeriodDate(row.date)
+    && matchesGlobalWorker(row.workerId)
+    && (!trainingCourseIds.length || trainingCourseIds.includes(Number(row.trainingId)))
+    && (!trainingStatuses.length || trainingStatuses.includes(normalizeTrainingStatus(row.state)))
+  ));
   const filteredTrainingProgress = [...visibleAssignments.reduce((totals, assignment) => {
     const worker = workerById.get(assignment.workerId);
     if (!worker) return totals;
@@ -2216,9 +2239,9 @@ export default function FootwearDashboard() {
     { label: "Tardanza", detail: "Llegadas fuera de hora", value: `${attendanceTotal ? ((attendanceTotals.late / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
     { label: "Permanencia promedio", detail: `${tenure.workerCount} trabajador(es) con periodos laborales`, suffix: "meses", value: tenure.months.toFixed(2) }
   ];
-  const filteredWarnings = (dashboardData?.warnings || []).filter((row) => (
-    matchesPeopleDate(row.date) && matchesPeopleWorker(row.workerId)
-  )).map((row) => {
+  // No se filtra por periodo ni por trabajador: el historial de amonestaciones
+  // se ve completo siempre, sin que lo afecten los demas filtros del tablero.
+  const filteredWarnings = (dashboardData?.warnings || []).map((row) => {
     const worker = workerById.get(row.workerId);
     const alias = worker?.alias || worker?.name || "Sin trabajador";
     const documentType = row.documentType === "MEMORANDUM" ? "Memorándum" : row.documentType === "CARTA AMONESTACION" ? "Carta de amonestación" : "Sin especificar";
@@ -2258,54 +2281,67 @@ export default function FootwearDashboard() {
   // solo sirve para acotar el resto del dashboard.
   const payrollYear = nowParts.year;
   const payrollLastMonth = Math.max(nowParts.month - 1, 0);
-  const allowedPayrollWorkers = new Set(peopleWorkers.map((worker) => Number(worker.id)));
   const payrollMonthIndexes = Array.from({ length: payrollLastMonth }, (_, index) => index);
   const filteredPayroll = payrollMonthIndexes.map((monthIndex) => {
     const byWorker = dashboardData?.payrollByWorker?.[payrollYear]?.[monthIndex];
     const value = byWorker
-      ? Object.entries(byWorker).reduce((sum, [workerId, amount]) => (
-        allowedPayrollWorkers.has(Number(workerId)) ? sum + Number(amount || 0) : sum
-      ), 0)
-      : Object.entries(dashboardData?.payrollByRole?.[payrollYear]?.[monthIndex] || {}).reduce((sum, [role, amount]) => (
-        !selectedRoles.length || selectedRoles.includes(role) ? sum + Number(amount || 0) : sum
-      ), 0);
+      ? Object.values(byWorker).reduce((sum, amount) => sum + Number(amount || 0), 0)
+      : Object.values(dashboardData?.payrollByRole?.[payrollYear]?.[monthIndex] || {}).reduce((sum, amount) => sum + Number(amount || 0), 0);
     const workers = byWorker
-      ? Object.keys(byWorker).filter((workerId) => allowedPayrollWorkers.has(Number(workerId))).length
+      ? Object.keys(byWorker).length
       : Number(dashboardData?.payrollWorkersByMonth?.[payrollYear]?.[monthIndex] || 0);
     return { ...MONTHLY_TASKS[monthIndex], value, workers };
   });
   const payrollTotal = filteredPayroll.reduce((sum, item) => sum + item.value, 0);
+  const lotes = (dashboardData?.lotes || []).filter((lot) => lot.status === "pendiente");
+  useEffect(() => {
+    setSelectedLotCode((current) => lotes.some((lot) => lot.code === current) ? current : lotes[0]?.code || "");
+  }, [lotes.map((lot) => lot.code).join("|")]);
+  const selectedLot = lotes.find((lot) => lot.code === selectedLotCode);
+  const etiquetadoTaskId = TASK_CATALOG.find((task) => String(task.name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim() === "etiquetado")?.id;
+  const labeledPairsInLot = (dashboardData?.activities || []).filter((row) => (
+    Number(row.taskId) === Number(etiquetadoTaskId)
+    && String(row.lote || "").trim().toUpperCase() === selectedLot?.code
+  )).reduce((sum, row) => sum + Number(row.quantity || 0), 0);
   const payrollPeriodLabel = payrollMonthIndexes.length
     ? payrollMonthIndexes.every((monthIndex, index) => monthIndex === index)
       ? `ene–${MONTHLY_TASKS[payrollMonthIndexes.at(-1)].label.toLowerCase()}`
       : `${payrollMonthIndexes.length} meses seleccionados`
     : "sin período";
-  // Sin filtro de estado, las tarjetas de personal siguen mostrando solo
-  // activos (comportamiento previo); al elegir un estado se respeta la
-  // seleccion, incluyendo ver inactivos o ambos a la vez.
-  const activeWorkers = selectedWorkerStatus.length
-    ? peopleWorkers
-    : peopleWorkers.filter((worker) => worker.active);
+  // matchesPeopleWorker ya filtra por activo salvo que el checkbox global
+  // "Incluir trabajadores inactivos" este marcado.
+  const activeWorkers = peopleWorkers;
   const operantCount = activeWorkers.filter((worker) => worker.role === "operante").length;
   const teamLeadCount = activeWorkers.filter((worker) => worker.role === "jefe de equipo").length;
   const groupLeadCount = activeWorkers.filter((worker) => worker.role === "jefe de grupo").length;
+  const latestAttendanceDate = (dashboardData?.attendances || []).map((row) => row.date).filter(Boolean).sort().at(-1);
+  const attendanceForWorkers = (workers) => (dashboardData?.attendances || []).filter((row) => (
+    row.date === latestAttendanceDate && workers.some((worker) => Number(worker.id) === Number(row.workerId))
+  )).reduce((summary, row) => {
+    if (attendanceGroup(row.state) === "ausente") summary.absent += 1;
+    else summary.present += 1;
+    return summary;
+  }, { present: 0, absent: 0 });
+  const operationalWorkers = activeWorkers.filter((worker) => ["operante", "jefe de equipo", "jefe de grupo"].includes(worker.role));
+  const administrativeWorkers = activeWorkers.filter((worker) => !["operante", "jefe de equipo", "jefe de grupo"].includes(worker.role));
   const personnelKpis = [
-    { label: "Total Trabajadores", value: activeWorkers.length },
+    { label: "Total Trabajadores", value: activeWorkers.length, detail: latestAttendanceDate ? `Estado al ${formatCalendarDate(latestAttendanceDate)}` : "Sin asistencia registrada", attendance: attendanceForWorkers(activeWorkers) },
     {
       label: "Total Operantes",
       value: operantCount + teamLeadCount + groupLeadCount,
       detail: `${operantCount} operantes · ${teamLeadCount} jefes de equipo${groupLeadCount ? ` · ${groupLeadCount} jefes de grupo` : ""}`
+      , attendance: attendanceForWorkers(operationalWorkers)
     },
-    { label: "Total Administrativo", value: activeWorkers.filter((worker) => !["operante", "jefe de equipo", "jefe de grupo"].includes(worker.role)).length }
+    { label: "Total Administrativo", value: administrativeWorkers.length, attendance: attendanceForWorkers(administrativeWorkers) }
   ];
-  const nextBirthday = (() => {
+  const nextBirthdays = (() => {
     const today = new Date();
     return peopleWorkers.filter((worker) => worker.active && worker.birthday).map((worker) => {
       const [, month, day] = worker.birthday.split("-").map(Number);
       let date = new Date(today.getFullYear(), month - 1, day);
       if (date < new Date(today.getFullYear(), today.getMonth(), today.getDate())) date = new Date(today.getFullYear() + 1, month - 1, day);
       return { ...worker, nextBirthday: date };
-    }).sort((a, b) => a.nextBirthday - b.nextBirthday)[0];
+    }).sort((a, b) => a.nextBirthday - b.nextBirthday).slice(0, 2);
   })();
 
   function closeOpenSlicers() {
@@ -2316,39 +2352,32 @@ export default function FootwearDashboard() {
 
   function resetFilters() {
     closeOpenSlicers();
-    setSelectedWorkerIds([]);
     setSelectedRoles([]);
-    setSelectedYears([CURRENT_LIMA_YEAR]);
-    setProductionMonths([CURRENT_LIMA_MONTH]);
+    setGlobalPeriodYear(String(CURRENT_LIMA_YEAR));
+    setGlobalPeriodMonth(String(CURRENT_LIMA_MONTH));
+    setGlobalPeriodDay("all");
+    setGlobalPeriodWeek("all");
+    setGlobalWorkerId("all");
+    setGlobalIncludeInactiveWorkers(false);
     setSelectedProductionRoles([]);
-    setTaskVolumePeriod("current");
     setHourlyRankingTaskId("");
     setQuantityRankingTaskId("");
     setDetailTaskIds([]);
     setSelectedTaskTypes([]);
-    setProductionWorkerScope("active");
     setSelectedIncidentTaskIds([]);
-    setPeopleWorkerIds([]);
-    setPeopleYears([]);
-    setQualityWorkerIds([]);
-    setQualityPeriod("current");
-    setIncidentUserIds([]);
     setIncidentAreaIds([]);
-    setTrainingYears([]);
-    setTrainingMonths([]);
-    setTrainingDays([]);
     setTrainingCourseIds([]);
     setTrainingStatuses([]);
     setSelectedMovementMonths([]);
-    setAttendanceYear(String(CURRENT_LIMA_YEAR));
-    setAttendancePeriod(String(CURRENT_LIMA_MONTH));
-    setAttendanceDay("all");
   }
 
-  function selectWorkerFromChart(item, setter = setSelectedWorkerIds) {
+  // Un solo selector global de trabajador: hacer clic en una barra ya
+  // seleccionada lo vuelve a "Todos"; hacer clic en otra lo reemplaza.
+  function selectWorkerFromChart(item) {
     closeOpenSlicers();
-    const id = WORKERS.find((worker) => worker.name === (item.workerName || item.name))?.id;
-    if (id) setter((current) => toggleArrayValue(current, id));
+    const worker = WORKERS.find((candidate) => candidate.name === (item.workerName || item.name));
+    if (!worker) return;
+    setGlobalWorkerId((current) => (String(current) === String(worker.id) ? "all" : String(worker.id)));
   }
 
   function selectTaskFromChart(item, setter, catalog = TASK_CATALOG) {
@@ -2367,29 +2396,6 @@ export default function FootwearDashboard() {
     }));
   }
 
-  function changeProductionWorkerScope(scope) {
-    setProductionWorkerScope(scope);
-    if (scope === "active") {
-      setSelectedWorkerIds((current) => current.filter((id) => workerById.get(Number(id))?.active));
-    }
-  }
-
-  function changeProductionPeriod(period) {
-    setTaskVolumePeriod(period);
-    if (period === "previous") {
-      setSelectedYears([PREVIOUS_LIMA_MONTH_YEAR]);
-      setProductionMonths([PREVIOUS_LIMA_MONTH]);
-      return;
-    }
-    if (period === "all") {
-      setSelectedYears([]);
-      setProductionMonths([]);
-      return;
-    }
-    setSelectedYears([CURRENT_LIMA_YEAR]);
-    setProductionMonths([CURRENT_LIMA_MONTH]);
-  }
-
   function changeProductionRoles(roles) {
     setSelectedProductionRoles(roles);
     setSelectedWorkerIds((current) => current.filter((id) => {
@@ -2403,14 +2409,6 @@ export default function FootwearDashboard() {
     setPeopleWorkerIds((current) => current.filter((id) => {
       const worker = WORKERS.find((candidate) => candidate.id === id);
       return worker && (!nextRoles.length || nextRoles.includes(worker.role));
-    }));
-  }
-
-  function changeWorkerStatus(nextStatus) {
-    setSelectedWorkerStatus(nextStatus);
-    setPeopleWorkerIds((current) => current.filter((id) => {
-      const worker = WORKERS.find((candidate) => candidate.id === id);
-      return worker && (!nextStatus.length || nextStatus.includes(worker.active ? "activo" : "inactivo"));
     }));
   }
 
@@ -2432,14 +2430,14 @@ export default function FootwearDashboard() {
   }
 
   const activeFilterCount = [
-    selectedWorkerIds, productionMonths, selectedProductionRoles, detailTaskIds, selectedTaskTypes,
+    productionMonths, selectedProductionRoles, detailTaskIds, selectedTaskTypes,
     hourlyRankingTaskId ? [hourlyRankingTaskId] : [], quantityRankingTaskId ? [quantityRankingTaskId] : [],
-    peopleWorkerIds, selectedRoles, selectedWorkerStatus, peopleYears,
-    selectedIncidentTaskIds, qualityWorkerIds, incidentUserIds, incidentAreaIds,
-    trainingYears, trainingMonths, trainingDays, trainingCourseIds, trainingStatuses, selectedMovementMonths
+    selectedRoles,
+    selectedIncidentTaskIds, incidentAreaIds,
+    trainingCourseIds, trainingStatuses, selectedMovementMonths
   ].filter((values) => values.length).length;
   const filterSummary = activeFilterCount
-    ? `${activeFilterCount} filtros locales activos · cada uno afecta solo su sección`
+    ? `${activeFilterCount} filtros activos · el período global aplica a Producción, Asistencia y Calidad`
     : `Filtros independientes por Producción, Personas, Calidad y Capacitación`;
   const updatedAtLabel = dashboardData?.generatedAt
     ? new Intl.DateTimeFormat("es-PE", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(dashboardData.generatedAt))
@@ -2501,6 +2499,68 @@ export default function FootwearDashboard() {
           </div>
         ) : null}
 
+        <aside className={`pbi-floating-period-panel${periodPanelCollapsed ? " is-collapsed" : ""}`} aria-label="Filtro global de período">
+          <button className="pbi-period-panel-toggle" type="button" onClick={() => setPeriodPanelCollapsed((current) => !current)} aria-expanded={!periodPanelCollapsed} aria-label={periodPanelCollapsed ? "Abrir filtro de período" : "Plegar filtro de período"}>
+            <span aria-hidden="true">{periodPanelCollapsed ? "‹" : "›"}</span>
+            <small>Período</small>
+          </button>
+          <div className="pbi-period-panel-content">
+            <strong>Período global</strong>
+            <label htmlFor="pbi-global-period-year">
+              <span>Año</span>
+              <select id="pbi-global-period-year" value={globalPeriodYear} onChange={(event) => { setGlobalPeriodYear(event.target.value); setGlobalPeriodMonth("all"); setGlobalPeriodDay("all"); setGlobalPeriodWeek("all"); }}>
+                <option value="all">Todos los años</option>
+                {globalAvailableYears.map((year) => <option value={String(year)} key={year}>{year}</option>)}
+              </select>
+            </label>
+            <label htmlFor="pbi-global-period-month">
+              <span>Mes</span>
+              <select id="pbi-global-period-month" value={globalPeriodMonth} onChange={(event) => { setGlobalPeriodMonth(event.target.value); setGlobalPeriodDay("all"); setGlobalPeriodWeek("all"); }}>
+                <option value="all">Todos los meses</option>
+                {globalAvailableMonths.map((month) => <option value={String(month)} key={month}>{MONTHLY_TASKS[month - 1]?.name}</option>)}
+              </select>
+            </label>
+            <label htmlFor="pbi-global-period-week">
+              <span>Semana</span>
+              <select id="pbi-global-period-week" value={globalPeriodWeek} onChange={(event) => setGlobalPeriodWeek(event.target.value)} disabled={!monthWeeks.length}>
+                <option value="all">Todas las semanas</option>
+                {monthWeeks.map((week) => <option value={week.value} key={week.value}>{week.label}</option>)}
+              </select>
+            </label>
+            <label htmlFor="pbi-global-period-day">
+              <span>Dia</span>
+              <select
+                id="pbi-global-period-day"
+                value={globalPeriodDay}
+                onChange={(event) => setGlobalPeriodDay(event.target.value)}
+                disabled={globalPeriodMonth === "all"}
+              >
+                <option value="all">Todos los dias</option>
+                {globalAvailableDays.map((day) => <option value={String(day)} key={day}>{day}</option>)}
+              </select>
+            </label>
+            <label htmlFor="pbi-global-worker">
+              <span>Trabajador</span>
+              <select id="pbi-global-worker" value={globalWorkerId} onChange={(event) => setGlobalWorkerId(event.target.value)}>
+                <option value="all">Todos los trabajadores</option>
+                {WORKERS.filter((worker) => worker.active || globalIncludeInactiveWorkers).map((worker) => (
+                  <option value={String(worker.id)} key={worker.id}>{worker.alias || worker.name}{worker.active ? "" : " (inactivo)"}</option>
+                ))}
+              </select>
+            </label>
+            <label className="pbi-period-panel-checkbox" htmlFor="pbi-global-include-inactive">
+              <input
+                id="pbi-global-include-inactive"
+                type="checkbox"
+                checked={globalIncludeInactiveWorkers}
+                onChange={(event) => setGlobalIncludeInactiveWorkers(event.target.checked)}
+              />
+              <span>Incluir trabajadores inactivos</span>
+            </label>
+            <span className="pbi-period-panel-summary">{globalPeriodLabel}</span>
+          </div>
+        </aside>
+
         <main className={`pbi-main${!dashboardData ? " is-data-loading" : ""}`} aria-busy={!dashboardData}>
           <div className="pbi-report">
             <section className="pbi-kpi-grid pbi-kpi-grid--personnel" aria-label="Resumen de personal">
@@ -2515,9 +2575,12 @@ export default function FootwearDashboard() {
               {filteredIndicators.map((item) => <IndicatorKpi key={item.label} {...item} />)}
               <article className="pbi-kpi pbi-kpi--birthday">
                 <span className="pbi-kpi-label">Próximo Cumpleaños</span>
-                <strong className="pbi-birthday-name">{nextBirthday?.name || "Sin fecha registrada"}</strong>
-                <span className="pbi-birthday-date">{nextBirthday ? new Intl.DateTimeFormat("es-PE", { day: "numeric", month: "long" }).format(nextBirthday.nextBirthday) : "—"}</span>
+                {nextBirthdays.length ? nextBirthdays.map((birthday, index) => <span className="pbi-birthday-entry" key={birthday.id}>
+                  <strong className="pbi-birthday-name">{index + 1}. {birthday.name}</strong>
+                  <span className="pbi-birthday-date">{new Intl.DateTimeFormat("es-PE", { day: "numeric", month: "long" }).format(birthday.nextBirthday)}</span>
+                </span>) : <strong className="pbi-birthday-name">Sin fecha registrada</strong>}
               </article>
+              <LotProgressCard lots={lotes} selectedCode={selectedLotCode} onChange={setSelectedLotCode} labeledPairs={labeledPairsInLot} compact />
             </section>
 
             <section className="pbi-report-section" aria-labelledby="pbi-production-section-title">
@@ -2530,24 +2593,6 @@ export default function FootwearDashboard() {
               </div>
 
               <div className="pbi-section-filters pbi-section-filters--production" aria-label="Filtros de producción">
-                <MultiSlicer id="production-workers" label="Trabajadores" options={workerOptions} selected={selectedWorkerIds} onChange={setSelectedWorkerIds} allLabel="Todos" />
-                <label className="pbi-compact-check" htmlFor="pbi-production-worker-scope">
-                  <input
-                    id="pbi-production-worker-scope"
-                    type="checkbox"
-                    checked={productionWorkerScope === "all"}
-                    onChange={(event) => changeProductionWorkerScope(event.target.checked ? "all" : "active")}
-                  />
-                  <span>Habilitar trabajadores inactivos</span>
-                </label>
-                <div className="pbi-ranking-task-filter pbi-section-period-filter">
-                  <label htmlFor="pbi-production-period">Período</label>
-                  <select id="pbi-production-period" value={taskVolumePeriod} onChange={(event) => changeProductionPeriod(event.target.value)}>
-                    <option value="current">Mes actual</option>
-                    <option value="previous">Mes anterior</option>
-                    <option value="all">Todo</option>
-                  </select>
-                </div>
                 <MultiSlicer id="production-roles" label="Cargo" options={productionRoleOptions} selected={selectedProductionRoles} onChange={changeProductionRoles} allLabel="Todos" searchable={false} />
                 <MultiSlicer id="production-task-types" label="Tipo de tarea" options={operationalTaskTypeOptions} selected={selectedTaskTypes} onChange={changeTaskTypes} allLabel="Todos" searchable={false} />
               </div>
@@ -2636,7 +2681,7 @@ export default function FootwearDashboard() {
                   <HourlyRankingRecordsModal
                     workerName={selectedHourlyRankingWorker.name}
                     taskName={effectiveHourlyTask?.shortName || "Tarea seleccionada"}
-                    periodLabel={productionPeriodLabel}
+                    periodLabel={globalPeriodLabel}
                     unit={productionUnit(effectiveHourlyTask)}
                     rows={selectedHourlyRankingRows}
                     targetHourly={hourlyReferenceDraft}
@@ -2693,10 +2738,7 @@ export default function FootwearDashboard() {
               </div>
 
               <div className="pbi-section-filters pbi-section-filters--people" aria-label="Filtros de personas">
-                <MultiSlicer id="people-workers" label="Trabajadores" options={peopleWorkerOptions} selected={peopleWorkerIds} onChange={setPeopleWorkerIds} allLabel="Todos" />
                 <MultiSlicer id="people-roles" label="Cargos" options={roleOptions} selected={selectedRoles} onChange={changeRoles} allLabel="Todos" searchable={false} />
-                <MultiSlicer id="people-status" label="Estado" options={statusOptions} selected={selectedWorkerStatus} onChange={changeWorkerStatus} allLabel="Todos" searchable={false} />
-                <MultiSlicer id="people-years" label="Año" options={peopleAvailableYears.map((year) => ({ value: year, label: String(year) }))} selected={peopleYears} onChange={setPeopleYears} allLabel="Todos" searchable={false} />
               </div>
 
               <div className="pbi-content-grid">
@@ -2769,46 +2811,9 @@ export default function FootwearDashboard() {
                   id="pbi-attendance"
                   title="Asistencia por Trabajador"
                   meta="Puntual · tardanza · ausencia"
-                  className="pbi-card--chart pbi-card--attendance-compact pbi-card--span-6"
+                  className="pbi-card--chart pbi-card--span-12"
                 >
-                  <div className="pbi-ranking-task-filter pbi-attendance-period-filter">
-                    <label htmlFor="pbi-attendance-year">Año</label>
-                    <select
-                      id="pbi-attendance-year"
-                      value={attendanceYear}
-                      onChange={(event) => {
-                        setAttendanceYear(event.target.value);
-                        setAttendanceDay("all");
-                      }}
-                    >
-                      <option value="all">General</option>
-                      {attendanceAvailableYears.map((year) => <option key={year} value={String(year)}>{year}</option>)}
-                    </select>
-                    <label htmlFor="pbi-attendance-period">Periodo</label>
-                    <select
-                      id="pbi-attendance-period"
-                      value={attendancePeriod}
-                      onChange={(event) => {
-                        setAttendancePeriod(event.target.value);
-                        setAttendanceDay("all");
-                      }}
-                    >
-                      <option value="all">General</option>
-                      {MONTHLY_TASKS.map((month, index) => (
-                        <option key={month.label} value={String(index + 1)}>
-                          {month.name.charAt(0).toUpperCase() + month.name.slice(1)}
-                        </option>
-                      ))}
-                    </select>
-                    <label htmlFor="pbi-attendance-day">Fecha</label>
-                    <select id="pbi-attendance-day" value={attendanceDay} onChange={(event) => setAttendanceDay(event.target.value)}>
-                      <option value="all">Todos</option>
-                      {Array.from({ length: attendanceMonthDays }, (_, index) => index + 1).map((day) => (
-                        <option key={day} value={String(day)}>{day}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <AttendanceBars data={attendanceChartData} onSelect={(item) => selectWorkerFromChart(item, setPeopleWorkerIds)} selectedNames={selectedPeopleWorkerNames} />
+                  <AttendanceBars data={filteredAttendance} onSelect={selectWorkerFromChart} selectedNames={selectedWorkerNames} />
                 </Card>
 
                 <Card
@@ -2882,15 +2887,6 @@ export default function FootwearDashboard() {
               </fieldset>
 
               <div className="pbi-section-filters pbi-section-filters--quality" aria-label="Filtros de calidad y errores">
-                <div className="pbi-ranking-task-filter pbi-section-period-filter">
-                  <label htmlFor="pbi-quality-period">Período</label>
-                  <select id="pbi-quality-period" value={qualityPeriod} onChange={(event) => setQualityPeriod(event.target.value)}>
-                    <option value="current">Mes actual</option>
-                    <option value="previous">Mes anterior</option>
-                    <option value="all">Todo</option>
-                  </select>
-                </div>
-                <MultiSlicer id="incident-users" label="Trabajador" options={incidentUserOptions} selected={incidentUserIds} onChange={setIncidentUserIds} allLabel="Todos los activos" />
                 <MultiSlicer id="incident-areas" label="Área" options={incidentAreaOptions} selected={incidentAreaIds} onChange={setIncidentAreaIds} allLabel="Todas" />
               </div>
 
@@ -2964,14 +2960,8 @@ export default function FootwearDashboard() {
               </div>
 
               <div className="pbi-section-filters pbi-section-filters--training" aria-label="Filtros de capacitación">
-                <MultiSlicer id="training-workers" label="Trabajador" options={qualityWorkerOptions} selected={qualityWorkerIds} onChange={setQualityWorkerIds} allLabel="Todos" />
                 <MultiSlicer id="training-courses" label="Curso" options={trainingCourseOptions} selected={trainingCourseIds} onChange={setTrainingCourseIds} allLabel="Todos" />
                 <MultiSlicer id="training-statuses" label="Estado" options={trainingStatusOptions} selected={trainingStatuses} onChange={setTrainingStatuses} allLabel="Todos" searchable={false} />
-                <div className="pbi-powerbi-date-grid" aria-label="Fecha de capacitación">
-                  <MultiSlicer id="training-years" label="Año" options={trainingAvailableYears.map((year) => ({ value: year, label: String(year) }))} selected={trainingYears} onChange={setTrainingYears} allLabel="Todos" searchable={false} />
-                  <MultiSlicer id="training-months" label="Mes" options={trainingMonthOptions} selected={trainingMonths} onChange={setTrainingMonths} allLabel="Todos" searchable={false} />
-                  <MultiSlicer id="training-days" label="Día" options={trainingDayOptions} selected={trainingDays} onChange={setTrainingDays} allLabel="Todos" searchable={false} />
-                </div>
               </div>
 
               <div className="pbi-content-grid">
@@ -2983,8 +2973,8 @@ export default function FootwearDashboard() {
                 >
                   <TrainingProgressBars
                     data={filteredTrainingProgress}
-                    onSelect={(item) => selectWorkerFromChart(item, setQualityWorkerIds)}
-                    selectedNames={selectedQualityWorkerNames}
+                    onSelect={selectWorkerFromChart}
+                    selectedNames={selectedWorkerNames}
                   />
                 </Card>
 

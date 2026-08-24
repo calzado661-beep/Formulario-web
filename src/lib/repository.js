@@ -673,6 +673,46 @@ export async function deleteTienda(tiendaId) {
   return { deleted: true, archived: false };
 }
 
+export async function listLotes() {
+  const apiResult = await requestLocalApi("/api/lotes", {}, { requiredBackend: true });
+  if (!Array.isArray(apiResult?.lotes)) {
+    throw new Error("No se pudieron cargar los lotes.");
+  }
+  return apiResult.lotes;
+}
+
+export async function createLote(payload) {
+  const apiResult = await requestLocalApi("/api/lotes", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  }, { requiredBackend: true });
+  if (!apiResult?.lote) {
+    throw new Error("No se pudo crear el lote.");
+  }
+  return apiResult.lote;
+}
+
+export async function updateLote(loteId, changes) {
+  const apiResult = await requestLocalApi(`/api/lotes/${encodeURIComponent(loteId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes)
+  }, { requiredBackend: true });
+  if (!apiResult?.lote) {
+    throw new Error("No se pudo actualizar el lote.");
+  }
+  return apiResult.lote;
+}
+
+export async function deleteLote(loteId) {
+  const apiResult = await requestLocalApi(`/api/lotes/${encodeURIComponent(loteId)}`, {
+    method: "DELETE"
+  }, { requiredBackend: true });
+  if (!apiResult?.deleted) {
+    throw new Error("No se pudo eliminar el lote.");
+  }
+  return apiResult;
+}
+
 export async function listAmonestaciones() {
   const apiResult = await requestLocalApi("/api/amonestaciones");
   if (apiResult?.amonestaciones) return apiResult.amonestaciones;

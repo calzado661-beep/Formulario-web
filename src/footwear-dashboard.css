@@ -82,6 +82,131 @@
   box-shadow: 0 3px 0 rgba(234, 203, 43, 0.88);
 }
 
+.pbi-floating-period-panel {
+  position: fixed;
+  z-index: 45;
+  top: 50%;
+  right: 1rem;
+  width: min(230px, calc(100vw - 3rem));
+  padding: 0.85rem;
+  border: 1px solid rgba(9, 71, 128, 0.28);
+  border-left: 4px solid var(--pbi-gold);
+  border-radius: var(--pbi-radius);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 16px 36px rgba(6, 55, 98, 0.24);
+  backdrop-filter: blur(12px);
+  transform: translateY(-50%);
+  transition: transform 180ms ease;
+}
+
+.pbi-floating-period-panel.is-collapsed {
+  transform: translate(calc(100% + 1rem), -50%);
+}
+
+.pbi-period-panel-toggle {
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  display: grid;
+  width: 42px;
+  min-height: 96px;
+  padding: 0.45rem 0.25rem;
+  border: 0;
+  border-radius: 9px 0 0 9px;
+  place-items: center;
+  background: var(--pbi-blue-dark);
+  color: #fff;
+  box-shadow: -8px 10px 22px rgba(6, 55, 98, 0.2);
+  transform: translateY(-50%);
+}
+
+.pbi-period-panel-toggle span {
+  color: var(--pbi-gold);
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.pbi-period-panel-toggle small {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  writing-mode: vertical-rl;
+}
+
+.pbi-period-panel-content {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.pbi-period-panel-content > strong {
+  color: var(--pbi-blue-dark);
+  font-size: 0.86rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pbi-period-week-btn {
+  min-height: 38px;
+  border: 1px solid var(--pbi-blue);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--pbi-blue-dark);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.pbi-period-week-btn:hover,
+.pbi-period-week-btn.is-active {
+  background: var(--pbi-blue);
+  color: #fff;
+}
+
+.pbi-period-panel-summary {
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--pbi-line);
+  color: var(--pbi-muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.pbi-floating-period-panel label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--pbi-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.pbi-floating-period-panel select {
+  width: 100%;
+  min-height: 36px;
+  padding: 0.35rem 1.8rem 0.35rem 0.55rem;
+  border: 1px solid var(--pbi-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--pbi-ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.pbi-floating-period-panel select:focus-visible {
+  border-color: var(--pbi-blue);
+  outline: 3px solid rgba(9, 71, 128, 0.18);
+}
+
+.pbi-period-panel-checkbox {
+  display: flex !important;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.pbi-period-panel-checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--pbi-blue);
+}
+
 .pbi-eyebrow {
   display: inline-flex;
   align-items: center;
@@ -631,11 +756,11 @@
 }
 
 .pbi-section-filters--production {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .pbi-section-filters--quality {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .pbi-section-filters--training {
@@ -1169,6 +1294,56 @@
   line-height: 1.15;
 }
 
+.pbi-period-panel-content > label:has(#pbi-global-period-year) { order: 1; }
+.pbi-period-panel-content > label:has(#pbi-global-period-month) { order: 2; }
+.pbi-period-panel-content > label:has(#pbi-global-period-week) { order: 3; }
+.pbi-period-panel-content > label:has(#pbi-global-period-day) { order: 4; }
+.pbi-period-panel-summary { order: 5; }
+
+.pbi-personnel-attendance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem 0.5rem;
+  margin-top: 0.2rem;
+  font-size: clamp(0.5rem, 0.58vw, 0.63rem);
+  line-height: 1;
+}
+
+.pbi-personnel-attendance b { font-weight: 800; white-space: nowrap; }
+.pbi-personnel-attendance .is-present { color: #078b39; }
+.pbi-personnel-attendance .is-absent { color: #c53030; }
+
+.pbi-lot-progress {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 0.7rem;
+  padding: 0.9rem 1rem;
+  border: 2px solid var(--pbi-blue);
+  border-radius: var(--pbi-radius);
+  background: var(--pbi-card);
+  box-shadow: 0 5px 14px rgba(9, 71, 128, 0.08);
+}
+
+.pbi-lot-progress-head,
+.pbi-lot-progress-values { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.pbi-lot-progress-head > div { display: grid; gap: 0.12rem; }
+.pbi-lot-progress-head > div span { color: var(--pbi-muted); font-size: 0.74rem; font-weight: 700; }
+.pbi-lot-progress-head > div strong { color: var(--pbi-blue); font-size: 1.05rem; }
+.pbi-lot-progress-head label { display: grid; gap: 0.16rem; color: var(--pbi-muted); font-size: 0.68rem; font-weight: 700; }
+.pbi-lot-progress-head select { min-width: 130px; padding: 0.32rem 0.45rem; border: 1px solid #b9cde0; border-radius: 5px; color: var(--pbi-ink); background: #fff; font: inherit; }
+.pbi-lot-progress-values strong { color: var(--pbi-blue); font-size: 1.4rem; }
+.pbi-lot-progress-values span { flex: 1; color: var(--pbi-muted); font-size: 0.8rem; }
+.pbi-lot-progress-values b { color: #078b39; font-size: 1rem; }
+.pbi-lot-progress-track { height: 13px; overflow: hidden; border-radius: 999px; background: #dce8f1; }
+.pbi-lot-progress-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #087bba, #12ae50); transition: width 220ms ease; }
+.pbi-lot-progress--compact { grid-column: auto; min-height: 112px; padding: 0.78rem; align-content: center; }
+.pbi-lot-progress--compact .pbi-lot-progress-head { align-items: end; }
+.pbi-lot-progress--compact .pbi-lot-progress-head > div strong { font-size: 0.94rem; }
+.pbi-lot-progress--compact .pbi-lot-progress-head select { min-width: 86px; max-width: 110px; }
+.pbi-lot-progress--compact .pbi-lot-progress-values { flex-wrap: wrap; gap: 0.35rem; }
+.pbi-lot-progress--compact .pbi-lot-progress-values strong { font-size: 1.1rem; }
+.pbi-lot-progress--compact .pbi-lot-progress-values span { flex: 0 1 auto; font-size: 0.68rem; }
+
 .pbi-kpi--personnel .pbi-kpi-value {
   display: grid;
   height: 100%;
@@ -1305,7 +1480,7 @@ h2.pbi-section-heading {
 }
 
 .pbi-section-grid--indicators {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .pbi-kpi--indicator,
@@ -1316,6 +1491,8 @@ h2.pbi-section-heading {
   padding: 0.78rem;
   text-align: left;
 }
+
+.pbi-birthday-entry { display: grid; gap: 0.05rem; }
 
 .pbi-kpi--indicator::after,
 .pbi-kpi--birthday::after {
@@ -4655,6 +4832,7 @@ button.pbi-legend-item:focus-visible,
 
   .pbi-topbar,
   .pbi-actions,
+  .pbi-floating-period-panel,
   .pbi-footer {
     display: none;
   }
