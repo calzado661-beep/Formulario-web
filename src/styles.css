@@ -1033,6 +1033,33 @@ input:-webkit-autofill:focus {
   background: rgba(5, 10, 9, 0.34);
 }
 
+/* La lista administrativa puede contener todos los campos del perfil. */
+.users-management-table {
+  max-height: 540px;
+  overflow: auto;
+  scrollbar-width: auto;
+  scrollbar-color: var(--accent) #e9edf3;
+}
+
+.users-management-table::-webkit-scrollbar {
+  width: 13px;
+  height: 13px;
+}
+
+.users-management-table::-webkit-scrollbar-track {
+  background: #e9edf3;
+}
+
+.users-management-table::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border: 3px solid #e9edf3;
+  border-radius: 999px;
+}
+
+.users-management-table table {
+  min-width: max-content;
+}
+
 table {
   width: 100%;
   min-width: 720px;

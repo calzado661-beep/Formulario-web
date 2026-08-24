@@ -444,6 +444,7 @@ function UsersPanel() {
           <DataTable
             rows={rows}
             columns={tableColumns}
+            className="users-management-table"
             empty={showInactive ? "No hay usuarios registrados." : "No hay usuarios activos. Presiona \"Mostrar inactivos\" para verlos."}
           />
         )}

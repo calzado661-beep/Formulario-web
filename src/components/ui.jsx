@@ -233,6 +233,7 @@ export function DataTable({
   columns,
   empty = "Sin registros",
   compact = false,
+  className = "",
   onRowClick,
   pageSize = DEFAULT_PAGE_SIZE
 }) {
@@ -246,7 +247,7 @@ export function DataTable({
 
   return (
     <>
-    <div className={`table-wrap ${compact ? "compact" : ""}`}>
+    <div className={`table-wrap ${compact ? "compact" : ""} ${className}`}>
       <table>
         <thead>
           <tr>
