@@ -3221,7 +3221,10 @@ async function handleCreateActivityLog(request, response) {
     const singleBrandId = nullableNumber(body.marca_id);
     const lote = String(body.lote || "").trim().toUpperCase();
     const tipoEtiquetado = normalizeHangtag(body.tipo_etiquetado);
-    if (singleBrandId && !allowsBrands) {
+    // Si la tarea pide lote, la marca llega derivada del lote elegido (ver
+    // LoteField en el frontend) aunque la tarea no tenga "requiere_marca"
+    // marcado por separado.
+    if (singleBrandId && !allowsBrands && !allowsLote) {
       sendJson(response, 400, { error: `Las marcas no estan disponibles para ${taskTitle(taskResult.data)}.` });
       return;
     }
@@ -3316,11 +3319,11 @@ async function handleCreateActivityLog(request, response) {
     if (payload.marca_id) {
       const brandResult = await supabase
         .from("marcas")
-        .select("id,activo")
+        .select("id")
         .eq("id", payload.marca_id)
         .maybeSingle();
-      if (brandResult.error || !brandResult.data || !isActive(brandResult.data.activo)) {
-        sendJson(response, 400, { error: "Selecciona una marca activa y valida." });
+      if (brandResult.error || !brandResult.data) {
+        sendJson(response, 400, { error: "Selecciona una marca valida." });
         return;
       }
     }
@@ -3971,9 +3974,9 @@ async function validateGroupRecordMetadata(body, task, current = null) {
 
   if (marcaId && Number(marcaId) !== Number(current?.marca_id || 0)) {
     if (!Number.isInteger(marcaId) || marcaId <= 0) throw invalidGroupRecord("Selecciona una marca valida.");
-    const brandResult = await supabase.from("marcas").select("*").eq("id", marcaId).maybeSingle();
+    const brandResult = await supabase.from("marcas").select("id").eq("id", marcaId).maybeSingle();
     if (brandResult.error) throw brandResult.error;
-    if (!brandResult.data || !isActive(brandResult.data.activo)) throw invalidGroupRecord("Selecciona una marca activa y valida.");
+    if (!brandResult.data) throw invalidGroupRecord("Selecciona una marca valida.");
   }
   if (tiendaId && Number(tiendaId) !== Number(current?.tienda_id || 0)) {
     if (!Number.isInteger(tiendaId) || tiendaId <= 0) throw invalidGroupRecord("Selecciona una tienda valida.");
@@ -4465,10 +4468,10 @@ async function handleUpdateLiveGroupLeaderActivity(request, response, activityId
       return;
     }
     if (marcaId) {
-      const brandResult = await supabase.from("marcas").select("*").eq("id", marcaId).maybeSingle();
+      const brandResult = await supabase.from("marcas").select("id").eq("id", marcaId).maybeSingle();
       if (brandResult.error) throw brandResult.error;
-      if (!brandResult.data || !isActive(brandResult.data.activo)) {
-        sendJson(response, 400, { error: "Selecciona una marca activa y valida." });
+      if (!brandResult.data) {
+        sendJson(response, 400, { error: "Selecciona una marca valida." });
         return;
       }
     }
