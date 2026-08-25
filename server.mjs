@@ -1355,7 +1355,8 @@ async function handleReadFootwearDashboard(request, response) {
       scoringRules,
       penalties,
       averageReferences,
-      lotes
+      lotes,
+      guias
     ] = await Promise.all([
       selectAllDashboardRows("usuarios"),
       selectAllDashboardRows(taskTable),
@@ -1373,7 +1374,8 @@ async function handleReadFootwearDashboard(request, response) {
       selectAllDashboardRows("reglas_puntaje", { optional: true }),
       selectAllDashboardRows("penalizaciones", { optional: true }),
       selectAverageReferencesByTask(),
-      selectAllDashboardRows("lotes", { optional: true })
+      selectAllDashboardRows("lotes", { optional: true }),
+      selectAllDashboardRows("guias", { optional: true })
     ]);
 
     const dashboardUsers = users.filter((user) => normalizeRole(user.rol) !== "administrador");
@@ -1398,6 +1400,7 @@ async function handleReadFootwearDashboard(request, response) {
     visibleWarnings.forEach((row) => collectYear(row.fecha || row.created_at));
     visibleMovements.forEach((row) => collectYear(row.fecha_movimiento || row.created_at));
     visibleTrainingAssignments.forEach((row) => collectYear(row.completado_en || row.created_at));
+    guias.forEach((row) => collectYear(row.fecha || row.created_at));
     const dashboardYears = [...years].filter(Number.isFinite).sort((a, b) => a - b);
 
     const rulesByTaskId = new Map();
@@ -1484,6 +1487,11 @@ async function handleReadFootwearDashboard(request, response) {
         quantity: Number(lote.cantidad_lote || 0),
         status: String(lote.estado || "pendiente").trim().toLowerCase()
       })).filter((lote) => lote.code),
+      guias: guias.map((row) => ({
+        id: Number(row.id),
+        code: String(row.codigo || "").trim(),
+        date: dashboardDate(row.fecha || row.created_at)
+      })).filter((row) => row.code && row.date),
       penalties: penalties.map((item) => ({ key: String(item.clave || ""), points: Number(item.puntos || 0) })),
       averageReferenceByTask: averageReferences.byTask,
       averageReferenceMigrationRequired: averageReferences.migrationRequired,

@@ -4,7 +4,6 @@ import { loadFootwearDashboard, updateGroupLeaderAverageReference } from "../lib
 import { attendanceGroup } from "../lib/operations";
 import {
   averageEmployeeTenureMonths,
-  buildComparableIncidentMetrics,
   dashboardDateParts,
   taskVolumeRows,
   timedActivityKpi,
@@ -1846,7 +1845,8 @@ export default function FootwearDashboard() {
       ...(dashboardData?.attendances || []),
       ...(dashboardData?.incidents || []),
       ...(dashboardData?.movements || []),
-      ...(dashboardData?.trainingAssignments || [])
+      ...(dashboardData?.trainingAssignments || []),
+      ...(dashboardData?.guias || [])
     ])
   ])].sort((a, b) => b - a), [dashboardData]);
   const globalPeriodRows = [
@@ -1854,7 +1854,8 @@ export default function FootwearDashboard() {
     ...(dashboardData?.attendances || []),
     ...(dashboardData?.incidents || []),
     ...(dashboardData?.movements || []),
-    ...(dashboardData?.trainingAssignments || [])
+    ...(dashboardData?.trainingAssignments || []),
+    ...(dashboardData?.guias || [])
   ];
   // No se ofrecen meses futuros del año actual: un registro con fecha mal
   // cargada (o programada a futuro, como un ingreso de personal) no deberia
@@ -1933,14 +1934,6 @@ export default function FootwearDashboard() {
     && ["operante", "jefe de equipo"].includes(workerById.get(Number(row.workerId))?.role)
     && (globalIncludeInactiveWorkers || workerById.get(Number(row.workerId))?.active)
     && allowedTaskIds.has(row.taskId)
-  ));
-  // Calidad comparable usa registros operativos reales de ambas fuentes. No
-  // aplica trabajador ni marca porque los incidentes generales se vinculan a
-  // responsables, no necesariamente a usuarios operativos.
-  const qualityActivities = (dashboardData?.activities || []).filter((row) => (
-    matchesQualityDate(row.date)
-    && matchesGlobalWorker(row.workerId)
-    && allowedIncidentTaskIds.has(row.taskId)
   ));
 
   const operationalTaskIds = new Set(OPERATIONAL_TASKS.map((task) => Number(task.id)));
@@ -2137,7 +2130,21 @@ export default function FootwearDashboard() {
       || (incidentAreaIds.length > 0 && incidentAreaIds.includes(Number(incident.areaId)))
     )
   ));
-  const comparableIncidentMetrics = buildComparableIncidentMetrics(visibleIncidentRecords, qualityActivities);
+  // Margen de error = total de registros de registro_errores del periodo
+  // filtrado sobre la cantidad de guias DISTINTAS (guias.codigo) registradas
+  // en ese mismo rango de fechas (mismo filtro de periodo que los errores).
+  const filteredGuias = (dashboardData?.guias || []).filter((row) => matchesQualityDate(row.date));
+  const totalGuideCount = new Set(filteredGuias.map((row) => row.code)).size;
+  const totalErrorCount = visibleIncidentRecords.length;
+  const errorMargin = totalGuideCount ? (totalErrorCount / totalGuideCount) * 100 : 0;
+  // Guias nuevas hoy: codigos distintos de la tabla "guias" cuya fecha es la
+  // fecha de hoy -no se ve afectado por los filtros del panel (siempre es la
+  // fecha real de hoy).
+  const newGuidesToday = new Set(
+    (dashboardData?.guias || [])
+      .filter((row) => row.date === CURRENT_LIMA_PARTS.iso)
+      .map((row) => row.code)
+  ).size;
   const incidentCountByTask = visibleIncidentRecords.reduce((counts, incident) => {
     const item = counts.get(incident.taskId) || { value: 0, lastDate: null };
     item.value += 1;
@@ -2234,10 +2241,11 @@ export default function FootwearDashboard() {
     allowedWorkerIds: new Set(peopleWorkers.map((worker) => Number(worker.id)))
   });
   const filteredIndicators = [
-    { label: "Margen de error", detail: `${comparableIncidentMetrics.comparableIncidents} incidentes / ${comparableIncidentMetrics.comparableRecords} registros comparables`, value: `${comparableIncidentMetrics.margin.toFixed(2)}%` },
+    { label: "Margen de error", detail: `${numberFormatter.format(totalErrorCount)} errores / ${numberFormatter.format(totalGuideCount)} guías distintas`, value: `${errorMargin.toFixed(2)}%` },
     { label: "Ausentismo", detail: "Registro de asistencias", value: `${attendanceTotal ? ((attendanceTotals.absent / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
     { label: "Tardanza", detail: "Llegadas fuera de hora", value: `${attendanceTotal ? ((attendanceTotals.late / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
-    { label: "Permanencia promedio", detail: `${tenure.workerCount} trabajador(es) con periodos laborales`, suffix: "meses", value: tenure.months.toFixed(2) }
+    { label: "Permanencia promedio", detail: `${tenure.workerCount} trabajador(es) con periodos laborales`, suffix: "meses", value: tenure.months.toFixed(2) },
+    { label: "Guías nuevas hoy", detail: "Códigos de guía distintos registrados hoy", value: numberFormatter.format(newGuidesToday) }
   ];
   // No se filtra por periodo ni por trabajador: el historial de amonestaciones
   // se ve completo siempre, sin que lo afecten los demas filtros del tablero.
