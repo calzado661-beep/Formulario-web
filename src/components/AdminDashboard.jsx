@@ -4269,24 +4269,15 @@ function GuiasPanel() {
     }
     setExporting(true);
     try {
-      const items = await listGuiaItemsForExport(anioFilter, mesFilter);
-      if (!items.length) {
-        setExportStatus({ type: "error", message: "No hay detalle de guias importado para ese mes." });
+      const rawItems = await listGuiaItemsForExport(anioFilter, mesFilter);
+      if (!rawItems.length) {
+        setExportStatus({ type: "error", message: "No hay guias importadas para ese mes." });
         return;
       }
-      const columns = [];
-      const seenColumns = new Set();
-      items.forEach((item) => {
-        Object.keys(item || {}).forEach((key) => {
-          if (!seenColumns.has(key)) {
-            seenColumns.add(key);
-            columns.push(key);
-          }
-        });
-      });
+      const items = rawItems.map((item) => ({ ...item, Estado: formatDateLima(item.Estado) }));
       const mesLabel = GUIA_MESES[Number(mesFilter) - 1] || mesFilter;
-      downloadExcelTable(`guias_${mesLabel.toLowerCase()}_${anioFilter}.xls`, columns, items, "Guias");
-      setExportStatus({ type: "success", message: `${items.length} linea(s) exportada(s) de ${mesLabel} ${anioFilter}.` });
+      downloadExcelTable(`guias_${mesLabel.toLowerCase()}_${anioFilter}.xls`, ["Estado", "Guia", "Cantidad"], items, "Guias");
+      setExportStatus({ type: "success", message: `${items.length} guia(s) exportada(s) (agrupadas, con su cantidad sumada) de ${mesLabel} ${anioFilter}.` });
     } catch (err) {
       setExportStatus({ type: "error", message: friendlyError(err) });
     } finally {
@@ -4319,7 +4310,8 @@ function GuiasPanel() {
       Codigo: guia.codigo,
       Fecha: formatDateLima(guia.fecha),
       Mes: guia.mes ? GUIA_MESES[guia.mes - 1] : "",
-      Año: guia.anio || ""
+      Año: guia.anio || "",
+      Cantidad: guia.cantidad || 0
     }));
 
   return (
@@ -4353,7 +4345,8 @@ function GuiasPanel() {
 
       <Panel title="Guias" eyebrow="Detalle">
         <Alert>
-          Elige un año y un mes especificos para exportar a Excel solo el detalle (linea por linea) de ese mes.
+          Elige un año y un mes especificos para exportar a Excel las guias de ese mes: una fila por guia, con su
+          cantidad sumada entre todas sus lineas de producto.
         </Alert>
         <div className="toolbar">
           <SelectInput
@@ -4371,7 +4364,7 @@ function GuiasPanel() {
           <Button variant="secondary" icon={FileSpreadsheet} loading={exporting} onClick={handleExport}>Exportar Excel del mes</Button>
         </div>
         <StatusAlert status={exportStatus} />
-        <DataTable rows={tableRows} columns={["Codigo", "Fecha", "Mes", "Año"]} pageSize={25} empty="No hay guias para estos filtros." />
+        <DataTable rows={tableRows} columns={["Codigo", "Fecha", "Mes", "Año", "Cantidad"]} pageSize={25} empty="No hay guias para estos filtros." />
       </Panel>
     </div>
   );
