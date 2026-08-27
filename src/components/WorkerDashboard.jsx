@@ -188,8 +188,10 @@ function RegisterActivity({ user }) {
       ? record.guias.map((item) => ({ numero_guia: String(item.numero_guia || "").trim(), cantidad: Number(item.cantidad) }))
       : [];
     // La marca siempre es un unico valor por registro; ya no se reparte la
-    // cantidad total entre varias marcas.
-    const marcaId = flags.marca && record.marcaId ? Number(record.marcaId) : null;
+    // cantidad total entre varias marcas. Si la tarea pide lote, la marca se
+    // completa sola desde el lote elegido (ver LoteField), asi que tambien
+    // se guarda aunque la tarea no pida marca por separado.
+    const marcaId = (flags.marca || flags.lote) && record.marcaId ? Number(record.marcaId) : null;
     const numeroGuia = flags.guia && !splitsQuantity ? String(record.numeroGuia || "").trim() || null : null;
     const tiendaId = flags.tienda && record.tiendaId ? Number(record.tiendaId) : null;
     const lote = flags.lote ? String(record.lote || "").trim().toUpperCase() || null : null;
@@ -406,7 +408,7 @@ function RegisterActivity({ user }) {
         ...emptyRecord(),
         taskKey: taskEntry[0],
         cantidad: quantity > 0 ? String(quantity) : "",
-        marcaId: flags.marca && activity.marca_id ? String(activity.marca_id) : "",
+        marcaId: (flags.marca || flags.lote) && activity.marca_id ? String(activity.marca_id) : "",
         lote: flags.lote ? String(activity.lote || "") : "",
         tipoEtiquetado: flags.hangtag && ["CON_HANGTAG", "SIN_HANGTAG"].includes(hangtag) ? hangtag : "",
         tiendaId: flags.tienda && activity.tienda_id ? String(activity.tienda_id) : "",
@@ -540,7 +542,7 @@ function DynamicRecordFields({ record, task, brands, stores, lotes, onChange }) 
           />
         )}
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
-        {flags.marca ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
+        {flags.marca && !flags.lote ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
         {usesGuideBreakdown ? <GuideFields record={record} onChange={onChange} /> : null}
         {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
@@ -563,7 +565,7 @@ function DynamicRecordFields({ record, task, brands, stores, lotes, onChange }) 
           />
         )}
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
-        {flags.marca ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
+        {flags.marca && !flags.lote ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
         {usesGuideBreakdown ? <GuideFields record={record} onChange={onChange} /> : null}
         {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
@@ -582,7 +584,7 @@ function DynamicRecordFields({ record, task, brands, stores, lotes, onChange }) 
           hint="Esta tarea siempre se registra como cumplida."
         />
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
-        {flags.marca ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
+        {flags.marca && !flags.lote ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
         {flags.guia ? <SingleGuideField record={record} onChange={onChange} /> : null}
         {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
@@ -601,7 +603,7 @@ function DynamicRecordFields({ record, task, brands, stores, lotes, onChange }) 
         options={[SIMPLE_SHIFT, FULL_SHIFT]}
       />
       {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
-      {flags.marca ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
+      {flags.marca && !flags.lote ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
       {flags.guia ? <SingleGuideField record={record} onChange={onChange} /> : null}
       {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
       <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
@@ -652,17 +654,18 @@ function GuideFields({ record, onChange }) {
 }
 
 function LoteField({ record, lotes, onChange }) {
-  // Si la tarea tambien pide marca, solo se ofrecen los lotes de esa marca;
-  // sin marca seleccionada (o si la tarea no la pide) se ofrecen todos los
-  // lotes disponibles.
-  const availableLotes = (lotes || []).filter((lote) => (
-    lote.estado === "pendiente" && (!record.marcaId || Number(lote.marca_id) === Number(record.marcaId))
-  ));
+  // El lote ya trae su marca (codigo_lote - marca_nombre), asi que al
+  // elegirlo se completa marcaId solo: la tarea no vuelve a pedir la marca
+  // por separado cuando tiene lote.
+  const availableLotes = (lotes || []).filter((lote) => lote.estado === "pendiente");
   return (
     <SelectInput
       label="Lote"
       value={record.lote || ""}
-      onChange={(lote) => onChange({ lote })}
+      onChange={(codigoLote) => {
+        const selected = availableLotes.find((lote) => lote.codigo_lote === codigoLote);
+        onChange({ lote: codigoLote, marcaId: selected ? String(selected.marca_id) : "" });
+      }}
       options={[
         { value: "", label: availableLotes.length ? "Selecciona un lote" : "No hay lotes disponibles" },
         ...availableLotes.map((lote) => ({ value: lote.codigo_lote, label: `${lote.codigo_lote} - ${lote.marca_nombre}` }))

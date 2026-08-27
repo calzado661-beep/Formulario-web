@@ -39,6 +39,18 @@ export function formatDateTimeLima(value) {
 
 export function formatDateLima(value) {
   if (!value) return "";
+
+  // Una fecha "sola" (columna `date`, sin hora) no tiene zona horaria: si se
+  // pasa por Date/Intl con timeZone America/Lima, "2026-01-31" se interpreta
+  // como medianoche UTC y al convertir a Lima (UTC-5) cae en el dia anterior
+  // (se ve "30/01/2026"). Para YYYY-MM-DD se arma el texto directo, sin
+  // pasar por conversion de zona horaria, para no perder el dia 30/31.
+  const plainDate = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value));
+  if (plainDate) {
+    const [, year, month, day] = plainDate;
+    return `${day}/${month}/${year}`;
+  }
+
   const date = new Date(String(value).replace(" ", "T"));
   if (Number.isNaN(date.getTime())) return String(value);
 

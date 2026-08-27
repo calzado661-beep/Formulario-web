@@ -2208,15 +2208,56 @@ async function handleDeleteLote(request, response, loteId) {
 async function handleReadGuias(request, response) {
   try {
     if (!requireAdministrator(request, response)) return;
-    const result = await supabase
-      .from("guias")
-      .select("id,codigo,fecha,archivo_origen")
-      .order("fecha", { ascending: false });
-    if (result.error) throw result.error;
-    sendJson(response, 200, { guias: result.data || [] });
+    // PostgREST solo devuelve 1000 filas por consulta si no se pagina: con
+    // varios meses importados "guias" ya supera eso, y un select plano corta
+    // en silencio los registros mas antiguos (asi desaparecia enero al
+    // importar meses despues). selectAllDashboardRows pagina con .range()
+    // hasta traer todo.
+    const rows = await selectAllDashboardRows("guias");
+    const guias = rows
+      .map((row) => ({ id: row.id, codigo: row.codigo, fecha: row.fecha, archivo_origen: row.archivo_origen, cantidad: row.cantidad }))
+      .sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+    sendJson(response, 200, { guias });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron cargar las guias." });
   }
+}
+
+// El Excel origen llama "SERIE" a esta columna, pero el dato que trae es una
+// cantidad. Se guarda sumada en "guias.cantidad" (en vez de recalcularla en
+// cada lectura) y se recalcula solo para los codigos de guia que acaban de
+// recibir lineas nuevas.
+async function recomputeGuiasCantidad(codigosGuia) {
+  if (!codigosGuia.length) return;
+
+  // PostgREST tope de 1000 filas por consulta si no se pagina: con guias de
+  // ~20 lineas cada una, un lote de codigos puede superarlo. Se pagina con
+  // .range() para no cortar lineas y sumar mal la cantidad.
+  const pageSize = 1000;
+  const items = [];
+  for (let from = 0; ; from += pageSize) {
+    const itemsResult = await supabase
+      .from("guias_items")
+      .select("codigo_guia,datos")
+      .in("codigo_guia", codigosGuia)
+      .range(from, from + pageSize - 1);
+    if (itemsResult.error) throw itemsResult.error;
+    const page = itemsResult.data || [];
+    items.push(...page);
+    if (page.length < pageSize) break;
+  }
+
+  const sums = new Map();
+  for (const item of items) {
+    const cantidad = Number(item.datos?.SERIE);
+    sums.set(item.codigo_guia, (sums.get(item.codigo_guia) || 0) + (Number.isFinite(cantidad) ? cantidad : 0));
+  }
+
+  await Promise.all(
+    codigosGuia.map((codigo) =>
+      supabase.from("guias").update({ cantidad: sums.get(codigo) || 0 }).eq("codigo", codigo)
+    )
+  );
 }
 
 async function handleImportGuias(request, response) {
@@ -2274,6 +2315,9 @@ async function handleImportGuias(request, response) {
         .select("id");
       if (result.error) throw result.error;
       const imported = (result.data || []).length;
+
+      await recomputeGuiasCantidad(Array.from(new Set(rows.map((row) => row.codigo_guia))));
+
       sendJson(response, 200, { imported, omitted: rows.length - imported, total: rows.length });
       return;
     }
@@ -2299,15 +2343,31 @@ async function handleReadGuiaItems(request, response) {
     const hastaAnio = mes === 12 ? anio + 1 : anio;
     const hasta = `${hastaAnio}-${String(hastaMes).padStart(2, "0")}-01`;
 
-    const result = await supabase
-      .from("guias_items")
-      .select("codigo_guia,codigo_item,fecha,datos")
-      .gte("fecha", desde)
-      .lt("fecha", hasta)
-      .order("fecha", { ascending: true })
-      .order("codigo_guia", { ascending: true });
-    if (result.error) throw result.error;
-    sendJson(response, 200, { items: (result.data || []).map((row) => row.datos || {}) });
+    // Paginado con .range() por el mismo motivo que handleReadGuias: un mes
+    // con muchas guias podria superar el tope de 1000 filas por consulta.
+    const pageSize = 1000;
+    const guiasDelMes = [];
+    for (let from = 0; ; from += pageSize) {
+      const result = await supabase
+        .from("guias")
+        .select("codigo,fecha,cantidad")
+        .gte("fecha", desde)
+        .lt("fecha", hasta)
+        .order("fecha", { ascending: true })
+        .order("codigo", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (result.error) throw result.error;
+      const page = result.data || [];
+      guiasDelMes.push(...page);
+      if (page.length < pageSize) break;
+    }
+
+    const items = guiasDelMes.map((guia) => ({
+      Estado: guia.fecha,
+      Guia: guia.codigo,
+      Cantidad: Number(guia.cantidad || 0)
+    }));
+    sendJson(response, 200, { items });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo exportar el detalle de guias." });
   }
@@ -3161,7 +3221,10 @@ async function handleCreateActivityLog(request, response) {
     const singleBrandId = nullableNumber(body.marca_id);
     const lote = String(body.lote || "").trim().toUpperCase();
     const tipoEtiquetado = normalizeHangtag(body.tipo_etiquetado);
-    if (singleBrandId && !allowsBrands) {
+    // Si la tarea pide lote, la marca llega derivada del lote elegido (ver
+    // LoteField en el frontend) aunque la tarea no tenga "requiere_marca"
+    // marcado por separado.
+    if (singleBrandId && !allowsBrands && !allowsLote) {
       sendJson(response, 400, { error: `Las marcas no estan disponibles para ${taskTitle(taskResult.data)}.` });
       return;
     }
@@ -3256,11 +3319,11 @@ async function handleCreateActivityLog(request, response) {
     if (payload.marca_id) {
       const brandResult = await supabase
         .from("marcas")
-        .select("id,activo")
+        .select("id")
         .eq("id", payload.marca_id)
         .maybeSingle();
-      if (brandResult.error || !brandResult.data || !isActive(brandResult.data.activo)) {
-        sendJson(response, 400, { error: "Selecciona una marca activa y valida." });
+      if (brandResult.error || !brandResult.data) {
+        sendJson(response, 400, { error: "Selecciona una marca valida." });
         return;
       }
     }
@@ -3911,9 +3974,9 @@ async function validateGroupRecordMetadata(body, task, current = null) {
 
   if (marcaId && Number(marcaId) !== Number(current?.marca_id || 0)) {
     if (!Number.isInteger(marcaId) || marcaId <= 0) throw invalidGroupRecord("Selecciona una marca valida.");
-    const brandResult = await supabase.from("marcas").select("*").eq("id", marcaId).maybeSingle();
+    const brandResult = await supabase.from("marcas").select("id").eq("id", marcaId).maybeSingle();
     if (brandResult.error) throw brandResult.error;
-    if (!brandResult.data || !isActive(brandResult.data.activo)) throw invalidGroupRecord("Selecciona una marca activa y valida.");
+    if (!brandResult.data) throw invalidGroupRecord("Selecciona una marca valida.");
   }
   if (tiendaId && Number(tiendaId) !== Number(current?.tienda_id || 0)) {
     if (!Number.isInteger(tiendaId) || tiendaId <= 0) throw invalidGroupRecord("Selecciona una tienda valida.");
@@ -4405,10 +4468,10 @@ async function handleUpdateLiveGroupLeaderActivity(request, response, activityId
       return;
     }
     if (marcaId) {
-      const brandResult = await supabase.from("marcas").select("*").eq("id", marcaId).maybeSingle();
+      const brandResult = await supabase.from("marcas").select("id").eq("id", marcaId).maybeSingle();
       if (brandResult.error) throw brandResult.error;
-      if (!brandResult.data || !isActive(brandResult.data.activo)) {
-        sendJson(response, 400, { error: "Selecciona una marca activa y valida." });
+      if (!brandResult.data) {
+        sendJson(response, 400, { error: "Selecciona una marca valida." });
         return;
       }
     }
