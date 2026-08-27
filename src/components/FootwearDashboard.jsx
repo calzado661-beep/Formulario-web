@@ -2307,8 +2307,12 @@ export default function FootwearDashboard() {
   }, [lotes.map((lot) => lot.code).join("|")]);
   const selectedLot = lotes.find((lot) => lot.code === selectedLotCode);
   const etiquetadoTaskId = TASK_CATALOG.find((task) => String(task.name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim() === "etiquetado")?.id;
+  // El avance del lote solo suma lo registrado por jefes de equipo: en
+  // Etiquetado, el operante y el jefe de equipo hacen el mismo trabajo, y
+  // sumar ambos duplicaria las cantidades sobre el mismo lote.
   const labeledPairsInLot = (dashboardData?.activities || []).filter((row) => (
     Number(row.taskId) === Number(etiquetadoTaskId)
+    && row.source === "jefe-equipo"
     && String(row.lote || "").trim().toUpperCase() === selectedLot?.code
   )).reduce((sum, row) => sum + Number(row.quantity || 0), 0);
   const payrollPeriodLabel = payrollMonthIndexes.length
