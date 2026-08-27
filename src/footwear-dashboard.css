@@ -1614,6 +1614,10 @@ h2.pbi-section-heading {
   grid-column: span 8;
 }
 
+.pbi-card--span-8-centered {
+  grid-column: 3 / span 8;
+}
+
 .pbi-card--tall {
   min-height: clamp(400px, 36vw, 620px);
 }
@@ -2290,6 +2294,24 @@ h2.pbi-section-heading {
 
 .pbi-chart-dot--blue {
   fill: var(--pbi-blue);
+}
+
+.pbi-chart-dot.is-hovered {
+  r: 7;
+  filter: drop-shadow(0 2px 4px rgba(9, 71, 128, 0.4));
+}
+
+.pbi-chart-hover-area {
+  cursor: crosshair;
+  pointer-events: all;
+}
+
+.pbi-chart-crosshair {
+  stroke: var(--pbi-blue);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 .pbi-chart-value {
@@ -4488,6 +4510,10 @@ button.pbi-legend-item:focus-visible,
     grid-column: span 6;
   }
 
+  .pbi-card--span-8-centered {
+    grid-column: 4 / span 6;
+  }
+
   .pbi-card--span-12,
   .pbi-card--wide {
     grid-column: 1 / -1;
@@ -4544,6 +4570,10 @@ button.pbi-legend-item:focus-visible,
   .pbi-card--span-6,
   .pbi-card--span-8 {
     grid-column: span 6;
+  }
+
+  .pbi-card--span-8-centered {
+    grid-column: 4 / span 6;
   }
 
   .pbi-card--span-12,
@@ -4694,6 +4724,7 @@ button.pbi-legend-item:focus-visible,
   .pbi-card--span-4,
   .pbi-card--span-6,
   .pbi-card--span-8,
+  .pbi-card--span-8-centered,
   .pbi-card--span-12,
   .pbi-card--wide,
   .pbi-card--tall,

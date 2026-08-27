@@ -903,6 +903,8 @@ function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSel
 
 function LineChart({ id, data, ariaLabel, valueFormatter = (value) => numberFormatter.format(value), tone = "blue", onSelect, selectedNames = [] }) {
   const [tooltip, setTooltip] = useState(null);
+  const [hoverIndex, setHoverIndex] = useState(null);
+  const svgRef = useRef(null);
   if (!data.length) return <p className="pbi-chart-empty">No hay datos para el filtro seleccionado.</p>;
 
   const dense = data.length > 12;
@@ -927,6 +929,45 @@ function LineChart({ id, data, ariaLabel, valueFormatter = (value) => numberForm
   const color = tone === "gold" ? "#e7bd22" : "#0a4f87";
   const animationKey = data.map((item) => `${item.label}:${item.value}`).join("|");
 
+  // Linea vertical que sigue al mouse: convierte la posicion del puntero a
+  // coordenadas del viewBox (el SVG se escala en pantalla) y resalta el
+  // punto mas cercano en X, como en Power BI/Excel.
+  function pointerToNearestIndex(event) {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const svgPoint = svg.createSVGPoint();
+    svgPoint.x = event.clientX;
+    svgPoint.y = event.clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const local = svgPoint.matrixTransform(ctm.inverse());
+    let nearestIndex = 0;
+    let nearestDistance = Infinity;
+    points.forEach((point, index) => {
+      const distance = Math.abs(point.x - local.x);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+    return nearestIndex;
+  }
+
+  function handleAreaPointerMove(event) {
+    const index = pointerToNearestIndex(event);
+    if (index === null) return;
+    const point = points[index];
+    setHoverIndex(index);
+    tooltipAt(event, setTooltip, point.label, valueFormatter(point.value), onSelect ? "Haz clic para filtrar" : "");
+  }
+
+  function handleAreaLeave() {
+    setHoverIndex(null);
+    setTooltip(null);
+  }
+
+  const hoverPoint = hoverIndex !== null ? points[hoverIndex] : null;
+
   return (
     <div
       className="pbi-chart pbi-chart--line"
@@ -934,6 +975,7 @@ function LineChart({ id, data, ariaLabel, valueFormatter = (value) => numberForm
       style={{ "--pbi-line-mobile-width": `${Math.max(600, Math.min(760, data.length * 36))}px` }}
     >
       <svg
+        ref={svgRef}
         key={animationKey}
         className="pbi-chart-svg"
         data-line-chart="true"
@@ -962,6 +1004,25 @@ function LineChart({ id, data, ariaLabel, valueFormatter = (value) => numberForm
         })}
         <path className="pbi-chart-area" d={areaPath} fill={`url(#${id}-area)`} />
         <path className={`pbi-chart-line pbi-chart-line--${tone}`} d={linePath} fill="none" stroke={color} />
+        <rect
+          className="pbi-chart-hover-area"
+          x={left}
+          y={top}
+          width={innerWidth}
+          height={innerHeight}
+          fill="transparent"
+          onPointerMove={handleAreaPointerMove}
+          onMouseLeave={handleAreaLeave}
+        />
+        {hoverPoint ? (
+          <line
+            className="pbi-chart-crosshair"
+            x1={hoverPoint.x}
+            x2={hoverPoint.x}
+            y1={top}
+            y2={top + innerHeight}
+          />
+        ) : null}
         {points.map((point, index) => {
           const selectionValue = point.name || point.label;
           const selected = selectedNames.includes(selectionValue);
@@ -982,13 +1043,25 @@ function LineChart({ id, data, ariaLabel, valueFormatter = (value) => numberForm
                 onSelect(point);
               }
             }}
-            onPointerMove={(event) => tooltipAt(event, setTooltip, point.label, valueFormatter(point.value), onSelect ? "Haz clic para filtrar" : "")}
-            onFocus={(event) => tooltipAtFocus(event, setTooltip, point.label, valueFormatter(point.value), onSelect ? "Presiona Enter para filtrar" : "")}
-            onBlur={() => setTooltip(null)}
-            onMouseLeave={() => setTooltip(null)}
+            onPointerMove={(event) => {
+              setHoverIndex(index);
+              tooltipAt(event, setTooltip, point.label, valueFormatter(point.value), onSelect ? "Haz clic para filtrar" : "");
+            }}
+            onFocus={(event) => {
+              setHoverIndex(index);
+              tooltipAtFocus(event, setTooltip, point.label, valueFormatter(point.value), onSelect ? "Presiona Enter para filtrar" : "");
+            }}
+            onBlur={() => {
+              setHoverIndex(null);
+              setTooltip(null);
+            }}
+            onMouseLeave={() => {
+              setHoverIndex(null);
+              setTooltip(null);
+            }}
           >
             <title>{`${point.label}: ${valueFormatter(point.value)}`}</title>
-            <circle className={`pbi-chart-dot pbi-chart-dot--${tone}`} style={{ "--pbi-index": index }} cx={point.x} cy={point.y} r="5" fill={color} />
+            <circle className={`pbi-chart-dot pbi-chart-dot--${tone}${hoverIndex === index ? " is-hovered" : ""}`} style={{ "--pbi-index": index }} cx={point.x} cy={point.y} r="5" fill={color} />
             <text className="pbi-axis-label pbi-axis-label--category" x={point.x} y={height - 22} textAnchor="middle">
               {point.label}
             </text>
@@ -2611,7 +2684,7 @@ export default function FootwearDashboard() {
                   title="Top 5 Trabajadores por Producción"
                   meta="Suma de puntos a favor"
                   icon={<StarIcon />}
-                  className="pbi-card--chart pbi-card--featured pbi-card--top-workers-compact pbi-card--span-12"
+                  className="pbi-card--chart pbi-card--featured pbi-card--top-workers-compact pbi-card--span-8-centered"
                 >
                   <VerticalBarChart
                     id="pbi-top-workers"
