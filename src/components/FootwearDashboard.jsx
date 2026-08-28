@@ -240,16 +240,6 @@ const MOVEMENT_BY_YEAR = {
 };
 
 const BRAND_COLORS = ["#0a4f87", "#e7bd22", "#2d79ae", "#ef8f3d", "#47a7a1", "#745aa6", "#9dbf49", "#b8c8d6"];
-const BRAND_TREEMAP_COLORS = {
-  Superga: "#2025ad",
-  Adidas: "#ef6c32",
-  "Under Armour": "#1d8df5",
-  Umbro: "#840078",
-  Champion: "#d83b9c",
-  Avia: "#7457b7",
-  "Body Glove": "#b9af00",
-  NKG: "#318342"
-};
 const numberFormatter = new Intl.NumberFormat("es-PE");
 const currencyFormatter = new Intl.NumberFormat("es-PE", {
   style: "currency",
@@ -1378,108 +1368,6 @@ function TrainingProgressBars({ data, onSelect, selectedNames = [] }) {
   );
 }
 
-function treemapLayout(data) {
-  const items = [...data].filter((item) => item.value > 0).sort((a, b) => b.value - a.value);
-  const total = items.reduce((sum, item) => sum + item.value, 0);
-  if (!items.length || !total) return [];
-
-  const tile = (item, x, y, width, height) => ({ ...item, x, y, width, height, area: (width * height) / 100 });
-  if (items.length === 1) return [tile(items[0], 0, 0, 100, 100)];
-  if (items.length === 2) {
-    const firstWidth = (items[0].value / total) * 100;
-    return [tile(items[0], 0, 0, firstWidth, 100), tile(items[1], firstWidth, 0, 100 - firstWidth, 100)];
-  }
-  if (items.length === 3) {
-    const firstWidth = (items[0].value / total) * 100;
-    const remaining = items[1].value + items[2].value;
-    const secondHeight = (items[1].value / remaining) * 100;
-    return [
-      tile(items[0], 0, 0, firstWidth, 100),
-      tile(items[1], firstWidth, 0, 100 - firstWidth, secondHeight),
-      tile(items[2], firstWidth, secondHeight, 100 - firstWidth, 100 - secondHeight)
-    ];
-  }
-
-  // La partición reproduce el treemap binario de Power BI: dos bloques apilados
-  // a la izquierda, dos principales a la derecha y las marcas menores al pie.
-  const leftItems = items.slice(0, 2);
-  const rightTopItems = items.slice(2, 4);
-  const rightBottomItems = items.slice(4);
-  const leftTotal = leftItems.reduce((sum, item) => sum + item.value, 0);
-  const rightTopTotal = rightTopItems.reduce((sum, item) => sum + item.value, 0);
-  const rightBottomTotal = rightBottomItems.reduce((sum, item) => sum + item.value, 0);
-  const rightTotal = rightTopTotal + rightBottomTotal;
-  const leftWidth = (leftTotal / total) * 100;
-  const rightWidth = 100 - leftWidth;
-  const firstHeight = (leftItems[0].value / leftTotal) * 100;
-  const rightTopHeight = rightTotal ? (rightTopTotal / rightTotal) * 100 : 100;
-  const thirdWidth = (rightTopItems[0].value / rightTopTotal) * rightWidth;
-  const tiles = [
-    tile(leftItems[0], 0, 0, leftWidth, firstHeight),
-    tile(leftItems[1], 0, firstHeight, leftWidth, 100 - firstHeight),
-    tile(rightTopItems[0], leftWidth, 0, thirdWidth, rightTopHeight),
-    tile(rightTopItems[1], leftWidth + thirdWidth, 0, rightWidth - thirdWidth, rightTopHeight)
-  ];
-
-  if (rightBottomItems.length) {
-    let x = leftWidth;
-    rightBottomItems.forEach((item) => {
-      const width = (item.value / rightBottomTotal) * rightWidth;
-      tiles.push(tile(item, x, rightTopHeight, width, 100 - rightTopHeight));
-      x += width;
-    });
-  }
-  return tiles;
-}
-
-function TreemapChart({ data, ariaLabel, unit = "pares", onSelect, selectedNames = [] }) {
-  const [tooltip, setTooltip] = useState(null);
-  const tiles = treemapLayout(data);
-  const total = tiles.reduce((sum, item) => sum + item.value, 0);
-  const animationKey = tiles.map((item) => `${item.name}:${item.value}`).join("|");
-  if (!tiles.length) return <p className="pbi-chart-empty">No hay pares etiquetados para el filtro seleccionado.</p>;
-
-  return (
-    <div className="pbi-treemap" role="group" aria-label={ariaLabel} data-animation-key={animationKey} data-testid="brand-treemap">
-      {tiles.map((item, index) => {
-        const itemUnit = item.value === 1
-          ? ({ incidencias: "incidencia", registros: "registro", pares: "par" }[unit] || unit)
-          : unit;
-        const selected = selectedNames.includes(item.name);
-        const dimmed = selectedNames.length > 0 && !selected;
-        const compact = item.area < 7;
-        const tiny = item.area < 3.5;
-        return (
-          <button
-            className={`pbi-treemap-tile${selected ? " is-selected" : ""}${dimmed ? " is-dimmed" : ""}${compact ? " is-compact" : ""}${tiny ? " is-tiny" : ""}`}
-            type="button"
-            key={`${animationKey}-${item.name}`}
-            style={{
-              left: `${item.x}%`,
-              top: `${item.y}%`,
-              width: `${item.width}%`,
-              height: `${item.height}%`,
-              backgroundColor: BRAND_TREEMAP_COLORS[item.name] || BRAND_COLORS[index % BRAND_COLORS.length],
-              "--pbi-index": index
-            }}
-            onClick={() => onSelect?.(item)}
-            onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `${numberFormatter.format(item.value)} ${itemUnit}`, `${((item.value / total) * 100).toFixed(1)}% del total`)}
-            onPointerLeave={() => setTooltip(null)}
-            onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `${numberFormatter.format(item.value)} ${itemUnit}`, "Presiona Enter para filtrar")}
-            onBlur={() => setTooltip(null)}
-            aria-pressed={selected}
-            aria-label={`${item.name}: ${numberFormatter.format(item.value)} ${itemUnit}`}
-          >
-            <span>{item.name}</span>
-            <strong>{numberFormatter.format(item.value)} {itemUnit}</strong>
-          </button>
-        );
-      })}
-      <ChartTooltip tooltip={tooltip} />
-    </div>
-  );
-}
-
 function DonutChart({ id, data, ariaLabel, unit = "pares", horizontalLegend = false, onSelect, selectedNames = [] }) {
   const [tooltip, setTooltip] = useState(null);
   const [hiddenNames, setHiddenNames] = useState([]);
@@ -2341,7 +2229,7 @@ export default function FootwearDashboard() {
     id: taskId,
     name: errorTaskById.get(taskId)?.shortName || `Tarea de error ${taskId}`,
     value,
-    tooltipDetail: lastDate ? `Más reciente: ${formatCalendarDate(lastDate)}` : ""
+    lastDate
   })).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
   const filteredErrorsByOffender = [...visibleIncidentRecords.reduce((counts, incident) => {
     const offenderName = incident.offenderName || "Sin identificar";
@@ -3130,9 +3018,10 @@ export default function FootwearDashboard() {
                   id="pbi-errors-task"
                   title="Distribución de Errores por Tarea"
                   meta={`${visibleIncidentRecords.length} registros de error`}
-                  className="pbi-card--chart pbi-card--quality-treemap pbi-card--span-4"
+                  className="pbi-card--chart pbi-card--quality-donut pbi-card--span-4"
                 >
-                  <TreemapChart
+                  <DonutChart
+                    id="pbi-errors-task"
                     data={filteredErrorsByTask}
                     ariaLabel="Registros de errores agrupados por tarea"
                     unit="errores"
