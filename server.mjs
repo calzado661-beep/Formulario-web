@@ -2253,11 +2253,22 @@ async function recomputeGuiasCantidad(codigosGuia) {
     sums.set(item.codigo_guia, (sums.get(item.codigo_guia) || 0) + (Number.isFinite(cantidad) ? cantidad : 0));
   }
 
-  await Promise.all(
-    codigosGuia.map((codigo) =>
-      supabase.from("guias").update({ cantidad: sums.get(codigo) || 0 }).eq("codigo", codigo)
-    )
-  );
+  // Antes se hacia un UPDATE por codigo en paralelo (Promise.all) sin
+  // revisar si alguno fallaba: con archivos grandes (miles de codigos,
+  // cientos de lotes) algunas de esas llamadas fallaban en silencio y la
+  // guia se quedaba con cantidad en 0 sin que nadie se enterara. Ahora es
+  // un solo upsert con todos los codigos del lote, y si falla se propaga el
+  // error en vez de tragarselo.
+  const guiasResult = await supabase.from("guias").select("codigo,fecha").in("codigo", codigosGuia);
+  if (guiasResult.error) throw guiasResult.error;
+  const updates = (guiasResult.data || []).map((guia) => ({
+    codigo: guia.codigo,
+    fecha: guia.fecha,
+    cantidad: sums.get(guia.codigo) || 0
+  }));
+  if (!updates.length) return;
+  const updateResult = await supabase.from("guias").upsert(updates, { onConflict: "codigo" });
+  if (updateResult.error) throw updateResult.error;
 }
 
 async function handleImportGuias(request, response) {
@@ -2276,7 +2287,8 @@ async function handleImportGuias(request, response) {
         const fecha = String(entry?.fecha || "").trim();
         if (!codigo || !/^\d{4}-\d{2}-\d{2}$/.test(fecha) || seen.has(codigo)) continue;
         seen.add(codigo);
-        rows.push({ codigo, fecha, archivo_origen: archivo });
+        const cantidad = Number(entry?.cantidad);
+        rows.push({ codigo, fecha, archivo_origen: archivo, cantidad: Number.isFinite(cantidad) ? cantidad : 0 });
       }
       if (!rows.length) {
         sendJson(response, 400, { error: "No se encontraron guias validas para importar. Revisa que el archivo tenga las columnas ESTADO y TDA ORIGEN." });

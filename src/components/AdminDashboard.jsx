@@ -2113,6 +2113,7 @@ function AttendancePanel() {
   const [attendanceValues, setAttendanceValues] = useState({});
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [successDialog, setSuccessDialog] = useState(null);
   const todayRef = useRef(todayLimaISO());
 
   // Si la pestana se queda abierta y pasa la medianoche (Lima), la marcacion
@@ -2193,13 +2194,16 @@ function AttendancePanel() {
     setStatus(null);
     setSaving(true);
     try {
+      let updated = 0;
       for (const worker of data.workers || []) {
         const estado = attendanceValues[worker.id] || "FALTA";
         if ((currentMarks[worker.id] || "FALTA") !== estado) {
           await markAttendance(worker.id, selectedDate, ATTENDANCE_PRESENT_STATES.has(estado), "", { estado });
+          updated += 1;
         }
       }
       setStatus({ type: "success", message: "Asistencia guardada correctamente." });
+      setSuccessDialog({ updated });
       reload();
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });
@@ -2359,6 +2363,39 @@ function AttendancePanel() {
           <Button icon={Save} loading={saving} onClick={handleSave}>Guardar asistencia</Button>
         </div>
       </Panel>
+
+      {successDialog ? (
+        <div className="save-success-overlay" role="presentation">
+          <section
+            className="save-success-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="attendance-success-title"
+            aria-describedby="attendance-success-description"
+          >
+            <div className="save-success-icon" aria-hidden="true">
+              <CheckCircle2 />
+            </div>
+            <div className="save-success-copy">
+              <p className="eyebrow">Proceso completado</p>
+              <h2 id="attendance-success-title">¡Asistencia guardada correctamente!</h2>
+              <p id="attendance-success-description">
+                {successDialog.updated
+                  ? `Se actualizó la marcación de ${successDialog.updated} trabajador${successDialog.updated === 1 ? "" : "es"}.`
+                  : "No hubo cambios respecto a lo ya guardado."}
+              </p>
+            </div>
+            <Button
+              type="button"
+              className="save-success-confirm"
+              autoFocus
+              onClick={() => setSuccessDialog(null)}
+            >
+              OK, continuar
+            </Button>
+          </section>
+        </div>
+      ) : null}
 
       <Panel
         title="Historial de asistencia"
@@ -4177,6 +4214,7 @@ async function parseGuiasWorkbook(file) {
 
   const guidesByCode = new Map();
   const itemsByKey = new Map();
+  const cantidadByCode = new Map();
   for (const row of rows.slice(1)) {
     const valuesByCol = {};
     row.querySelectorAll("c").forEach((cell) => {
@@ -4195,10 +4233,18 @@ async function parseGuiasWorkbook(file) {
     const key = `${codigo}::${codigoItem}`;
     if (itemsByKey.has(key)) continue;
     itemsByKey.set(key, { codigoGuia: codigo, codigoItem, fecha, datos });
+
+    // Se suma aqui (mientras se arma cada linea unica) para que la guia se
+    // cree de una con su cantidad correcta, en vez de nacer en 0 y esperar
+    // a que el detalle se importe y recalcule despues.
+    const cantidad = Number(datos.SERIE);
+    if (Number.isFinite(cantidad)) {
+      cantidadByCode.set(codigo, (cantidadByCode.get(codigo) || 0) + cantidad);
+    }
   }
 
   return {
-    guides: Array.from(guidesByCode, ([codigo, fecha]) => ({ codigo, fecha })),
+    guides: Array.from(guidesByCode, ([codigo, fecha]) => ({ codigo, fecha, cantidad: cantidadByCode.get(codigo) || 0 })),
     items: Array.from(itemsByKey.values())
   };
 }
