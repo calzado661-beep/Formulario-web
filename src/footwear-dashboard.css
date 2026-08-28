@@ -2782,6 +2782,30 @@ h2.pbi-section-heading {
   font-variant-numeric: tabular-nums;
 }
 
+.pbi-comparison-row--headcount {
+  grid-template-columns: minmax(38px, 0.5fr) minmax(28px, auto) minmax(50px, 1fr) 22px minmax(50px, 1fr) 22px minmax(28px, auto);
+}
+
+.pbi-comparison-headcount-legend {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 0.1rem 0.2rem;
+  color: var(--pbi-muted);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.pbi-comparison-headcount {
+  padding: 0.08rem 0.32rem;
+  border-radius: 999px;
+  background: #eef3f8;
+  color: var(--pbi-blue-dark);
+  font-weight: 700;
+  text-align: center;
+  cursor: default;
+}
+
 .pbi-comparison-row > strong,
 .pbi-attendance-row > strong {
   min-width: 0;
