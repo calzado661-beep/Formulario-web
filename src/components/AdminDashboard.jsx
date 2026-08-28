@@ -4235,9 +4235,32 @@ function guiaExcelSerialToISODate(serial) {
   return `${year}-${month}-${day}`;
 }
 
+// Decodifica entidades XML basicas. El reporte usa el texto literal
+// "_x000a_" (no una entidad) para el salto de linea dentro de una celda; eso
+// se limpia aparte, mas abajo.
+function guiaDecodeXmlEntities(text) {
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&amp;/g, "&");
+}
+
+const GUIA_SHARED_STRING_RE = /<si[^>]*>([\s\S]*?)<\/si>/g;
+const GUIA_SHARED_STRING_TEXT_RE = /<t[^>]*>([\s\S]*?)<\/t>/g;
+const GUIA_ROW_RE = /<row\b[^>]*>([\s\S]*?)<\/row>/g;
+const GUIA_CELL_RE = /<c r="([^"]+)"(?:[^>]*\st="([^"]+)")?[^>]*(?:\/>|>(?:<v>([\s\S]*?)<\/v>)?<\/c>)/g;
+
 // El reporte "Salidas AAAA mes.xlsx" lo exporta un sistema externo cuyo zip
 // no abre exceljs (falla en silencio, 0 hojas). Se descomprime a mano con
-// jszip y se lee el XML de la hoja para no depender de esa libreria aqui.
+// jszip. El archivo puede traer decenas de miles de filas (un año completo
+// pasa de 80,000): armar un DOM con DOMParser para esa cantidad de nodos es
+// lento y puede agotar la memoria del navegador a medio importar, dejando
+// datos incompletos sin ningun aviso. Por eso el XML de la hoja se lee con
+// expresiones regulares en vez de un arbol DOM.
 async function parseGuiasWorkbook(file) {
   const JSZipModule = await import("jszip");
   const JSZip = JSZipModule.default || JSZipModule;
@@ -4246,24 +4269,41 @@ async function parseGuiasWorkbook(file) {
   const sheetPath = Object.keys(zip.files).find((name) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(name));
   if (!sheetPath) throw new Error("El archivo no tiene una hoja de calculo valida.");
 
-  const sharedStringsEntry = zip.file("xl/sharedStrings.xml");
   const shared = [];
+  const sharedStringsEntry = zip.file("xl/sharedStrings.xml");
   if (sharedStringsEntry) {
-    const sharedDoc = new DOMParser().parseFromString(await sharedStringsEntry.async("string"), "application/xml");
-    sharedDoc.querySelectorAll("si").forEach((si) => {
-      shared.push(Array.from(si.querySelectorAll("t")).map((t) => t.textContent || "").join(""));
-    });
+    const sharedXml = await sharedStringsEntry.async("string");
+    let siMatch;
+    GUIA_SHARED_STRING_RE.lastIndex = 0;
+    while ((siMatch = GUIA_SHARED_STRING_RE.exec(sharedXml))) {
+      let text = "";
+      let tMatch;
+      GUIA_SHARED_STRING_TEXT_RE.lastIndex = 0;
+      while ((tMatch = GUIA_SHARED_STRING_TEXT_RE.exec(siMatch[1]))) {
+        text += tMatch[1];
+      }
+      shared.push(guiaDecodeXmlEntities(text));
+    }
   }
 
-  const sheetDoc = new DOMParser().parseFromString(await zip.file(sheetPath).async("string"), "application/xml");
-  const rows = Array.from(sheetDoc.querySelectorAll("sheetData > row"));
+  const sheetXml = await zip.file(sheetPath).async("string");
+  const rows = [];
+  let rowMatch;
+  GUIA_ROW_RE.lastIndex = 0;
+  while ((rowMatch = GUIA_ROW_RE.exec(sheetXml))) {
+    const cells = [];
+    let cellMatch;
+    GUIA_CELL_RE.lastIndex = 0;
+    while ((cellMatch = GUIA_CELL_RE.exec(rowMatch[1]))) {
+      cells.push({ ref: cellMatch[1], type: cellMatch[2] || null, raw: cellMatch[3] ?? null });
+    }
+    rows.push(cells);
+  }
   if (!rows.length) throw new Error("El archivo no tiene filas de datos.");
 
-  function cellValue(cellEl) {
-    const valueEl = cellEl.querySelector("v");
-    if (!valueEl) return null;
-    const raw = valueEl.textContent;
-    return cellEl.getAttribute("t") === "s" ? (shared[Number(raw)] ?? "") : raw;
+  function cellValue(cell) {
+    if (cell.raw == null) return null;
+    return cell.type === "s" ? (shared[Number(cell.raw)] ?? "") : guiaDecodeXmlEntities(cell.raw);
   }
 
   // Los encabezados vienen tal como los escribio el sistema que genera el
@@ -4273,8 +4313,8 @@ async function parseGuiasWorkbook(file) {
   const headerCols = [];
   const headerByCol = {};
   const headerLabelByCol = {};
-  Array.from(rows[0].querySelectorAll("c")).forEach((cell) => {
-    const col = guiaColLetter(cell.getAttribute("r"));
+  rows[0].forEach((cell) => {
+    const col = guiaColLetter(cell.ref);
     const label = String(cellValue(cell) || "").replace(/_x000a_/gi, " ").trim();
     headerCols.push(col);
     headerByCol[col] = label.toUpperCase();
@@ -4291,8 +4331,8 @@ async function parseGuiasWorkbook(file) {
   const cantidadByCode = new Map();
   for (const row of rows.slice(1)) {
     const valuesByCol = {};
-    row.querySelectorAll("c").forEach((cell) => {
-      valuesByCol[guiaColLetter(cell.getAttribute("r"))] = cellValue(cell);
+    row.forEach((cell) => {
+      valuesByCol[guiaColLetter(cell.ref)] = cellValue(cell);
     });
     const codigo = String(valuesByCol[codeCol] || "").trim();
     const fecha = guiaExcelSerialToISODate(valuesByCol[dateCol]);
@@ -4323,16 +4363,70 @@ async function parseGuiasWorkbook(file) {
   };
 }
 
+// Filtra guias/items ya parseados a un unico año-mes (util para importar solo
+// una parte de un archivo que trae varios meses juntos) y recalcula la
+// cantidad de cada guia solo con las lineas que quedan, para que no arrastre
+// el total del archivo completo.
+function filterGuiasParseToMonth({ guides, items }, anio, mes) {
+  const prefix = `${anio}-${String(mes).padStart(2, "0")}`;
+  const monthItems = items.filter((item) => String(item.fecha || "").startsWith(prefix));
+  const cantidadByCode = new Map();
+  monthItems.forEach((item) => {
+    const cantidad = Number(item.datos?.SERIE);
+    if (Number.isFinite(cantidad)) {
+      cantidadByCode.set(item.codigoGuia, (cantidadByCode.get(item.codigoGuia) || 0) + cantidad);
+    }
+  });
+  const monthGuideCodes = new Set(monthItems.map((item) => item.codigoGuia));
+  const monthGuides = guides
+    .filter((guide) => monthGuideCodes.has(guide.codigo))
+    .map((guide) => ({ ...guide, cantidad: cantidadByCode.get(guide.codigo) || 0 }));
+  return { guides: monthGuides, items: monthItems };
+}
+
+// Compartido entre "Importar" (todo el archivo) e "Importar mes" (filtrado):
+// sube las guias y despues el detalle en lotes, reportando progreso.
+async function runGuiasImport(guides, items, filename, onProgress) {
+  onProgress({ type: "info", message: `Importando ${guides.length} guia(s)...` });
+  const guideResult = await importGuias(guides, filename);
+
+  let itemsImported = 0;
+  let itemsOmitted = 0;
+  for (let start = 0; start < items.length; start += GUIA_ITEM_BATCH_SIZE) {
+    const batch = items.slice(start, start + GUIA_ITEM_BATCH_SIZE);
+    onProgress({
+      type: "info",
+      message: `Importando detalle: ${Math.min(start + GUIA_ITEM_BATCH_SIZE, items.length)} de ${items.length} linea(s)...`
+    });
+    const batchResult = await importGuiaItems(batch, filename);
+    itemsImported += batchResult.imported;
+    itemsOmitted += batchResult.omitted;
+  }
+
+  return {
+    guideResult,
+    itemsImported,
+    itemsOmitted,
+    message: `Guias: ${guideResult.imported} nueva(s) de ${guideResult.total} (${guideResult.omitted} ya existian). `
+      + `Detalle: ${itemsImported} linea(s) nueva(s) de ${items.length} (${itemsOmitted} ya existian).`
+  };
+}
+
 function GuiasPanel() {
   const { data: guias = [], loading, error, reload } = useAsyncData(listGuias, [], []);
   const [file, setFile] = useState(null);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [importing, setImporting] = useState(false);
   const [importStatus, setImportStatus] = useState(null);
+  const [monthFile, setMonthFile] = useState(null);
+  const [monthFileInputKey, setMonthFileInputKey] = useState(0);
+  const [monthImporting, setMonthImporting] = useState(false);
+  const [monthImportStatus, setMonthImportStatus] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState(null);
   const [anioFilter, setAnioFilter] = useState("todos");
   const [mesFilter, setMesFilter] = useState("todos");
+  const hasMonthSelection = anioFilter !== "todos" && mesFilter !== "todos";
 
   async function handleImport() {
     setImportStatus(null);
@@ -4350,27 +4444,8 @@ function GuiasPanel() {
         });
         return;
       }
-      setImportStatus({ type: "info", message: `Importando ${guides.length} guia(s)...` });
-      const guideResult = await importGuias(guides, file.name);
-
-      let itemsImported = 0;
-      let itemsOmitted = 0;
-      for (let start = 0; start < items.length; start += GUIA_ITEM_BATCH_SIZE) {
-        const batch = items.slice(start, start + GUIA_ITEM_BATCH_SIZE);
-        setImportStatus({
-          type: "info",
-          message: `Importando detalle: ${Math.min(start + GUIA_ITEM_BATCH_SIZE, items.length)} de ${items.length} linea(s)...`
-        });
-        const batchResult = await importGuiaItems(batch, file.name);
-        itemsImported += batchResult.imported;
-        itemsOmitted += batchResult.omitted;
-      }
-
-      setImportStatus({
-        type: "success",
-        message: `Guias: ${guideResult.imported} nueva(s) de ${guideResult.total} (${guideResult.omitted} ya existian). `
-          + `Detalle: ${itemsImported} linea(s) nueva(s) de ${items.length} (${itemsOmitted} ya existian).`
-      });
+      const result = await runGuiasImport(guides, items, file.name, setImportStatus);
+      setImportStatus({ type: "success", message: result.message });
       setFile(null);
       setFileInputKey((key) => key + 1);
       reload();
@@ -4378,6 +4453,40 @@ function GuiasPanel() {
       setImportStatus({ type: "error", message: friendlyError(err) });
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function handleImportMonth() {
+    setMonthImportStatus(null);
+    if (!hasMonthSelection) {
+      setMonthImportStatus({ type: "error", message: "Selecciona un año y un mes especificos primero." });
+      return;
+    }
+    if (!monthFile) {
+      setMonthImportStatus({ type: "error", message: "Selecciona un archivo Excel (.xlsx)." });
+      return;
+    }
+    setMonthImporting(true);
+    try {
+      const parsed = await parseGuiasWorkbook(monthFile);
+      const { guides, items } = filterGuiasParseToMonth(parsed, anioFilter, mesFilter);
+      const mesLabel = GUIA_MESES[Number(mesFilter) - 1] || mesFilter;
+      if (!guides.length) {
+        setMonthImportStatus({
+          type: "error",
+          message: `El archivo no tiene guias de ${mesLabel} ${anioFilter}. Se encontraron ${parsed.guides.length} guia(s) en total, pero ninguna de ese mes.`
+        });
+        return;
+      }
+      const result = await runGuiasImport(guides, items, monthFile.name, setMonthImportStatus);
+      setMonthImportStatus({ type: "success", message: `Solo ${mesLabel} ${anioFilter} (de ${parsed.guides.length} guia(s) en el archivo): ${result.message}` });
+      setMonthFile(null);
+      setMonthFileInputKey((key) => key + 1);
+      reload();
+    } catch (err) {
+      setMonthImportStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setMonthImporting(false);
     }
   }
 
@@ -4465,8 +4574,9 @@ function GuiasPanel() {
 
       <Panel title="Guias" eyebrow="Detalle">
         <Alert>
-          Elige un año y un mes especificos para exportar a Excel las guias de ese mes: una fila por guia, con su
-          cantidad sumada entre todas sus lineas de producto.
+          Elige un año y un mes especificos: ahi se habilita importar o exportar solo ese mes. Al importar aqui, si
+          el archivo trae varios meses, se ignora todo lo que no sea de {" "}
+          {hasMonthSelection ? `${GUIA_MESES[Number(mesFilter) - 1] || mesFilter} ${anioFilter}` : "el mes elegido"}.
         </Alert>
         <div className="toolbar">
           <SelectInput
@@ -4481,9 +4591,21 @@ function GuiasPanel() {
             onChange={setMesFilter}
             options={[{ value: "todos", label: "Todos" }, ...GUIA_MESES.map((mes, index) => ({ value: String(index + 1), label: mes }))]}
           />
-          <Button variant="secondary" icon={FileSpreadsheet} loading={exporting} onClick={handleExport}>Exportar Excel del mes</Button>
+          <Button variant="secondary" icon={FileSpreadsheet} loading={exporting} disabled={!hasMonthSelection} onClick={handleExport}>Exportar Excel del mes</Button>
         </div>
         <StatusAlert status={exportStatus} />
+        <div className="toolbar">
+          <input
+            key={monthFileInputKey}
+            className="input"
+            type="file"
+            accept=".xlsx"
+            disabled={!hasMonthSelection}
+            onChange={(event) => setMonthFile(event.target.files?.[0] || null)}
+          />
+          <Button variant="secondary" icon={Upload} loading={monthImporting} disabled={!hasMonthSelection} onClick={handleImportMonth}>Importar mes</Button>
+        </div>
+        <StatusAlert status={monthImportStatus} />
         <DataTable rows={tableRows} columns={["Codigo", "Fecha", "Mes", "Año", "Cantidad"]} pageSize={25} empty="No hay guias para estos filtros." />
       </Panel>
     </div>
