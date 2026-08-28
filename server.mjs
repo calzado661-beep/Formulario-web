@@ -2373,6 +2373,85 @@ async function handleReadGuiaItems(request, response) {
   }
 }
 
+const LOG_ASISTENCIAS_OPERACIONES = ["INSERT", "UPDATE", "DELETE"];
+
+// Compara datos_anteriores/datos_nuevos sin asumir columnas fijas: la tabla
+// de origen (asistencias) puede ganar columnas nuevas y el log debe seguir
+// mostrando un resumen legible sin tocar este codigo.
+function summarizeLogAsistenciaChange(operacion, before, after) {
+  const skip = new Set(["id", "created_at", "updated_at"]);
+  if (operacion === "UPDATE" && before && after) {
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    const changes = [];
+    for (const key of keys) {
+      if (skip.has(key)) continue;
+      const previous = before[key];
+      const next = after[key];
+      if (JSON.stringify(previous) !== JSON.stringify(next)) {
+        changes.push(`${key}: ${previous === null || previous === undefined ? "—" : previous} → ${next === null || next === undefined ? "—" : next}`);
+      }
+    }
+    return changes.join(", ") || "Sin cambios detectados";
+  }
+  const snapshot = operacion === "DELETE" ? before : after;
+  if (!snapshot) return "";
+  return Object.entries(snapshot)
+    .filter(([key]) => !skip.has(key))
+    .map(([key, value]) => `${key}: ${value === null || value === undefined ? "—" : value}`)
+    .join(", ");
+}
+
+async function handleReadLogAsistencias(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    const pageSize = Math.min(Math.max(Number(url.searchParams.get("pageSize")) || 15, 1), 100);
+    const page = Math.max(Number(url.searchParams.get("page")) || 1, 1);
+    const operacion = String(url.searchParams.get("operacion") || "").trim().toUpperCase();
+    const desde = String(url.searchParams.get("desde") || "").trim();
+    const hasta = String(url.searchParams.get("hasta") || "").trim();
+
+    let query = supabase.from("log_asistencias").select("*", { count: "exact" });
+    if (LOG_ASISTENCIAS_OPERACIONES.includes(operacion)) query = query.eq("operacion", operacion);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(desde)) query = query.gte("registrado_en", `${desde}T00:00:00`);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(hasta)) query = query.lte("registrado_en", `${hasta}T23:59:59`);
+
+    const from = (page - 1) * pageSize;
+    const result = await query.order("registrado_en", { ascending: false }).range(from, from + pageSize - 1);
+    if (result.error) throw result.error;
+
+    const usuarioIds = new Set();
+    (result.data || []).forEach((row) => {
+      const uid = Number(row.datos_nuevos?.usuario_id ?? row.datos_anteriores?.usuario_id);
+      if (Number.isInteger(uid) && uid > 0) usuarioIds.add(uid);
+    });
+    let usersById = new Map();
+    if (usuarioIds.size) {
+      const usersResult = await supabase.from("usuarios").select("id,nombre,email").in("id", [...usuarioIds]);
+      if (usersResult.error) throw usersResult.error;
+      usersById = new Map((usersResult.data || []).map((user) => [Number(user.id), user.nombre || user.email]));
+    }
+
+    const rows = (result.data || []).map((row) => {
+      const uid = Number(row.datos_nuevos?.usuario_id ?? row.datos_anteriores?.usuario_id) || null;
+      return {
+        id: Number(row.id),
+        asistenciaId: Number(row.asistencia_id) || null,
+        operacion: String(row.operacion || ""),
+        workerName: uid ? usersById.get(uid) || `Usuario ${uid}` : null,
+        summary: summarizeLogAsistenciaChange(row.operacion, row.datos_anteriores, row.datos_nuevos),
+        authUid: row.auth_uid || null,
+        dbUser: row.db_user || null,
+        registradoEn: row.registrado_en || null
+      };
+    });
+
+    sendJson(response, 200, { rows, total: result.count || 0, page, pageSize });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo cargar el historial de asistencias." });
+  }
+}
+
 async function handleReadAmonestaciones(request, response) {
   try {
     if (!requireAdministrator(request, response)) return;
@@ -4989,6 +5068,11 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (request.url?.startsWith("/api/guias") && request.method === "GET") {
     await handleReadGuias(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/log-asistencias") && request.method === "GET") {
+    await handleReadLogAsistencias(request, response);
     return;
   }
 

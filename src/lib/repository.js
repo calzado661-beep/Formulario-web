@@ -713,6 +713,18 @@ export async function deleteLote(loteId) {
   return apiResult;
 }
 
+export async function listLogAsistencias({ page = 1, pageSize = 15, operacion = "", desde = "", hasta = "" } = {}) {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  if (operacion) params.set("operacion", operacion);
+  if (desde) params.set("desde", desde);
+  if (hasta) params.set("hasta", hasta);
+  const apiResult = await requestLocalApi(`/api/log-asistencias?${params.toString()}`, {}, { requiredBackend: true });
+  if (!Array.isArray(apiResult?.rows)) {
+    throw new Error("No se pudo cargar el historial de asistencias.");
+  }
+  return apiResult;
+}
+
 export async function listGuias() {
   const apiResult = await requestLocalApi("/api/guias", {}, { requiredBackend: true });
   if (!Array.isArray(apiResult?.guias)) {

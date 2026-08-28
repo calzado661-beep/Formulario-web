@@ -948,6 +948,59 @@
   margin-bottom: 0.75rem;
 }
 
+.pbi-attendance-log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.pbi-attendance-log-filters label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--pbi-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.pbi-attendance-log-filters select,
+.pbi-attendance-log-filters input {
+  min-height: 36px;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--pbi-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--pbi-ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.pbi-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--pbi-muted);
+}
+
+.pbi-pagination button {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--pbi-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--pbi-ink);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pbi-pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .pbi-ranking-scroll {
   max-height: 350px;
   overflow-y: auto;

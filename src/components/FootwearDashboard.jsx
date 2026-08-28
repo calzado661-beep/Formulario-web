@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { loadFootwearDashboard, updateGroupLeaderAverageReference } from "../lib/repository";
+import { loadFootwearDashboard, listLogAsistencias, updateGroupLeaderAverageReference } from "../lib/repository";
 import { attendanceGroup } from "../lib/operations";
 import {
   averageEmployeeTenureMonths,
@@ -1565,6 +1565,88 @@ function DataTable({ caption, columns, rows }) {
   );
 }
 
+const LOG_ASISTENCIAS_PAGE_SIZE = 15;
+const LOG_ASISTENCIAS_OPERACIONES = [
+  { value: "", label: "Todas" },
+  { value: "INSERT", label: "Creación" },
+  { value: "UPDATE", label: "Edición" },
+  { value: "DELETE", label: "Eliminación" }
+];
+
+function AttendanceAuditLog() {
+  const [page, setPage] = useState(1);
+  const [operacion, setOperacion] = useState("");
+  const [desde, setDesde] = useState("");
+  const [hasta, setHasta] = useState("");
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => setPage(1), [operacion, desde, hasta]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    listLogAsistencias({ page, pageSize: LOG_ASISTENCIAS_PAGE_SIZE, operacion, desde, hasta })
+      .then((result) => {
+        if (cancelled) return;
+        setRows(result.rows || []);
+        setTotal(Number(result.total || 0));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err?.message || "No se pudo cargar el historial de asistencias.");
+        setRows([]);
+        setTotal(0);
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [page, operacion, desde, hasta]);
+
+  const totalPages = Math.max(Math.ceil(total / LOG_ASISTENCIAS_PAGE_SIZE), 1);
+
+  return (
+    <div className="pbi-attendance-log">
+      <div className="pbi-attendance-log-filters">
+        <label htmlFor="log-asistencias-operacion">
+          <span>Operación</span>
+          <select id="log-asistencias-operacion" value={operacion} onChange={(event) => setOperacion(event.target.value)}>
+            {LOG_ASISTENCIAS_OPERACIONES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <label htmlFor="log-asistencias-desde">
+          <span>Desde</span>
+          <input id="log-asistencias-desde" type="date" value={desde} onChange={(event) => setDesde(event.target.value)} />
+        </label>
+        <label htmlFor="log-asistencias-hasta">
+          <span>Hasta</span>
+          <input id="log-asistencias-hasta" type="date" value={hasta} onChange={(event) => setHasta(event.target.value)} />
+        </label>
+      </div>
+      {error ? <div className="pbi-data-alert" role="alert"><span>{error}</span></div> : null}
+      <DataTable
+        caption="Historial de cambios en asistencias"
+        columns={[
+          { key: "registradoEn", label: "Fecha y hora", render: (value) => value ? new Date(value).toLocaleString("es-PE") : "—" },
+          { key: "operacion", label: "Operación", render: (value) => LOG_ASISTENCIAS_OPERACIONES.find((option) => option.value === value)?.label || value },
+          { key: "workerName", label: "Trabajador", render: (value) => value || "—" },
+          { key: "summary", label: "Cambios", render: (value) => value || "—" },
+          { key: "dbUser", label: "Usuario BD", render: (value) => value || "—" }
+        ]}
+        rows={loading ? [] : rows}
+      />
+      {loading ? <p className="pbi-table-empty">Cargando…</p> : null}
+      <div className="pbi-pagination">
+        <button type="button" onClick={() => setPage((current) => Math.max(current - 1, 1))} disabled={page <= 1 || loading}>Anterior</button>
+        <span>Página {page} de {totalPages} · {numberFormatter.format(total)} registro(s)</span>
+        <button type="button" onClick={() => setPage((current) => Math.min(current + 1, totalPages))} disabled={page >= totalPages || loading}>Siguiente</button>
+      </div>
+    </div>
+  );
+}
+
 function HourlyRankingRecordsModal({ workerName, taskName, periodLabel, unit, rows, targetHourly, onTargetHourlyChange, onSaveTarget, targetSaving, targetStatus, showHangtag, hangtagValue, onHangtagChange, onClose }) {
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -2899,6 +2981,15 @@ export default function FootwearDashboard() {
                   className="pbi-card--chart pbi-card--span-12"
                 >
                   <AttendanceBars data={filteredAttendance} onSelect={selectWorkerFromChart} selectedNames={selectedWorkerNames} />
+                </Card>
+
+                <Card
+                  id="pbi-attendance-log"
+                  title="Historial de Cambios en Asistencia"
+                  meta="log_asistencias · auditoría de inserciones, ediciones y eliminaciones"
+                  className="pbi-card--table pbi-card--span-12"
+                >
+                  <AttendanceAuditLog />
                 </Card>
 
                 <Card
