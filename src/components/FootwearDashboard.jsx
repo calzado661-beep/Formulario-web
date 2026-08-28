@@ -1125,6 +1125,10 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
   if (!data.length) return <p className="pbi-chart-empty">No hay datos para el filtro seleccionado.</p>;
   const maximum = Math.max(...data.flatMap((item) => [item.primary, item.secondary]), 1);
   const animationKey = data.map((item) => `${item.name}:${item.primary}:${item.secondary}`).join("|");
+  // Indicador opcional de personal al inicio/fin del mes (se usa en Rotacion
+  // de Personal para poder cuadrar el conteo exacto); si el dato no lo trae,
+  // la fila se ve igual que antes.
+  const hasHeadcount = data.some((item) => item.headcountStart !== undefined || item.headcountEnd !== undefined);
   return (
     <div className="pbi-comparison" role="group" aria-label={ariaLabel} data-animation-key={animationKey}>
       <div className="pbi-legend">
@@ -1145,7 +1149,13 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
           <i className="pbi-legend-swatch" style={{ backgroundColor: secondaryColor }} />{secondaryLabel}
         </button>
       </div>
-      <div className="pbi-comparison-list">
+      {hasHeadcount ? (
+        <div className="pbi-comparison-headcount-legend">
+          <span>Personal al inicio del mes</span>
+          <span>Personal al fin del mes</span>
+        </div>
+      ) : null}
+      <div className={`pbi-comparison-list${hasHeadcount ? " pbi-comparison-list--headcount" : ""}`}>
         {data.map((item, index) => {
           const selected = selectedNames.includes(item.name);
           const dimmed = selectedNames.length > 0 && !selected;
@@ -1172,9 +1182,19 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
             event.stopPropagation();
             onSeriesSelect(item, series);
           };
+          const showHeadcountStartTooltip = (event) => {
+            event.stopPropagation();
+            const value = item.headcountStart != null ? item.headcountStart : "Mes futuro, sin dato aun";
+            tooltipAt(event, setTooltip, tooltipLabel, item.headcountStart != null ? `Personal al inicio del mes: ${value}` : value, "");
+          };
+          const showHeadcountEndTooltip = (event) => {
+            event.stopPropagation();
+            const value = item.headcountEnd != null ? item.headcountEnd : "Mes futuro, sin dato aun";
+            tooltipAt(event, setTooltip, tooltipLabel, item.headcountEnd != null ? `Personal al fin del mes: ${value}` : value, "");
+          };
           return (
           <div
-            className={`pbi-comparison-row${selected ? " is-selected" : ""}${dimmed ? " is-dimmed" : ""}`}
+            className={`pbi-comparison-row${hasHeadcount ? " pbi-comparison-row--headcount" : ""}${selected ? " is-selected" : ""}${dimmed ? " is-dimmed" : ""}`}
             key={`${animationKey}-${item.name}`}
             role={onSelect ? "button" : undefined}
             tabIndex={onSelect ? 0 : undefined}
@@ -1192,6 +1212,11 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
             onMouseLeave={() => setTooltip(null)}
           >
             <strong>{item.name}</strong>
+            {hasHeadcount ? (
+              <span className="pbi-comparison-headcount" onPointerMove={showHeadcountStartTooltip} onMouseLeave={() => setTooltip(null)}>
+                {item.headcountStart ?? "—"}
+              </span>
+            ) : null}
             <span className="pbi-comparison-track" role={onSeriesSelect ? "button" : undefined} tabIndex={onSeriesSelect ? 0 : undefined} aria-label={onSeriesSelect ? `Ver ${primaryLabel.toLowerCase()} de ${tooltipLabel}` : undefined} onClick={(event) => selectSeries(event, "primary")} onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectSeries(event, "primary"); }
             }} onPointerMove={showPrimaryTooltip}>
@@ -1204,6 +1229,11 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
               <i style={{ width: visibleSeries.secondary ? `${(item.secondary / maximum) * 100}%` : "0%", backgroundColor: secondaryColor, "--pbi-index": index }} />
             </span>
             <span className={onSeriesSelect ? "pbi-comparison-value-action" : undefined} onClick={(event) => selectSeries(event, "secondary")} onPointerMove={showSecondaryTooltip}>{visibleSeries.secondary ? item.secondary : "—"}</span>
+            {hasHeadcount ? (
+              <span className="pbi-comparison-headcount" onPointerMove={showHeadcountEndTooltip} onMouseLeave={() => setTooltip(null)}>
+                {item.headcountEnd ?? "—"}
+              </span>
+            ) : null}
           </div>
         );})}
       </div>
@@ -2348,6 +2378,35 @@ export default function FootwearDashboard() {
       secondaryDetail: exits.length ? "Haz clic para ver trabajadores" : "Sin salidas registradas"
     };
   });
+  // Personal al inicio/fin de cada mes: se ancla en la cantidad activa de
+  // HOY (dato seguro) y se reconstruye hacia atras sumando o restando los
+  // ingresos/salidas de cada mes, para poder cuadrar el conteo exacto sin
+  // depender de un punto de partida asumido. Los meses que todavia no
+  // ocurren (despues de hoy) no tienen como saberse, asi que se dejan sin
+  // dato en vez de proyectar un numero que no paso de verdad.
+  const rotationCurrentMonthIndex = Math.min(Math.max(CURRENT_LIMA_PARTS.month - 1, 0), MONTHLY_TASKS.length - 1);
+  const rotationHeadcounts = new Array(rotationCurrentMonthIndex + 1);
+  // Cuenta solo activos ahora mismo, sin importar el switch "incluir
+  // inactivos" (ese es para ver tablas historicas; "cuanto personal tengo
+  // hoy" siempre debe ser el activo real).
+  const rotationCurrentTotal = WORKERS.filter((worker) => (
+    matchesGlobalWorker(worker.id)
+    && (!selectedRoles.length || selectedRoles.includes(worker.role))
+    && worker.active
+  )).length;
+  rotationHeadcounts[rotationCurrentMonthIndex] = {
+    end: rotationCurrentTotal,
+    start: rotationCurrentTotal - filteredRotation[rotationCurrentMonthIndex].primary + filteredRotation[rotationCurrentMonthIndex].secondary
+  };
+  for (let index = rotationCurrentMonthIndex - 1; index >= 0; index -= 1) {
+    const end = rotationHeadcounts[index + 1].start;
+    rotationHeadcounts[index] = { end, start: end - filteredRotation[index].primary + filteredRotation[index].secondary };
+  }
+  const filteredRotationWithHeadcount = filteredRotation.map((item, index) => ({
+    ...item,
+    headcountStart: index <= rotationCurrentMonthIndex ? Math.max(0, rotationHeadcounts[index].start) : null,
+    headcountEnd: index <= rotationCurrentMonthIndex ? Math.max(0, rotationHeadcounts[index].end) : null
+  }));
   const EXIT_REASONS = [...visibleMovements.filter((row) => /salida/i.test(row.type) && (!selectedMovementMonths.length || selectedMovementMonths.includes(MONTHLY_TASKS[Number(row.date.slice(5, 7)) - 1].label))).reduce((totals, row) => {
     const name = row.reason || "Sin especificar";
     const item = totals.get(name) || { value: 0, lastDate: null };
@@ -2830,7 +2889,7 @@ export default function FootwearDashboard() {
                   className="pbi-card--chart pbi-card--span-4"
                 >
                   <ComparisonBars
-                    data={filteredRotation}
+                    data={filteredRotationWithHeadcount}
                     ariaLabel="Ingresos y salidas de personal por mes"
                     primaryLabel="Ingreso"
                     secondaryLabel="Salida"
