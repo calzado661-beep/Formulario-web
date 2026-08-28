@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { loadFootwearDashboard, listLogAsistencias, updateGroupLeaderAverageReference } from "../lib/repository";
+import { loadFootwearDashboard, updateGroupLeaderAverageReference } from "../lib/repository";
 import { attendanceGroup } from "../lib/operations";
 import {
   averageEmployeeTenureMonths,
@@ -251,6 +251,7 @@ const BRAND_TREEMAP_COLORS = {
   NKG: "#318342"
 };
 const numberFormatter = new Intl.NumberFormat("es-PE");
+const oneDecimalFormatter = new Intl.NumberFormat("es-PE", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
 const currencyFormatter = new Intl.NumberFormat("es-PE", {
   style: "currency",
   currency: "PEN",
@@ -709,6 +710,49 @@ function LotProgressCard({ lots, selectedCode, onChange, labeledPairs, compact =
   );
 }
 
+const LOTE_DURATION_STATUS_OPTIONS = [
+  { value: "todos", label: "Todos" },
+  { value: "pendiente", label: "Pendiente" },
+  { value: "completado", label: "Completado" }
+];
+
+function LoteDurationChart({ lots }) {
+  const [statusFilter, setStatusFilter] = useState("todos");
+  const scoped = lots.filter((lot) => statusFilter === "todos" || lot.status === statusFilter);
+  // Para lotes completados, la duracion es fecha_completado - fecha_ingreso.
+  // Para lotes pendientes (todavia abiertos), se usa hoy como fin provisorio,
+  // asi se puede detectar lotes que llevan demasiados dias sin cerrarse.
+  // Una barra por lote (nombre = codigo_lote), altura = dias de duracion.
+  const byLote = scoped
+    .map((lot) => {
+      if (!lot.startDate) return null;
+      const endDate = lot.status === "completado" ? lot.completedDate : CURRENT_LIMA_PARTS.iso;
+      if (!endDate) return null;
+      const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lot.startDate}T00:00:00`)) / 86400000);
+      return Number.isFinite(days) && days >= 0 ? { name: lot.code, value: days } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.value - a.value);
+  return (
+    <>
+      <div className="pbi-ranking-task-filter">
+        <label htmlFor="lote-duration-status">Estado del lote</label>
+        <select id="lote-duration-status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+          {LOTE_DURATION_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </div>
+      <VerticalBarChart
+        id="pbi-lote-duration"
+        data={byLote}
+        ariaLabel="Dias de duracion de cada lote, desde la fecha de ingreso hasta que se completo"
+        tone="blue"
+        unit="días"
+        compact
+      />
+    </>
+  );
+}
+
 function ActivityKpi({ label, daily, hourly, unit = "unidades" }) {
   return (
     <article className="pbi-kpi pbi-kpi--paired" aria-label={`${label}: ${daily} ${unit} por día, ${hourly} ${unit} por hora`}>
@@ -728,6 +772,24 @@ function ActivityKpi({ label, daily, hourly, unit = "unidades" }) {
           </span>
           <small>promedio por hora</small>
         </span>
+      </div>
+    </article>
+  );
+}
+
+function PairedMetricKpi({ label, items }) {
+  return (
+    <article className="pbi-kpi pbi-kpi--paired" aria-label={`${label}: ${items.map((item) => `${item.detail} ${item.value}`).join(", ")}`}>
+      <span className="pbi-kpi-label">{label}</span>
+      <div className="pbi-kpi-pair">
+        {items.map((item) => (
+          <span className="pbi-kpi-pair-item" key={item.detail}>
+            <span className="pbi-kpi-value-line">
+              <strong className="pbi-kpi-value">{item.value}</strong>
+            </span>
+            <small>{item.detail}</small>
+          </span>
+        ))}
       </div>
     </article>
   );
@@ -1221,14 +1283,20 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
               if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectSeries(event, "primary"); }
             }} onPointerMove={showPrimaryTooltip}>
               <i style={{ width: visibleSeries.primary ? `${(item.primary / maximum) * 100}%` : "0%", backgroundColor: primaryColor, "--pbi-index": index }} />
+              {hasHeadcount ? <span className="pbi-comparison-track-value">{visibleSeries.primary ? item.primary : "—"}</span> : null}
             </span>
-            <span className={onSeriesSelect ? "pbi-comparison-value-action" : undefined} onClick={(event) => selectSeries(event, "primary")} onPointerMove={showPrimaryTooltip}>{visibleSeries.primary ? item.primary : "—"}</span>
+            {!hasHeadcount ? (
+              <span className={onSeriesSelect ? "pbi-comparison-value-action" : undefined} onClick={(event) => selectSeries(event, "primary")} onPointerMove={showPrimaryTooltip}>{visibleSeries.primary ? item.primary : "—"}</span>
+            ) : null}
             <span className="pbi-comparison-track" role={onSeriesSelect ? "button" : undefined} tabIndex={onSeriesSelect ? 0 : undefined} aria-label={onSeriesSelect ? `Ver ${secondaryLabel.toLowerCase()} de ${tooltipLabel}` : undefined} onClick={(event) => selectSeries(event, "secondary")} onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectSeries(event, "secondary"); }
             }} onPointerMove={showSecondaryTooltip}>
               <i style={{ width: visibleSeries.secondary ? `${(item.secondary / maximum) * 100}%` : "0%", backgroundColor: secondaryColor, "--pbi-index": index }} />
+              {hasHeadcount ? <span className="pbi-comparison-track-value">{visibleSeries.secondary ? item.secondary : "—"}</span> : null}
             </span>
-            <span className={onSeriesSelect ? "pbi-comparison-value-action" : undefined} onClick={(event) => selectSeries(event, "secondary")} onPointerMove={showSecondaryTooltip}>{visibleSeries.secondary ? item.secondary : "—"}</span>
+            {!hasHeadcount ? (
+              <span className={onSeriesSelect ? "pbi-comparison-value-action" : undefined} onClick={(event) => selectSeries(event, "secondary")} onPointerMove={showSecondaryTooltip}>{visibleSeries.secondary ? item.secondary : "—"}</span>
+            ) : null}
             {hasHeadcount ? (
               <span className="pbi-comparison-headcount" onPointerMove={showHeadcountEndTooltip} onMouseLeave={() => setTooltip(null)}>
                 {item.headcountEnd ?? "—"}
@@ -1595,88 +1663,6 @@ function DataTable({ caption, columns, rows }) {
   );
 }
 
-const LOG_ASISTENCIAS_PAGE_SIZE = 15;
-const LOG_ASISTENCIAS_OPERACIONES = [
-  { value: "", label: "Todas" },
-  { value: "INSERT", label: "Creación" },
-  { value: "UPDATE", label: "Edición" },
-  { value: "DELETE", label: "Eliminación" }
-];
-
-function AttendanceAuditLog() {
-  const [page, setPage] = useState(1);
-  const [operacion, setOperacion] = useState("");
-  const [desde, setDesde] = useState("");
-  const [hasta, setHasta] = useState("");
-  const [rows, setRows] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => setPage(1), [operacion, desde, hasta]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError("");
-    listLogAsistencias({ page, pageSize: LOG_ASISTENCIAS_PAGE_SIZE, operacion, desde, hasta })
-      .then((result) => {
-        if (cancelled) return;
-        setRows(result.rows || []);
-        setTotal(Number(result.total || 0));
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err?.message || "No se pudo cargar el historial de asistencias.");
-        setRows([]);
-        setTotal(0);
-      })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [page, operacion, desde, hasta]);
-
-  const totalPages = Math.max(Math.ceil(total / LOG_ASISTENCIAS_PAGE_SIZE), 1);
-
-  return (
-    <div className="pbi-attendance-log">
-      <div className="pbi-attendance-log-filters">
-        <label htmlFor="log-asistencias-operacion">
-          <span>Operación</span>
-          <select id="log-asistencias-operacion" value={operacion} onChange={(event) => setOperacion(event.target.value)}>
-            {LOG_ASISTENCIAS_OPERACIONES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-        </label>
-        <label htmlFor="log-asistencias-desde">
-          <span>Desde</span>
-          <input id="log-asistencias-desde" type="date" value={desde} onChange={(event) => setDesde(event.target.value)} />
-        </label>
-        <label htmlFor="log-asistencias-hasta">
-          <span>Hasta</span>
-          <input id="log-asistencias-hasta" type="date" value={hasta} onChange={(event) => setHasta(event.target.value)} />
-        </label>
-      </div>
-      {error ? <div className="pbi-data-alert" role="alert"><span>{error}</span></div> : null}
-      <DataTable
-        caption="Historial de cambios en asistencias"
-        columns={[
-          { key: "registradoEn", label: "Fecha y hora", render: (value) => value ? new Date(value).toLocaleString("es-PE") : "—" },
-          { key: "operacion", label: "Operación", render: (value) => LOG_ASISTENCIAS_OPERACIONES.find((option) => option.value === value)?.label || value },
-          { key: "workerName", label: "Trabajador", render: (value) => value || "—" },
-          { key: "summary", label: "Cambios", render: (value) => value || "—" },
-          { key: "dbUser", label: "Usuario BD", render: (value) => value || "—" }
-        ]}
-        rows={loading ? [] : rows}
-      />
-      {loading ? <p className="pbi-table-empty">Cargando…</p> : null}
-      <div className="pbi-pagination">
-        <button type="button" onClick={() => setPage((current) => Math.max(current - 1, 1))} disabled={page <= 1 || loading}>Anterior</button>
-        <span>Página {page} de {totalPages} · {numberFormatter.format(total)} registro(s)</span>
-        <button type="button" onClick={() => setPage((current) => Math.min(current + 1, totalPages))} disabled={page >= totalPages || loading}>Siguiente</button>
-      </div>
-    </div>
-  );
-}
-
 function HourlyRankingRecordsModal({ workerName, taskName, periodLabel, unit, rows, targetHourly, onTargetHourlyChange, onSaveTarget, targetSaving, targetStatus, showHangtag, hangtagValue, onHangtagChange, onClose }) {
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -1823,16 +1809,23 @@ function ErrorRecordsModal({ shiftLabel, errorType, rows, onClose }) {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [onClose]);
+  // Los IDs (usuario_id, area_id, tarea_error_id, tienda_id, id_error) no se
+  // muestran: ya vienen resueltos a nombre desde el backend (offender, task,
+  // store) y mostrar el ID crudo ademas seria redundante y confuso.
+  const RAW_ID_KEYS = new Set(["id_error", "usuario_id", "area_id", "tarea_error_id", "tienda_id"]);
   const detailRows = rows.map((row) => ({
     id: row.id,
     offender: row.offenderName || "Sin identificar",
     offenderType: row.offenderType || "Usuario/Área",
     date: formatCalendarDate(row.date),
     task: row.taskName || "-",
-    ...Object.fromEntries(Object.entries(row.details || {}).map(([key, value]) => [
-      key,
-      key === "fecha_error" ? formatCalendarDate(value || row.date) : value
-    ])),
+    store: row.storeName || "-",
+    ...Object.fromEntries(Object.entries(row.details || {})
+      .filter(([key]) => !RAW_ID_KEYS.has(key))
+      .map(([key, value]) => [
+        key,
+        key === "fecha_error" ? formatCalendarDate(value || row.date) : value
+      ])),
     rawDate: row.date
   })).sort((a, b) => String(b.rawDate).localeCompare(String(a.rawDate)));
   return createPortal(
@@ -1851,17 +1844,18 @@ function ErrorRecordsModal({ shiftLabel, errorType, rows, onClose }) {
         <DataTable caption={`${errorType} en ${shiftLabel}`} columns={[
           { key: "task", label: "Tarea" },
           ...Array.from(new Set(rows.flatMap((row) => Object.keys(row.details || {}))))
+            .filter((key) => !RAW_ID_KEYS.has(key))
             .map((key) => ({
               key,
               label: ({
-                id_error: "ID de error", fecha_error: "Fecha de error", tipo_error: "Tipo de error",
-                usuario_id: "ID de usuario", area_id: "ID de area", tarea_error_id: "ID de tarea de error",
-                tienda_id: "ID de tienda", numero_guia: "Numero de guia", observacion: "Observacion",
+                fecha_error: "Fecha de error", tipo_error: "Tipo de error",
+                numero_guia: "Numero de guia", observacion: "Observacion",
                 created_at: "Creado el", updated_at: "Actualizado el"
               })[key] || key.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
             })),
           { key: "offender", label: "Usuario o área" },
           { key: "offenderType", label: "Tipo" },
+          { key: "store", label: "Tienda" },
           { key: "date", label: "Fecha" }
         ]} rows={detailRows} />
       </section>
@@ -2322,14 +2316,13 @@ export default function FootwearDashboard() {
   const totalGuideCount = new Set(filteredGuias.map((row) => row.code)).size;
   const totalErrorCount = visibleIncidentRecords.length;
   const errorMargin = totalGuideCount ? (totalErrorCount / totalGuideCount) * 100 : 0;
-  // Guias nuevas hoy: codigos distintos de la tabla "guias" cuya fecha es la
-  // fecha de hoy -no se ve afectado por los filtros del panel (siempre es la
-  // fecha real de hoy).
-  const newGuidesToday = new Set(
-    (dashboardData?.guias || [])
-      .filter((row) => row.date === CURRENT_LIMA_PARTS.iso)
-      .map((row) => row.code)
-  ).size;
+  // Totales y promedio diario de guias/pares, respetando el mismo filtro de
+  // periodo que el resto del tablero. El promedio solo cuenta dias con
+  // registros (no se divide entre el total de dias del rango).
+  const guiasTotalPares = filteredGuias.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+  const guiasDistinctDays = new Set(filteredGuias.map((row) => row.date)).size;
+  const guiasAvgPerDay = guiasDistinctDays ? totalGuideCount / guiasDistinctDays : 0;
+  const paresAvgPerDay = guiasDistinctDays ? guiasTotalPares / guiasDistinctDays : 0;
   const incidentCountByTask = visibleIncidentRecords.reduce((counts, incident) => {
     const item = counts.get(incident.taskId) || { value: 0, lastDate: null };
     item.value += 1;
@@ -2343,12 +2336,16 @@ export default function FootwearDashboard() {
     value,
     tooltipDetail: lastDate ? `Más reciente: ${formatCalendarDate(lastDate)}` : ""
   })).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
-  const filteredErrorsByOffender = [...visibleIncidentRecords.reduce((counts, incident) => {
+  const filteredErrorsByOffender = [...visibleIncidentRecords.reduce((groups, incident) => {
     const offenderName = incident.offenderName || "Sin identificar";
-    const key = `${offenderName} (${incident.offenderType || "Usuario/Área"})`;
-    counts.set(key, (counts.get(key) || 0) + 1);
-    return counts;
-  }, new Map()).entries()].map(([name, value]) => ({ name, value, workerName: name })).sort((a, b) => b.value - a.value);
+    const offenderType = incident.offenderType || "Usuario/Área";
+    const key = `${offenderName} (${offenderType})`;
+    const group = groups.get(key) || { name: key, workerName: key, offenderName, offenderType, value: 0, rows: [] };
+    group.value += 1;
+    group.rows.push(incident);
+    groups.set(key, group);
+    return groups;
+  }, new Map()).values()].sort((a, b) => b.value - a.value);
   const filteredErrorsByTypeAndShift = [
     { value: "turno regular", label: "Turno regular" },
     { value: "incidencia", aliases: ["incidencia", "error"], label: "Incidencia" },
@@ -2422,15 +2419,35 @@ export default function FootwearDashboard() {
     late: totals.late + item.late
   }), { absent: 0, punctual: 0, late: 0 });
   const attendanceTotal = attendanceTotals.absent + attendanceTotals.punctual + attendanceTotals.late;
+  // No se filtra por nada (ni periodo, ni cargo, ni trabajador, ni el switch
+  // de inactivos): siempre es la permanencia de TODOS los trabajadores,
+  // activos e inactivos.
   const tenure = averageEmployeeTenureMonths(dashboardData?.movements || [], {
-    allowedWorkerIds: new Set(peopleWorkers.map((worker) => Number(worker.id)))
+    allowedWorkerIds: new Set(WORKERS.map((worker) => Number(worker.id)))
   });
+  // Promedio de dias por lote: TODOS los lotes participan (completados con
+  // fecha_completada - fecha_ingreso; pendientes con hoy - fecha_ingreso, asi
+  // un lote pendiente suma un dia mas cada dia que pasa sin cerrarse). No se
+  // guarda nada, se recalcula al vuelo con cada carga del dashboard. Respeta
+  // el filtro de periodo global (por fecha_ingreso), igual que el resto del
+  // tablero.
+  const loteDurations = (dashboardData?.lotes || [])
+    .filter((lot) => lot.startDate && matchesGlobalPeriodDate(lot.startDate))
+    .map((lot) => {
+      const endDate = lot.status === "completado" && lot.completedDate ? lot.completedDate : CURRENT_LIMA_PARTS.iso;
+      const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lot.startDate}T00:00:00`)) / 86400000);
+      return Number.isFinite(days) ? Math.max(0, days) : null;
+    })
+    .filter((days) => days !== null);
+  const avgLoteDurationDays = loteDurations.length
+    ? loteDurations.reduce((sum, days) => sum + days, 0) / loteDurations.length
+    : 0;
   const filteredIndicators = [
     { label: "Margen de error", detail: `${numberFormatter.format(totalErrorCount)} errores / ${numberFormatter.format(totalGuideCount)} guías distintas`, value: `${errorMargin.toFixed(2)}%` },
     { label: "Ausentismo", detail: "Registro de asistencias", value: `${attendanceTotal ? ((attendanceTotals.absent / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
     { label: "Tardanza", detail: "Llegadas fuera de hora", value: `${attendanceTotal ? ((attendanceTotals.late / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
     { label: "Permanencia promedio", detail: `${tenure.workerCount} trabajador(es) con periodos laborales`, suffix: "meses", value: tenure.months.toFixed(2) },
-    { label: "Guías nuevas hoy", detail: "Códigos de guía distintos registrados hoy", value: numberFormatter.format(newGuidesToday) }
+    { label: "Promedio de días por lote", detail: `${loteDurations.length} lote(s)`, suffix: "días", value: avgLoteDurationDays.toFixed(1) }
   ];
   // No se filtra por periodo ni por trabajador: el historial de amonestaciones
   // se ve completo siempre, sin que lo afecten los demas filtros del tablero.
@@ -2441,10 +2458,16 @@ export default function FootwearDashboard() {
     return { id: row.id, alias, workerName: worker?.name || alias, date: formatCalendarDate(row.date), documentType };
   }).sort((a, b) => b.id - a.id);
 
-  const visibleMovements = (dashboardData?.movements || []).filter((row) => (
-    matchesPeopleDate(row.date)
-    && matchesPeopleWorker(row.workerId)
-  ));
+  // Rotacion de Personal y Motivos de Salida necesitan ver siempre a los
+  // trabajadores inactivos (una salida deja al trabajador inactivo, asi que
+  // filtrar por "solo activos" ocultaria justo las salidas que este grafico
+  // debe mostrar), sin importar el switch global de inactivos.
+  const visibleMovements = (dashboardData?.movements || []).filter((row) => {
+    const worker = workerById.get(Number(row.workerId));
+    return matchesPeopleDate(row.date)
+      && matchesGlobalWorker(row.workerId)
+      && (!selectedRoles.length || (worker && selectedRoles.includes(worker.role)));
+  });
   const filteredRotation = MONTHLY_TASKS.map((month, monthIndex) => {
     const monthMovements = visibleMovements.filter((row) => Number(row.date.slice(5, 7)) === monthIndex + 1);
     const entries = monthMovements.filter((row) => /ingreso/i.test(row.type));
@@ -2460,35 +2483,58 @@ export default function FootwearDashboard() {
       secondaryDetail: exits.length ? "Haz clic para ver trabajadores" : "Sin salidas registradas"
     };
   });
-  // Personal al inicio/fin de cada mes: se ancla en la cantidad activa de
-  // HOY (dato seguro) y se reconstruye hacia atras sumando o restando los
-  // ingresos/salidas de cada mes, para poder cuadrar el conteo exacto sin
-  // depender de un punto de partida asumido. Los meses que todavia no
-  // ocurren (despues de hoy) no tienen como saberse, asi que se dejan sin
-  // dato en vez de proyectar un numero que no paso de verdad.
-  const rotationCurrentMonthIndex = Math.min(Math.max(CURRENT_LIMA_PARTS.month - 1, 0), MONTHLY_TASKS.length - 1);
-  const rotationHeadcounts = new Array(rotationCurrentMonthIndex + 1);
-  // Cuenta solo activos ahora mismo, sin importar el switch "incluir
-  // inactivos" (ese es para ver tablas historicas; "cuanto personal tengo
-  // hoy" siempre debe ser el activo real).
-  const rotationCurrentTotal = WORKERS.filter((worker) => (
-    matchesGlobalWorker(worker.id)
-    && (!selectedRoles.length || selectedRoles.includes(worker.role))
-    && worker.active
-  )).length;
-  rotationHeadcounts[rotationCurrentMonthIndex] = {
-    end: rotationCurrentTotal,
-    start: rotationCurrentTotal - filteredRotation[rotationCurrentMonthIndex].primary + filteredRotation[rotationCurrentMonthIndex].secondary
-  };
-  for (let index = rotationCurrentMonthIndex - 1; index >= 0; index -= 1) {
-    const end = rotationHeadcounts[index + 1].start;
-    rotationHeadcounts[index] = { end, start: end - filteredRotation[index].primary + filteredRotation[index].secondary };
+  // Personal al inicio/fin de cada mes: solo tiene sentido cuando el panel
+  // esta filtrado por UN año concreto (si esta en "Todos los años" el
+  // numero mezclaria instantes de distintos años en el mismo grafico, asi
+  // que se omite y el grafico se ve igual que antes).
+  const showRotationHeadcount = globalPeriodYear !== "all";
+  let filteredRotationWithHeadcount = filteredRotation;
+  if (showRotationHeadcount) {
+    // Cuenta solo activos ahora mismo, sin importar el switch "incluir
+    // inactivos" (ese es para ver tablas historicas; "cuanto personal tengo
+    // hoy" siempre debe ser el activo real).
+    const rotationCurrentTotal = WORKERS.filter((worker) => (
+      matchesGlobalWorker(worker.id)
+      && (!selectedRoles.length || selectedRoles.includes(worker.role))
+      && worker.active
+    )).length;
+    const selectedYear = Math.min(Number(globalPeriodYear) || CURRENT_LIMA_YEAR, CURRENT_LIMA_YEAR);
+    // Se ancla en la cantidad activa de HOY (dato seguro) y se reconstruye
+    // hacia atras, mes a mes, con TODO el historial de movimientos del
+    // alcance actual (sin filtrar por año), para poder cuadrar el conteo
+    // exacto aunque el año filtrado sea uno pasado, no solo el actual.
+    const scopedMovements = (dashboardData?.movements || []).filter((row) => matchesPeopleWorker(row.workerId));
+    const movementsByKey = new Map();
+    scopedMovements.forEach((row) => {
+      const year = Number(String(row.date || "").slice(0, 4));
+      const month = Number(String(row.date || "").slice(5, 7));
+      if (!Number.isFinite(year) || month < 1 || month > 12) return;
+      const key = year * 12 + (month - 1);
+      const entry = movementsByKey.get(key) || { entries: 0, exits: 0 };
+      if (/ingreso/i.test(row.type)) entry.entries += 1;
+      else if (/salida/i.test(row.type)) entry.exits += 1;
+      movementsByKey.set(key, entry);
+    });
+    const currentKey = CURRENT_LIMA_YEAR * 12 + (CURRENT_LIMA_MONTH - 1);
+    const targetKey = selectedYear * 12;
+    const headcountEndByKey = new Map([[currentKey, rotationCurrentTotal]]);
+    for (let key = currentKey; key >= targetKey; key -= 1) {
+      const { entries, exits } = movementsByKey.get(key) || { entries: 0, exits: 0 };
+      headcountEndByKey.set(key - 1, Math.max(0, headcountEndByKey.get(key) - entries + exits));
+    }
+    // Los meses que todavia no ocurren (despues de hoy) no tienen como
+    // saberse, asi que se dejan sin dato en vez de proyectar un numero que
+    // no paso de verdad.
+    filteredRotationWithHeadcount = filteredRotation.map((item, index) => {
+      const key = selectedYear * 12 + index;
+      if (key > currentKey) return { ...item, headcountStart: null, headcountEnd: null };
+      return {
+        ...item,
+        headcountEnd: headcountEndByKey.get(key) ?? null,
+        headcountStart: headcountEndByKey.get(key - 1) ?? null
+      };
+    });
   }
-  const filteredRotationWithHeadcount = filteredRotation.map((item, index) => ({
-    ...item,
-    headcountStart: index <= rotationCurrentMonthIndex ? Math.max(0, rotationHeadcounts[index].start) : null,
-    headcountEnd: index <= rotationCurrentMonthIndex ? Math.max(0, rotationHeadcounts[index].end) : null
-  }));
   const EXIT_REASONS = [...visibleMovements.filter((row) => /salida/i.test(row.type) && (!selectedMovementMonths.length || selectedMovementMonths.includes(MONTHLY_TASKS[Number(row.date.slice(5, 7)) - 1].label))).reduce((totals, row) => {
     const name = row.reason || "Sin especificar";
     const item = totals.get(name) || { value: 0, lastDate: null };
@@ -2799,6 +2845,20 @@ export default function FootwearDashboard() {
 
             <section className="pbi-section-grid pbi-section-grid--indicators" aria-label="Indicadores generales">
               {filteredIndicators.map((item) => <IndicatorKpi key={item.label} {...item} />)}
+              <PairedMetricKpi
+                label="Promedio Guías y Pares"
+                items={[
+                  { detail: "Guías", value: oneDecimalFormatter.format(guiasAvgPerDay) },
+                  { detail: "Pares", value: oneDecimalFormatter.format(paresAvgPerDay) }
+                ]}
+              />
+              <PairedMetricKpi
+                label="Totales Guías y Pares"
+                items={[
+                  { detail: "Guías", value: numberFormatter.format(totalGuideCount) },
+                  { detail: "Pares", value: numberFormatter.format(guiasTotalPares) }
+                ]}
+              />
               <article className="pbi-kpi pbi-kpi--birthday">
                 <span className="pbi-kpi-label">Próximo Cumpleaños</span>
                 {nextBirthdays.length ? nextBirthdays.map((birthday, index) => <span className="pbi-birthday-entry" key={birthday.id}>
@@ -2867,6 +2927,15 @@ export default function FootwearDashboard() {
                     ]}
                     rows={taskDetailRows}
                   />
+                </Card>
+
+                <Card
+                  id="pbi-lote-duration"
+                  title="Días de Duración de Lotes"
+                  meta="Desde fecha de ingreso hasta que se completa"
+                  className="pbi-card--chart pbi-card--span-6"
+                >
+                  <LoteDurationChart lots={dashboardData?.lotes || []} />
                 </Card>
 
                 <Card
@@ -3043,15 +3112,6 @@ export default function FootwearDashboard() {
                 </Card>
 
                 <Card
-                  id="pbi-attendance-log"
-                  title="Historial de Cambios en Asistencia"
-                  meta="log_asistencias · auditoría de inserciones, ediciones y eliminaciones"
-                  className="pbi-card--table pbi-card--span-12"
-                >
-                  <AttendanceAuditLog />
-                </Card>
-
-                <Card
                   id="pbi-payroll"
                   title={`Costo de Planilla Mensual (${payrollYear || "—"})`}
                   meta={`${currencyFormatter.format(payrollTotal)} · ${payrollPeriodLabel}`}
@@ -3179,6 +3239,13 @@ export default function FootwearDashboard() {
                     data={filteredErrorsByOffender}
                     ariaLabel="Errores agrupados por usuario o área que cometió el error"
                     color="#0a4f87"
+                    onSelect={(item) => {
+                      if (item.rows?.length) setSelectedErrorDetail({
+                        errorType: item.offenderName,
+                        shiftLabel: item.offenderType,
+                        rows: item.rows
+                      });
+                    }}
                   />
                 </Card>
 

@@ -1356,7 +1356,8 @@ async function handleReadFootwearDashboard(request, response) {
       penalties,
       averageReferences,
       lotes,
-      guias
+      guias,
+      incidentStores
     ] = await Promise.all([
       selectAllDashboardRows("usuarios"),
       selectAllDashboardRows(taskTable),
@@ -1375,7 +1376,8 @@ async function handleReadFootwearDashboard(request, response) {
       selectAllDashboardRows("penalizaciones", { optional: true }),
       selectAverageReferencesByTask(),
       selectAllDashboardRows("lotes", { optional: true }),
-      selectAllDashboardRows("guias", { optional: true })
+      selectAllDashboardRows("guias", { optional: true }),
+      selectAllDashboardRows("tiendas", { optional: true })
     ]);
 
     const dashboardUsers = users.filter((user) => normalizeRole(user.rol) !== "administrador");
@@ -1457,6 +1459,7 @@ async function handleReadFootwearDashboard(request, response) {
 
     const incidentUserById = new Map(dashboardUsers.map((item) => [Number(item.id), item]));
     const incidentAreaById = new Map(incidentAreas.map((item) => [Number(item.id), item]));
+    const incidentStoreById = new Map(incidentStores.map((item) => [Number(item.id), item]));
     const payrollYear = Number(currentLimaDate().slice(0, 4));
     const payroll = buildDashboardPayroll(dashboardUsers, visibleMovements, [payrollYear], { normalizeRole });
 
@@ -1485,12 +1488,15 @@ async function handleReadFootwearDashboard(request, response) {
         id: Number(lote.id),
         code: String(lote.codigo_lote || "").trim().toUpperCase(),
         quantity: Number(lote.cantidad_lote || 0),
-        status: String(lote.estado || "pendiente").trim().toLowerCase()
+        status: String(lote.estado || "pendiente").trim().toLowerCase(),
+        startDate: dashboardDate(lote.fecha_ingreso),
+        completedDate: dashboardDate(lote.fecha_completada)
       })).filter((lote) => lote.code),
       guias: guias.map((row) => ({
         id: Number(row.id),
         code: String(row.codigo || "").trim(),
-        date: dashboardDate(row.fecha || row.created_at)
+        date: dashboardDate(row.fecha || row.created_at),
+        quantity: Number(row.cantidad || 0)
       })).filter((row) => row.code && row.date),
       penalties: penalties.map((item) => ({ key: String(item.clave || ""), points: Number(item.puntos || 0) })),
       averageReferenceByTask: averageReferences.byTask,
@@ -1512,6 +1518,7 @@ async function handleReadFootwearDashboard(request, response) {
         taskName: String(taskTitle(errorTaskById.get(Number(row.tarea_error_id))) || ""), errorType: String(row.tipo_error || "Sin tipo"),
         shift: String(row.turno || "Sin turno").trim().toLowerCase(),
         storeId: Number(row.tienda_id) || null,
+        storeName: row.tienda_id ? String(incidentStoreById.get(Number(row.tienda_id))?.nombre || `Tienda ${row.tienda_id}`) : null,
         // Conserva todas las columnas de registro_errores para el detalle del
         // grafico, incluso si en el futuro se agregan campos al esquema.
         details: row,
@@ -2049,7 +2056,7 @@ async function handleDeleteStore(request, response, storeId) {
   }
 }
 
-const LOTE_SELECT_COLUMNS = "id,codigo_lote,cantidad_lote,marca_id,fecha_ingreso,proveedor,usuario_id,estado";
+const LOTE_SELECT_COLUMNS = "id,codigo_lote,cantidad_lote,marca_id,fecha_ingreso,proveedor,usuario_id,estado,fecha_completada";
 const LOTE_ESTADOS = ["pendiente", "completado"];
 
 async function enrichLotes(rows) {
@@ -2135,6 +2142,8 @@ async function handleCreateLote(request, response) {
       return;
     }
     await validateLoteResponsible(payload.usuario_id);
+    // fecha_completada se calcula sola, no la manda el formulario.
+    payload.fecha_completada = payload.estado === "completado" ? currentLimaDate() : null;
     let result = await supabase.from("lotes").insert(payload).select(LOTE_SELECT_COLUMNS).single();
     if (isPrimaryKeySequenceConflict(result.error)) {
       result = await supabase
@@ -2168,6 +2177,17 @@ async function handleUpdateLote(request, response, loteId) {
       return;
     }
     await validateLoteResponsible(payload.usuario_id);
+    // fecha_completada se calcula sola: si ya estaba completado y sigue
+    // completado, conserva la fecha original (no se reinicia con cada
+    // edicion); si recien pasa a completado, se pone hoy; si vuelve a
+    // pendiente, se limpia.
+    const existingLoteResult = await supabase.from("lotes").select("estado,fecha_completada").eq("id", loteId).maybeSingle();
+    if (existingLoteResult.error) throw existingLoteResult.error;
+    payload.fecha_completada = payload.estado === "completado"
+      ? (existingLoteResult.data?.estado === "completado" && existingLoteResult.data?.fecha_completada
+        ? existingLoteResult.data.fecha_completada
+        : currentLimaDate())
+      : null;
     const result = await supabase.from("lotes").update(payload).eq("id", loteId).select(LOTE_SELECT_COLUMNS).maybeSingle();
     if (result.error) {
       sendJson(response, result.error.code === "23514" ? 400 : 500, {
@@ -2387,55 +2407,36 @@ async function handleReadGuiaItems(request, response) {
 
 const LOG_ASISTENCIAS_OPERACIONES = ["INSERT", "UPDATE", "DELETE"];
 
-// Compara datos_anteriores/datos_nuevos sin asumir columnas fijas: la tabla
-// de origen (asistencias) puede ganar columnas nuevas y el log debe seguir
-// mostrando un resumen legible sin tocar este codigo.
-function summarizeLogAsistenciaChange(operacion, before, after) {
-  const skip = new Set(["id", "created_at", "updated_at"]);
-  if (operacion === "UPDATE" && before && after) {
-    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
-    const changes = [];
-    for (const key of keys) {
-      if (skip.has(key)) continue;
-      const previous = before[key];
-      const next = after[key];
-      if (JSON.stringify(previous) !== JSON.stringify(next)) {
-        changes.push(`${key}: ${previous === null || previous === undefined ? "—" : previous} → ${next === null || next === undefined ? "—" : next}`);
-      }
-    }
-    return changes.join(", ") || "Sin cambios detectados";
-  }
-  const snapshot = operacion === "DELETE" ? before : after;
-  if (!snapshot) return "";
-  return Object.entries(snapshot)
-    .filter(([key]) => !skip.has(key))
-    .map(([key, value]) => `${key}: ${value === null || value === undefined ? "—" : value}`)
-    .join(", ");
-}
-
 async function handleReadLogAsistencias(request, response) {
   try {
     if (!requireAdministrator(request, response)) return;
     const url = new URL(request.url, `http://${request.headers.host}`);
-    const pageSize = Math.min(Math.max(Number(url.searchParams.get("pageSize")) || 15, 1), 100);
-    const page = Math.max(Number(url.searchParams.get("page")) || 1, 1);
     const operacion = String(url.searchParams.get("operacion") || "").trim().toUpperCase();
     const desde = String(url.searchParams.get("desde") || "").trim();
     const hasta = String(url.searchParams.get("hasta") || "").trim();
 
-    let query = supabase.from("log_asistencias").select("*", { count: "exact" });
-    if (LOG_ASISTENCIAS_OPERACIONES.includes(operacion)) query = query.eq("operacion", operacion);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(desde)) query = query.gte("registrado_en", `${desde}T00:00:00`);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(hasta)) query = query.lte("registrado_en", `${hasta}T23:59:59`);
-
-    const from = (page - 1) * pageSize;
-    const result = await query.order("registrado_en", { ascending: false }).range(from, from + pageSize - 1);
-    if (result.error) throw result.error;
+    // Igual que listAttendances(): trae todo el historial filtrado y la
+    // paginacion la resuelve la tabla en el cliente (DataTable pageSize=15).
+    const pageSize = 1000;
+    const rows = [];
+    for (let from = 0; ; from += pageSize) {
+      let query = supabase.from("log_asistencias").select("*");
+      if (LOG_ASISTENCIAS_OPERACIONES.includes(operacion)) query = query.eq("operacion", operacion);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(desde)) query = query.gte("registrado_en", `${desde}T00:00:00`);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(hasta)) query = query.lte("registrado_en", `${hasta}T23:59:59`);
+      const result = await query.order("registrado_en", { ascending: false }).range(from, from + pageSize - 1);
+      if (result.error) throw result.error;
+      const page = result.data || [];
+      rows.push(...page);
+      if (page.length < pageSize) break;
+    }
 
     const usuarioIds = new Set();
-    (result.data || []).forEach((row) => {
+    rows.forEach((row) => {
       const uid = Number(row.datos_nuevos?.usuario_id ?? row.datos_anteriores?.usuario_id);
       if (Number.isInteger(uid) && uid > 0) usuarioIds.add(uid);
+      const registradorId = Number(row.registrado_por_id);
+      if (Number.isInteger(registradorId) && registradorId > 0) usuarioIds.add(registradorId);
     });
     let usersById = new Map();
     if (usuarioIds.size) {
@@ -2444,21 +2445,20 @@ async function handleReadLogAsistencias(request, response) {
       usersById = new Map((usersResult.data || []).map((user) => [Number(user.id), user.nombre || user.email]));
     }
 
-    const rows = (result.data || []).map((row) => {
-      const uid = Number(row.datos_nuevos?.usuario_id ?? row.datos_anteriores?.usuario_id) || null;
-      return {
-        id: Number(row.id),
-        asistenciaId: Number(row.asistencia_id) || null,
-        operacion: String(row.operacion || ""),
-        workerName: uid ? usersById.get(uid) || `Usuario ${uid}` : null,
-        summary: summarizeLogAsistenciaChange(row.operacion, row.datos_anteriores, row.datos_nuevos),
-        authUid: row.auth_uid || null,
-        dbUser: row.db_user || null,
-        registradoEn: row.registrado_en || null
-      };
+    sendJson(response, 200, {
+      rows: rows.map((row) => {
+        const uid = Number(row.datos_nuevos?.usuario_id ?? row.datos_anteriores?.usuario_id) || null;
+        const registradorId = Number(row.registrado_por_id) || null;
+        return {
+          id: Number(row.id),
+          asistenciaId: Number(row.asistencia_id) || null,
+          operacion: String(row.operacion || ""),
+          workerName: uid ? usersById.get(uid) || `Usuario ${uid}` : null,
+          registradoPorName: registradorId ? usersById.get(registradorId) || `Usuario ${registradorId}` : null,
+          registradoEn: row.registrado_en || null
+        };
+      })
     });
-
-    sendJson(response, 200, { rows, total: result.count || 0, page, pageSize });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo cargar el historial de asistencias." });
   }
@@ -2668,6 +2668,7 @@ function handleOperationsError(response, error, fallback) {
 async function handleMarkAttendance(request, response) {
   try {
     if (!requireAdministrator(request, response)) return;
+    const session = readSession(request);
     const body = JSON.parse((await readBody(request)) || "{}");
     const userId = Number(body.usuario_id);
     const date = String(body.fecha || "").trim();
@@ -2734,6 +2735,7 @@ async function handleMarkAttendance(request, response) {
       fecha: date,
       estado,
       created_at: present ? (existingResult.data?.created_at || new Date().toISOString()) : null,
+      registrado_por_id: session.id,
       ...(existingResult.data?.id ? { updated_at: new Date().toISOString() } : {})
     };
     if (hasWithdrawalFields) {

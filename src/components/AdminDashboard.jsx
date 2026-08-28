@@ -35,6 +35,7 @@ import {
   listEncargados,
   listGuias,
   listGuiaItemsForExport,
+  listLogAsistencias,
   listLotes,
   listPenalizaciones,
   listTasks,
@@ -2105,6 +2106,7 @@ function AttendancePanel() {
   const [selectedDate, setSelectedDate] = useState(todayLimaISO());
   const [workerStatusFilter, setWorkerStatusFilter] = useState("activos");
   const [workerSearch, setWorkerSearch] = useState("");
+  const [historyTab, setHistoryTab] = useState("Registros de Asistencia");
   const [historyUserId, setHistoryUserId] = useState("todos");
   const [historyMonth, setHistoryMonth] = useState("todos");
   const [historyDay, setHistoryDay] = useState("todos");
@@ -2398,9 +2400,12 @@ function AttendancePanel() {
       ) : null}
 
       <Panel
-        title="Historial de asistencia"
-        actions={attendanceRows.length ? <Button variant="secondary" onClick={exportAttendance}>Exportar Excel</Button> : null}
+        title={historyTab}
+        actions={historyTab === "Registros de Asistencia" && attendanceRows.length ? <Button variant="secondary" onClick={exportAttendance}>Exportar Excel</Button> : null}
       >
+        <Tabs tabs={["Registros de Asistencia", "Historial de Cambios"]} active={historyTab} onChange={setHistoryTab} />
+        {historyTab === "Historial de Cambios" ? <AttendanceChangeLog /> : (
+        <>
         <div className="toolbar attendance-history-filters">
           <SelectInput
             label="Usuario"
@@ -2462,8 +2467,63 @@ function AttendancePanel() {
           pageSize={25}
           empty="No hay asistencias para los filtros seleccionados."
         />
+        </>
+        )}
       </Panel>
     </div>
+  );
+}
+
+const LOG_ASISTENCIAS_OPERACION_LABELS = {
+  INSERT: "Creación",
+  UPDATE: "Edición",
+  DELETE: "Eliminación"
+};
+
+function AttendanceChangeLog() {
+  const [operacion, setOperacion] = useState("");
+  const [desde, setDesde] = useState("");
+  const [hasta, setHasta] = useState("");
+  const { data: rows, loading, error, reload } = useAsyncData(
+    () => listLogAsistencias({ operacion, desde, hasta }),
+    [operacion, desde, hasta],
+    []
+  );
+
+  const tableRows = (rows || []).map((row) => ({
+    "Fecha y hora": row.registradoEn ? formatDateTimeLima(row.registradoEn) : "",
+    "Operación": LOG_ASISTENCIAS_OPERACION_LABELS[row.operacion] || row.operacion,
+    Trabajador: row.workerName || "",
+    "Registrado por": row.registradoPorName || ""
+  }));
+
+  return (
+    <>
+      <div className="toolbar attendance-history-filters">
+        <SelectInput
+          label="Operación"
+          value={operacion}
+          onChange={setOperacion}
+          options={[
+            { value: "", label: "Todas" },
+            { value: "INSERT", label: "Creación" },
+            { value: "UPDATE", label: "Edición" },
+            { value: "DELETE", label: "Eliminación" }
+          ]}
+        />
+        <TextInput label="Desde" type="date" value={desde} onChange={setDesde} />
+        <TextInput label="Hasta" type="date" value={hasta} onChange={setHasta} />
+        <Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>
+      </div>
+      {loading ? <LoadingBlock /> : null}
+      {error ? <Alert type="error">{error}</Alert> : null}
+      <DataTable
+        rows={tableRows}
+        columns={["Fecha y hora", "Operación", "Trabajador", "Registrado por"]}
+        pageSize={15}
+        empty="No hay cambios registrados para los filtros seleccionados."
+      />
+    </>
   );
 }
 
@@ -3902,6 +3962,16 @@ const LOTE_ESTADOS = [
   { value: "completado", label: "Completado" }
 ];
 
+// Si el lote ya se completo, son los dias reales que tardo. Si sigue
+// pendiente, se calcula contra hoy (no se guarda en ningun lado), asi que la
+// cifra sube sola cada dia hasta que se marque como completado.
+function loteDurationDays(lote) {
+  if (!lote.fecha_ingreso) return null;
+  const endDate = lote.estado === "completado" && lote.fecha_completada ? lote.fecha_completada : todayLimaISO();
+  const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lote.fecha_ingreso}T00:00:00`)) / 86400000);
+  return Number.isFinite(days) ? Math.max(0, days) : null;
+}
+
 function emptyLoteForm() {
   return {
     codigo_lote: "", cantidad_lote: "", marca_id: "", fecha_ingreso: todayLimaISO(),
@@ -4020,16 +4090,20 @@ function LotesPanel() {
     }
   }
 
-  const rows = lotes.map((lote) => ({
-    id: lote.id,
-    "Codigo de lote": lote.codigo_lote,
-    Cantidad: lote.cantidad_lote,
-    Marca: lote.marca_nombre,
-    Estado: LOTE_ESTADOS.find((option) => option.value === lote.estado)?.label || lote.estado,
-    "Fecha de ingreso": formatDateLima(lote.fecha_ingreso),
-    Proveedor: lote.proveedor,
-    "Jefe de equipo": lote.usuario_nombre
-  }));
+  const rows = lotes.map((lote) => {
+    const days = loteDurationDays(lote);
+    return {
+      id: lote.id,
+      "Codigo de lote": lote.codigo_lote,
+      Cantidad: lote.cantidad_lote,
+      Marca: lote.marca_nombre,
+      Estado: LOTE_ESTADOS.find((option) => option.value === lote.estado)?.label || lote.estado,
+      "Fecha de ingreso": formatDateLima(lote.fecha_ingreso),
+      "Días": days === null ? null : `${days} día${days === 1 ? "" : "s"}`,
+      Proveedor: lote.proveedor,
+      "Jefe de equipo": lote.usuario_nombre
+    };
+  });
 
   return (
     <div className="stack">
@@ -4043,7 +4117,7 @@ function LotesPanel() {
         ) : (
           <DataTable
             rows={rows}
-            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Proveedor", "Jefe de equipo"]}
+            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Días", "Proveedor", "Jefe de equipo"]}
             onRowClick={(row) => {
               setSelectedId(String(row.id));
               setTab("Editar");
