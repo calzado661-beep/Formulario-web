@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CalendarCheck2, CheckCircle2, ClipboardCheck, Clock3, Eye, EyeOff, FileSpreadsheet, GraduationCap, LockKeyhole, Mail, Pencil, Plus, RefreshCcw, Save, Search, Send, Trash2, Upload, UsersRound, X } from "lucide-react";
+import { AlertTriangle, CalendarCheck2, CheckCircle2, ClipboardCheck, Clock3, Eye, EyeOff, FileSpreadsheet, GraduationCap, HelpCircle, LockKeyhole, Mail, Pencil, Plus, RefreshCcw, Save, Search, Send, Trash2, Upload, UsersRound, X } from "lucide-react";
 import {
   bulkSetTrainingStatus,
   createActivityReportSettings,
@@ -104,18 +104,99 @@ function trainingStatusLabel(status) {
   return trainingStatusOptions.find((option) => option.value === status)?.label || "Pendiente";
 }
 
+const ADMIN_SECTION_HELP = {
+  Usuarios: {
+    title: "Usuarios",
+    text: "Crea, edita y desactiva trabajadores: nombre, correo, rol (administrador, operante, jefe de equipo, jefe de grupo, otros), sueldo, cumpleaños y estado activo/inactivo."
+  },
+  Capacitaciones: {
+    title: "Capacitaciones",
+    text: "Crea cursos de capacitación, asígnalos a uno o varios trabajadores (con encargado y horas) y actualiza su estado: pendiente, en curso o completado."
+  },
+  Tareas: {
+    title: "Tareas",
+    text: "Catálogo de tareas operativas y de error: define su tipo (cantidad, fijo, turno, tiempo), si requiere marca, tienda, tiempo o lote, y las reglas de puntaje (puntos a favor y en contra)."
+  },
+  Asistencia: {
+    title: "Asistencia",
+    text: "Marca la asistencia diaria por trabajador. Abajo, en \"Registros de Asistencia\" está el historial de marcaciones, y en \"Historial de Cambios\" el registro de auditoría de quién creó, editó o borró cada asistencia."
+  },
+  Notificaciones: {
+    title: "Notificaciones",
+    text: "Programa el envío automático por correo de reportes de asistencia y de registros de actividades, y revisa su historial de envíos."
+  },
+  Tiendas: {
+    title: "Tiendas",
+    text: "Catálogo de tiendas o sedes, usado al registrar tareas operativas y errores por tienda."
+  },
+  Lotes: {
+    title: "Lotes",
+    text: "Catálogo de lotes de mercadería: código, marca, cantidad, proveedor, jefe de equipo responsable y estado (pendiente/completado). Muestra los días que lleva cada lote hasta completarse."
+  },
+  Guias: {
+    title: "Guías",
+    text: "Importa el reporte de salidas (Excel) para cargar las guías del mes, y consulta el catálogo de guías con su fecha y cantidad de pares. Estas guías alimentan el margen de error del dashboard."
+  },
+  Amonestaciones: {
+    title: "Amonestaciones",
+    text: "Registra memorándums y cartas de amonestación por trabajador, y consulta el historial completo."
+  },
+  Documentos: {
+    title: "Documentos",
+    text: "Exporta a Excel los datos del sistema: usuarios, asistencias, registros de actividades, tareas, amonestaciones y capacitaciones, todo junto o por separado."
+  }
+};
+
+function AdminHelpButton({ section }) {
+  const [open, setOpen] = useState(false);
+  const help = ADMIN_SECTION_HELP[section];
+  if (!help) return null;
+  return (
+    <>
+      <button
+        type="button"
+        className="admin-help-fab"
+        onClick={() => setOpen(true)}
+        aria-label={`Ayuda: ¿qué se hace en ${help.title}?`}
+        title="¿Qué se hace en esta página?"
+      >
+        <HelpCircle aria-hidden="true" />
+      </button>
+      {open ? (
+        <div
+          className="admin-help-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="admin-help-title"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}
+        >
+          <div className="admin-help-dialog">
+            <header className="admin-help-header">
+              <h2 id="admin-help-title">{help.title}</h2>
+              <button type="button" className="admin-help-close" onClick={() => setOpen(false)} aria-label="Cerrar ayuda">
+                <X aria-hidden="true" />
+              </button>
+            </header>
+            <p className="admin-help-text">{help.text}</p>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export default function AdminDashboard({ section }) {
   if (section === "Dashboard") return <FootwearDashboard />;
-  if (section === "Usuarios") return <UsersPanel />;
-  if (section === "Capacitaciones") return <TrainingsPanel />;
-  if (section === "Tareas") return <TasksPanel />;
-  if (section === "Asistencia") return <AttendancePanel />;
-  if (section === "Notificaciones") return <NotificationsPanel />;
-  if (section === "Tiendas") return <StoresPanel />;
-  if (section === "Lotes") return <LotesPanel />;
-  if (section === "Guias") return <GuiasPanel />;
-  if (section === "Amonestaciones") return <WarningsPanel />;
-  if (section === "Documentos") return <DocumentsPanel />;
+  if (section === "Usuarios") return <><UsersPanel /><AdminHelpButton section="Usuarios" /></>;
+  if (section === "Capacitaciones") return <><TrainingsPanel /><AdminHelpButton section="Capacitaciones" /></>;
+  if (section === "Tareas") return <><TasksPanel /><AdminHelpButton section="Tareas" /></>;
+  if (section === "Asistencia") return <><AttendancePanel /><AdminHelpButton section="Asistencia" /></>;
+  if (section === "Notificaciones") return <><NotificationsPanel /><AdminHelpButton section="Notificaciones" /></>;
+  if (section === "Tiendas") return <><StoresPanel /><AdminHelpButton section="Tiendas" /></>;
+  if (section === "Lotes") return <><LotesPanel /><AdminHelpButton section="Lotes" /></>;
+  if (section === "Guias") return <><GuiasPanel /><AdminHelpButton section="Guias" /></>;
+  if (section === "Amonestaciones") return <><WarningsPanel /><AdminHelpButton section="Amonestaciones" /></>;
+  if (section === "Documentos") return <><DocumentsPanel /><AdminHelpButton section="Documentos" /></>;
   return <FootwearDashboard />;
 }
 

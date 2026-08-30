@@ -1976,6 +1976,83 @@ h2.pbi-section-heading {
   overflow: auto;
 }
 
+.pbi-help-fab {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 9000;
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--pbi-blue, #094780);
+  box-shadow: 0 10px 26px rgba(9, 71, 128, 0.4);
+  color: #fff;
+  cursor: pointer;
+}
+
+.pbi-help-fab svg {
+  width: 1.5rem;
+  height: 1.5rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.pbi-help-fab:hover {
+  background: var(--pbi-blue-soft, #1765a8);
+}
+
+.pbi-help-fab:focus-visible {
+  outline: 3px solid rgba(234, 203, 43, 0.78);
+  outline-offset: 3px;
+}
+
+.pbi-help-modal-dialog {
+  max-width: min(760px, 96vw);
+}
+
+.pbi-help-modal-body {
+  overflow-y: auto;
+  padding: 1rem 1.15rem 1.25rem;
+}
+
+.pbi-help-modal-section + .pbi-help-modal-section {
+  margin-top: 1.1rem;
+}
+
+.pbi-help-modal-section h3 {
+  margin: 0 0 0.5rem;
+  color: var(--pbi-blue-dark);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.pbi-help-modal-section dl {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+}
+
+.pbi-help-modal-item dt {
+  color: var(--pbi-ink);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.pbi-help-modal-item dd {
+  margin: 0.1rem 0 0;
+  color: var(--pbi-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
 .pbi-comparison-track[role="button"],
 .pbi-comparison-value-action {
   cursor: pointer;

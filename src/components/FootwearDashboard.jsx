@@ -295,6 +295,16 @@ function ExpandVisualIcon() {
   );
 }
 
+function HelpIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="9.25" />
+      <path d="M9.6 9.2a2.4 2.4 0 1 1 3.6 2.08c-.72.42-1.2.86-1.2 1.72v.4" />
+      <circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -719,7 +729,15 @@ function LoteDurationChart({ lots }) {
       const endDate = lot.status === "completado" ? lot.completedDate : CURRENT_LIMA_PARTS.iso;
       if (!endDate) return null;
       const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lot.startDate}T00:00:00`)) / 86400000);
-      return Number.isFinite(days) && days >= 0 ? { name: lot.code, value: days } : null;
+      return Number.isFinite(days) && days >= 0 ? {
+        name: lot.code,
+        value: days,
+        teamLeaderName: lot.teamLeaderName,
+        brandName: lot.brandName,
+        quantity: lot.quantity,
+        startDate: lot.startDate,
+        completedDate: lot.completedDate
+      } : null;
     })
     .filter(Boolean)
     .sort((a, b) => b.value - a.value);
@@ -738,6 +756,16 @@ function LoteDurationChart({ lots }) {
         tone="blue"
         unit="días"
         compact
+        tooltipFormatter={(item) => ({
+          value: `${numberFormatter.format(item.value)} día${item.value === 1 ? "" : "s"}`,
+          detail: [
+            `Jefe de equipo: ${item.teamLeaderName || "—"}`,
+            `Marca: ${item.brandName || "—"}`,
+            `Pares: ${numberFormatter.format(item.quantity || 0)}`,
+            `Ingreso: ${item.startDate ? formatCalendarDate(item.startDate) : "—"}`,
+            `Completado: ${item.completedDate ? formatCalendarDate(item.completedDate) : "—"}`
+          ].join(" · ")
+        })}
       />
     </>
   );
@@ -854,7 +882,7 @@ function splitLabel(label) {
   return [parts[0], parts.slice(1).join(" ")];
 }
 
-function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSelect, selectedNames = [], compact = false }) {
+function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSelect, selectedNames = [], compact = false, tooltipFormatter }) {
   const [tooltip, setTooltip] = useState(null);
   if (!data.length) return <p className="pbi-chart-empty">No hay datos para el filtro seleccionado.</p>;
 
@@ -925,8 +953,14 @@ function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSel
                   onSelect(item);
                 }
               }}
-              onPointerMove={(event) => tooltipAt(event, setTooltip, item.name, `${numberFormatter.format(item.value)} puntos normales${againstPoints ? ` · -${numberFormatter.format(againstPoints)} puntos en contra` : " · 0 puntos en contra"}${unit ? ` ${unit}` : ""}`, item.againstReason || "Sin descuentos en el periodo")}
-              onFocus={(event) => tooltipAtFocus(event, setTooltip, item.name, `${numberFormatter.format(item.value)} puntos normales${againstPoints ? ` · -${numberFormatter.format(againstPoints)} puntos en contra` : " · 0 puntos en contra"}${unit ? ` ${unit}` : ""}`, item.againstReason || "Sin descuentos en el periodo")}
+              onPointerMove={(event) => {
+                const custom = tooltipFormatter?.(item);
+                tooltipAt(event, setTooltip, item.name, custom?.value ?? `${numberFormatter.format(item.value)} puntos normales${againstPoints ? ` · -${numberFormatter.format(againstPoints)} puntos en contra` : " · 0 puntos en contra"}${unit ? ` ${unit}` : ""}`, custom?.detail ?? (item.againstReason || "Sin descuentos en el periodo"));
+              }}
+              onFocus={(event) => {
+                const custom = tooltipFormatter?.(item);
+                tooltipAtFocus(event, setTooltip, item.name, custom?.value ?? `${numberFormatter.format(item.value)} puntos normales${againstPoints ? ` · -${numberFormatter.format(againstPoints)} puntos en contra` : " · 0 puntos en contra"}${unit ? ` ${unit}` : ""}`, custom?.detail ?? (item.againstReason || "Sin descuentos en el periodo"));
+              }}
               onBlur={() => setTooltip(null)}
               onMouseLeave={() => setTooltip(null)}
             >
@@ -1686,6 +1720,102 @@ function MovementRecordsModal({ month, movementLabel, rows, workerById, onClose 
   );
 }
 
+const DASHBOARD_HELP_SECTIONS = [
+  {
+    section: "Indicadores generales",
+    items: [
+      { title: "Margen de error", text: "Registros de error del período sobre la cantidad de guías distintas registradas en ese mismo período." },
+      { title: "Ausentismo / Tardanza", text: "Porcentaje de faltas o llegadas tarde sobre el total de asistencias marcadas en el período." },
+      { title: "Permanencia promedio", text: "Meses promedio que llevan todos los trabajadores, activos e inactivos. No se ve afectado por ningún filtro." },
+      { title: "Promedio de días por lote", text: "Días promedio que tardan los lotes en completarse. Los pendientes cuentan sus días contra hoy, así que suben solos cada día." },
+      { title: "Promedio / Totales Guías y Pares", text: "Promedio diario y totales de guías distintas y pares registrados en el período filtrado." },
+      { title: "Avance de pares por lote", text: "Pares etiquetados por el jefe de equipo frente a la cantidad total del lote seleccionado." },
+      { title: "Próximo Cumpleaños", text: "Próximos cumpleaños del equipo, ordenados por fecha." }
+    ]
+  },
+  {
+    section: "Producción y rendimiento",
+    items: [
+      { title: "Top 5 Trabajadores por Producción", text: "Los 5 trabajadores con más puntos a favor en el período filtrado." },
+      { title: "Detalle de Registro de Tareas", text: "Tabla con cada registro operativo del período, filtrable por tarea." },
+      { title: "Días de Duración de Lotes", text: "Días de duración de cada lote (código en el eje), con filtro propio de estado. No usa el filtro de período global." },
+      { title: "Ranking por Promedio por Hora / por Pares", text: "Ranking de todos los trabajadores para la tarea elegida, en el período filtrado." },
+      { title: "Volumen de Registros por Tarea", text: "Cantidad de registros operativos agrupados por tipo de tarea, en el período filtrado." },
+      { title: "Volumen de Registros por Mes", text: "Cantidad de registros por cada mes del año actual. Siempre muestra el año completo, no cambia con el filtro de mes." }
+    ]
+  },
+  {
+    section: "Personas y operación",
+    items: [
+      { title: "Rotación de Personal por Mes", text: "Ingresos y salidas de personal por mes. Si hay un año concreto filtrado, también muestra el personal activo al inicio y fin de cada mes (incluye activos e inactivos)." },
+      { title: "Motivos de Salida del Personal", text: "Distribución de los motivos registrados en las salidas de personal." },
+      { title: "Amonestaciones por Trabajador", text: "Historial completo de amonestaciones. A propósito no se filtra por período ni trabajador." },
+      { title: "Asistencia por Trabajador", text: "Asistencias puntuales, tardanzas y ausencias por trabajador en el período filtrado." },
+      { title: "Costo de Planilla Mensual", text: "Costo estimado de planilla mes a mes para el año mostrado. Siempre muestra los meses ya terminados del año." }
+    ]
+  },
+  {
+    section: "Calidad y errores",
+    items: [
+      { title: "Distribución de Errores por Tarea", text: "Errores del período agrupados por la tarea en la que ocurrieron." },
+      { title: "Errores por Turno y Tipo", text: "Errores de contenido y de liberado, comparados por turno." },
+      { title: "Errores por Usuario o Área", text: "Errores agrupados por quién los cometió (usuario o área). Se puede hacer clic para ver el detalle." }
+    ]
+  },
+  {
+    section: "Capacitación y desarrollo",
+    items: [
+      { title: "Avance de Capacitaciones", text: "Cursos completados frente a pendientes por trabajador, en el período filtrado." },
+      { title: "Historial de Capacitaciones", text: "Detalle de cada asignación de capacitación (curso, competencia, horas y estado)." }
+    ]
+  }
+];
+
+function DashboardHelpModal({ onClose }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose]);
+  return createPortal(
+    <div className="pbi-visual-modal" role="dialog" aria-modal="true" aria-labelledby="pbi-dashboard-help-title" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section className="pbi-ranking-records-dialog pbi-help-modal-dialog">
+        <header className="pbi-ranking-records-header">
+          <div>
+            <span className="pbi-card-eyebrow">Guía del tablero</span>
+            <h2 id="pbi-dashboard-help-title">¿Qué muestra cada gráfico?</h2>
+            <p>Los títulos con mes, semana o día cambian según el filtro de período del panel de la derecha; los que no lo tienen no se ven afectados por ese filtro.</p>
+          </div>
+          <button type="button" className="pbi-ranking-records-close" onClick={onClose} aria-label="Cerrar ayuda">×</button>
+        </header>
+        <div className="pbi-help-modal-body">
+          {DASHBOARD_HELP_SECTIONS.map((group) => (
+            <div className="pbi-help-modal-section" key={group.section}>
+              <h3>{group.section}</h3>
+              <dl>
+                {group.items.map((item) => (
+                  <div className="pbi-help-modal-item" key={item.title}>
+                    <dt>{item.title}</dt>
+                    <dd>{item.text}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
 function ErrorRecordsModal({ shiftLabel, errorType, rows, onClose }) {
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -1844,6 +1974,7 @@ export default function FootwearDashboard() {
   const [selectedMovementMonths, setSelectedMovementMonths] = useState([]);
   const [selectedMovementDetail, setSelectedMovementDetail] = useState(null);
   const [selectedErrorDetail, setSelectedErrorDetail] = useState(null);
+  const [showHelpModal, setShowHelpModal] = useState(false);
 
   const refreshDashboard = useCallback(async ({ silent = false } = {}) => {
     dashboardRequestRef.current?.abort();
@@ -2117,6 +2248,16 @@ export default function FootwearDashboard() {
     .filter((row) => !hourlyTaskIsLabeling || row.labelingType === effectiveHourlyHangtagKey)
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
   const productionPeriodLabel = `${selectedYears.length ? selectedYears.join(", ") : "Todos los años"} · ${productionMonths.length ? productionMonths.map((month) => MONTHLY_TASKS[month - 1]?.name).filter(Boolean).join(", ") : "Todos los meses"}`;
+  // Para titulos dinamicos en Personas y operacion: mes (o "Todos los
+  // meses"), mas la semana o el dia si tambien estan filtrados en el panel
+  // global.
+  const selectedMonthTitleLabel = [
+    globalPeriodMonth === "all"
+      ? "Todos los meses"
+      : (MONTHLY_TASKS[Number(globalPeriodMonth) - 1]?.name || "").replace(/^./, (char) => char.toUpperCase()),
+    selectedMonthWeek ? selectedMonthWeek.label : null,
+    globalPeriodDay !== "all" ? `Día ${globalPeriodDay}` : null
+  ].filter(Boolean).join(" · ");
   const globalPeriodLabel = selectedMonthWeek ? `${productionPeriodLabel} · ${selectedMonthWeek.label}` : productionPeriodLabel;
   async function saveHourlyReference() {
     const value = Number(hourlyReferenceDraft);
@@ -2379,20 +2520,23 @@ export default function FootwearDashboard() {
   const showRotationHeadcount = globalPeriodYear !== "all";
   let filteredRotationWithHeadcount = filteredRotation;
   if (showRotationHeadcount) {
-    // Cuenta solo activos ahora mismo, sin importar el switch "incluir
-    // inactivos" (ese es para ver tablas historicas; "cuanto personal tengo
-    // hoy" siempre debe ser el activo real).
+    // Igual que Rotacion/Motivos de Salida: cuenta activos e inactivos, sin
+    // que el switch "incluir inactivos" (ni el estado actual del trabajador)
+    // afecte el conteo. Antes solo se contaban los activos de HOY, lo cual
+    // desalineaba el ancla con los movimientos (que ya incluyen inactivos).
     const rotationCurrentTotal = WORKERS.filter((worker) => (
       matchesGlobalWorker(worker.id)
       && (!selectedRoles.length || selectedRoles.includes(worker.role))
-      && worker.active
     )).length;
     const selectedYear = Math.min(Number(globalPeriodYear) || CURRENT_LIMA_YEAR, CURRENT_LIMA_YEAR);
-    // Se ancla en la cantidad activa de HOY (dato seguro) y se reconstruye
-    // hacia atras, mes a mes, con TODO el historial de movimientos del
-    // alcance actual (sin filtrar por año), para poder cuadrar el conteo
-    // exacto aunque el año filtrado sea uno pasado, no solo el actual.
-    const scopedMovements = (dashboardData?.movements || []).filter((row) => matchesPeopleWorker(row.workerId));
+    // Se ancla en la cantidad de HOY y se reconstruye hacia atras, mes a mes,
+    // con TODO el historial de movimientos del alcance actual (sin filtrar
+    // por año), para poder cuadrar el conteo exacto aunque el año filtrado
+    // sea uno pasado, no solo el actual.
+    const scopedMovements = (dashboardData?.movements || []).filter((row) => {
+      const worker = workerById.get(Number(row.workerId));
+      return matchesGlobalWorker(row.workerId) && (!selectedRoles.length || (worker && selectedRoles.includes(worker.role)));
+    });
     const movementsByKey = new Map();
     scopedMovements.forEach((row) => {
       const year = Number(String(row.date || "").slice(0, 4));
@@ -2775,7 +2919,7 @@ export default function FootwearDashboard() {
               <div className="pbi-content-grid">
                 <Card
                   id="pbi-top-workers"
-                  title="Top 5 Trabajadores por Producción"
+                  title={`Top 5 Trabajadores por Producción · ${selectedMonthTitleLabel}`}
                   meta="Suma de puntos a favor"
                   icon={<StarIcon />}
                   className="pbi-card--chart pbi-card--featured pbi-card--top-workers-compact pbi-card--span-8-centered"
@@ -2792,7 +2936,7 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-task-detail"
-                  title="Detalle de Registro de Tareas"
+                  title={`Detalle de Registro de Tareas · ${selectedMonthTitleLabel}`}
                   meta={`${taskDetailRows.length} registros`}
                   className="pbi-card--table pbi-card--task-detail-scroll pbi-card--span-12"
                 >
@@ -2829,7 +2973,7 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-hourly-ranking"
-                  title="Ranking por Promedio por Hora"
+                  title={`Ranking por Promedio por Hora · ${selectedMonthTitleLabel}`}
                   meta={effectiveHourlyTask?.shortName || "Selecciona una tarea"}
                   className="pbi-card--chart pbi-card--ranking pbi-card--span-6"
                 >
@@ -2846,7 +2990,7 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-labeling-ranking"
-                  title="Ranking de Cantidad por Pares"
+                  title={`Ranking de Cantidad por Pares · ${selectedMonthTitleLabel}`}
                   meta={effectiveQuantityTask?.shortName || "Selecciona una tarea"}
                   className="pbi-card--chart pbi-card--ranking pbi-card--span-6"
                 >
@@ -2882,7 +3026,7 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-task-volume"
-                  title="Volumen de Registros por Tarea"
+                  title={`Volumen de Registros por Tarea · ${selectedMonthTitleLabel}`}
                   meta={`${numberFormatter.format(taskVolumeTotal)} registros`}
                   className="pbi-card--chart pbi-card--span-6"
                 >
@@ -2928,7 +3072,7 @@ export default function FootwearDashboard() {
               <div className="pbi-content-grid">
                 <Card
                   id="pbi-rotation"
-                  title="Rotación de Personal por Mes"
+                  title={`Rotación de Personal por Mes · ${selectedMonthTitleLabel}`}
                   meta={`${filteredRotation.reduce((sum, item) => sum + item.primary, 0)} ingresos · ${filteredRotation.reduce((sum, item) => sum + item.secondary, 0)} salidas`}
                   className="pbi-card--chart pbi-card--span-4"
                 >
@@ -2962,7 +3106,7 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-exit-reasons"
-                  title="Motivos de Salida del Personal"
+                  title={`Motivos de Salida del Personal · ${selectedMonthTitleLabel}`}
                   meta={`${EXIT_REASONS.reduce((sum, item) => sum + item.value, 0)} salidas`}
                   className="pbi-card--chart pbi-card--span-4"
                 >
@@ -2993,7 +3137,7 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-attendance"
-                  title="Asistencia por Trabajador"
+                  title={`Asistencia por Trabajador · ${selectedMonthTitleLabel}`}
                   meta="Puntual · tardanza · ausencia"
                   className="pbi-card--chart pbi-card--span-12"
                 >
@@ -3077,7 +3221,7 @@ export default function FootwearDashboard() {
               <div className="pbi-content-grid">
                 <Card
                   id="pbi-errors-task"
-                  title="Distribución de Errores por Tarea"
+                  title={`Distribución de Errores por Tarea · ${selectedMonthTitleLabel}`}
                   meta={`${visibleIncidentRecords.length} registros de error`}
                   className="pbi-card--chart pbi-card--quality-donut pbi-card--span-4"
                 >
@@ -3093,7 +3237,7 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-error-types"
-                  title="Errores por Turno y Tipo"
+                  title={`Errores por Turno y Tipo · ${selectedMonthTitleLabel}`}
                   meta={`${visibleIncidentRecords.length} errores`}
                   className="pbi-card--chart pbi-card--error-comparison pbi-card--span-8"
                 >
@@ -3121,7 +3265,7 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-errors-worker"
-                  title="Errores por Usuario o Área"
+                  title={`Errores por Usuario o Área · ${selectedMonthTitleLabel}`}
                   meta={`${visibleIncidentRecords.length} errores`}
                   className="pbi-card--chart pbi-card--quality-responsible pbi-card--tall pbi-card--span-12"
                 >
@@ -3159,7 +3303,7 @@ export default function FootwearDashboard() {
               <div className="pbi-content-grid">
                 <Card
                   id="pbi-training-progress"
-                  title="Avance de Capacitaciones"
+                  title={`Avance de Capacitaciones · ${selectedMonthTitleLabel}`}
                   meta={trainingTotal ? `${Math.round((trainingCompleted / trainingTotal) * 100)}% completado · ${trainingTotal} asignaciones` : "Sin asignaciones"}
                   className="pbi-card--chart pbi-card--span-4"
                 >
@@ -3172,7 +3316,7 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-training-history"
-                  title="Historial de Capacitaciones"
+                  title={`Historial de Capacitaciones · ${selectedMonthTitleLabel}`}
                   meta={`${filteredTrainingHistory.length} asignaciones`}
                   className="pbi-card--table pbi-card--span-8"
                 >
@@ -3207,6 +3351,17 @@ export default function FootwearDashboard() {
               : ""}
           </span>
         </footer>
+
+        <button
+          type="button"
+          className="pbi-help-fab"
+          onClick={() => setShowHelpModal(true)}
+          aria-label="Ver qué muestra cada gráfico del dashboard"
+          title="¿Qué muestra cada gráfico?"
+        >
+          <HelpIcon />
+        </button>
+        {showHelpModal ? <DashboardHelpModal onClose={() => setShowHelpModal(false)} /> : null}
       </div>
     </section>
   );

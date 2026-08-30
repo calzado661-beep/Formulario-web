@@ -1460,6 +1460,7 @@ async function handleReadFootwearDashboard(request, response) {
     const incidentUserById = new Map(dashboardUsers.map((item) => [Number(item.id), item]));
     const incidentAreaById = new Map(incidentAreas.map((item) => [Number(item.id), item]));
     const incidentStoreById = new Map(incidentStores.map((item) => [Number(item.id), item]));
+    const loteBrandNameById = new Map(brands.map((brand) => [Number(brand.id), String(brand.nombre || `Marca ${brand.id}`)]));
     const payrollYear = Number(currentLimaDate().slice(0, 4));
     const payroll = buildDashboardPayroll(dashboardUsers, visibleMovements, [payrollYear], { normalizeRole });
 
@@ -1490,7 +1491,9 @@ async function handleReadFootwearDashboard(request, response) {
         quantity: Number(lote.cantidad_lote || 0),
         status: String(lote.estado || "pendiente").trim().toLowerCase(),
         startDate: dashboardDate(lote.fecha_ingreso),
-        completedDate: dashboardDate(lote.fecha_completada)
+        completedDate: dashboardDate(lote.fecha_completada),
+        brandName: loteBrandNameById.get(Number(lote.marca_id)) || null,
+        teamLeaderName: incidentUserById.get(Number(lote.usuario_id))?.nombre || null
       })).filter((lote) => lote.code),
       guias: guias.map((row) => ({
         id: Number(row.id),
