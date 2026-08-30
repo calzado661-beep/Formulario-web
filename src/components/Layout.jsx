@@ -88,8 +88,8 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
   const title =
     role === "administrador"
       ? "Panel Administrativo"
-      : role === "jefe de equipo"
-        ? "Panel de Jefe de Equipo"
+      : role === "lider de equipo"
+        ? "Panel de Líder de Equipo"
         : role === "jefe de grupo"
           ? "Panel de Jefe de Grupo"
           : role === "otros"

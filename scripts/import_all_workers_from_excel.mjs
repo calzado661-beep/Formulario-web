@@ -80,7 +80,7 @@ for (const worker of spreadsheetWorkers) {
   let suffix = 2;
   while (knownEmails.has(username)) username = `${baseUsername}.${suffix++}`;
   const position = normalizeText(worker.position);
-  const role = /lider.*equipo/.test(position) ? "jefe de equipo" : /jefe/.test(position) ? "jefe de grupo" : "operante";
+  const role = /lider.*equipo/.test(position) ? "lider de equipo" : /jefe/.test(position) ? "jefe de grupo" : "operante";
   const active = normalizeText(worker.state) === "laborando";
   let exitDate = worker.exit_date || null;
   if (worker.entry_date && exitDate && exitDate < worker.entry_date) {

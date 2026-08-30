@@ -8,7 +8,7 @@ export const MAX_AUTOMATIC_REPORTS_PER_TICK = 3;
 
 const REPORT_CONFIG_TABLE = "configuracion_reporte_asistencia";
 const REPORT_CONFIG_USERS_TABLE = "configuracion_reporte_asistencia_usuarios";
-const WORKER_ROLES = new Set(["trabajador", "operante", "jefe de equipo"]);
+const WORKER_ROLES = new Set(["trabajador", "operante", "lider de equipo"]);
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/;

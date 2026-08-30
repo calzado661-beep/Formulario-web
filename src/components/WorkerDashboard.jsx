@@ -732,7 +732,7 @@ function liveProgressTime(value) {
   }).format(date);
 }
 
-// Tarea que un jefe de equipo dejo abierta HOY para este operante. Vive al
+// Tarea que un líder de equipo dejo abierta HOY para este operante. Vive al
 // tope de "Registrar actividad", en reemplazo de la antigua pestaña
 // "Progreso en vivo": no es una lista de todo el historial, solo lo que esta
 // en curso ahora mismo, para que sea lo primero que se ve al entrar.
@@ -774,7 +774,7 @@ function TodayLeaderTaskCard({ user, onUse }) {
   if (!loaded || !activities.length) return null;
 
   return (
-    <Panel title="Tu jefe de equipo te registro esto hoy" eyebrow="Datos para completar" className="today-leader-task-panel">
+    <Panel title="Tu líder de equipo te registro esto hoy" eyebrow="Datos para completar" className="today-leader-task-panel">
       <div className="today-leader-task-grid">
         {activities.map((activity) => (
           <article className="today-leader-task-card" key={activity.id}>
@@ -790,7 +790,7 @@ function TodayLeaderTaskCard({ user, onUse }) {
               <div><dt>Hangtag</dt><dd>{activity.tipo_etiquetado || "No aplica"}</dd></div>
             </dl>
             <small>
-              Registrada por {activity.encargado_nombre || "tu jefe de equipo"} · inicio{" "}
+              Registrada por {activity.encargado_nombre || "tu líder de equipo"} · inicio{" "}
               {liveProgressTime(activity.hora_inicio || activity.horaInicio)} · {activity.estado === "EN_CURSO" ? "En curso" : "Cerrada por el jefe"}
             </small>
             <Button type="button" variant="secondary" onClick={() => onUse(activity)}>Usar estos datos</Button>

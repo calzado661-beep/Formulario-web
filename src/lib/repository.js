@@ -226,7 +226,7 @@ export async function selectUsers() {
 
 export async function listWorkers() {
   const users = await selectUsers();
-  return users.filter((user) => ["trabajador", "operante", "jefe de equipo"].includes(normalizeRole(user.rol)));
+  return users.filter((user) => ["trabajador", "operante", "lider de equipo"].includes(normalizeRole(user.rol)));
 }
 
 export async function listAssignableWorkers() {
@@ -236,7 +236,7 @@ export async function listAssignableWorkers() {
 
 export async function listOperantesAndTeamLeads() {
   const users = await selectUsers();
-  return users.filter((user) => ["operante", "jefe de equipo"].includes(normalizeRole(user.rol)));
+  return users.filter((user) => ["operante", "lider de equipo"].includes(normalizeRole(user.rol)));
 }
 
 export async function verifyUser(email, password) {
@@ -496,13 +496,13 @@ export async function getTasksForUser(user) {
   const role = normalizeRole(user?.rol);
   const tasks = (await listTasks()).filter((task) => isActiveValue(task.activo) && task.es_operativa === true);
 
-  if (!["trabajador", "operante", "jefe de equipo", "jefe de grupo"].includes(role)) {
+  if (!["trabajador", "operante", "lider de equipo", "jefe de grupo"].includes(role)) {
     return tasks;
   }
 
   // Las tareas por tiempo tambien se registran como actividad normal: ahi no se
   // pide ningun dato de tiempo, solo la cantidad y los campos de la tarea. El
-  // tiempo se carga aparte, en el registro del jefe de equipo.
+  // tiempo se carga aparte, en el registro del líder de equipo.
   const roleTasks = tasks;
 
   const assignedTasks = roleTasks.filter((task) => {

@@ -204,7 +204,7 @@ function RankingDashboard({ user }) {
   const records = data.records || [];
   // Union de todos los que el servidor conoce: operantes, jefes y cualquier
   // otro usuario que haya quedado como trabajador de un registro (por
-  // ejemplo, un jefe de equipo que hizo la tarea el mismo).
+  // ejemplo, un líder de equipo que hizo la tarea el mismo).
   const peopleById = useMemo(() => {
     const map = new Map();
     (data.allUsers || []).forEach((item) => map.set(String(item.id), item));
@@ -245,7 +245,7 @@ function RankingDashboard({ user }) {
       if (!person) continue;
       if (!includeInactive && !person.activo) continue;
       const personRole = normalizeRole(person.rol);
-      if (peopleScope === "operantes" && !["operante", "jefe de equipo", "jefe de grupo"].includes(personRole)) continue;
+      if (peopleScope === "operantes" && !["operante", "lider de equipo", "jefe de grupo"].includes(personRole)) continue;
       const cantidad = Number(record.cantidad || 0);
       const minutos = Number(record.tiempo_minutos || 0);
       if (cantidad <= 0 || minutos <= 0) continue;
@@ -327,7 +327,7 @@ function RankingDashboard({ user }) {
         {error ? <Alert type="error">{error}</Alert> : null}
         <Alert>
           El rendimiento se calcula como cantidad total entre tiempo total, expresado por hora, sobre las tareas de
-          jefe de equipo que registran cantidad y tiempo. Incluye a jefes que hicieron la tarea ellos mismos. Por
+          líder de equipo que registran cantidad y tiempo. Incluye a jefes que hicieron la tarea ellos mismos. Por
           defecto se muestra el mes actual, operantes y jefes activos: ajusta los filtros para verlo distinto.
         </Alert>
         <div className="history-toolbar">
@@ -624,7 +624,7 @@ function IncidentDashboard({ user }) {
     Panel,
     {
       title: "Registrar incidencia",
-      eyebrow: "Jefe de equipo",
+      eyebrow: "Líder de equipo",
       actions: /* @__PURE__ */ React.createElement(Button, { variant: "secondary", icon: RefreshCcw, onClick: reload }, "Actualizar")
     },
     loading ? /* @__PURE__ */ React.createElement(LoadingBlock, null) : null,
@@ -745,7 +745,7 @@ function GroupTimeDashboard({ user }) {
   }
   // Las tareas con hangtag (hoy, Etiquetado) muestran dos campos -con y sin
   // hangtag- porque rinden a ritmos distintos y no son comparables entre si;
-  // el resto de tareas de jefe de equipo muestra un solo campo.
+  // el resto de tareas de líder de equipo muestra un solo campo.
   const averageFields = useMemo(() => tasks.flatMap((task) => {
     const title = getTaskTitle(task) || `Tarea ${task.id}`;
     if (getTaskFieldFlags(task).hangtag) {
@@ -950,7 +950,7 @@ function GroupTimeDashboard({ user }) {
       setRowSaving(false);
     }
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "group-dashboard stack" }, /* @__PURE__ */ React.createElement("section", { className: "group-hero" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "eyebrow" }, user.rol || "Jefe de equipo"), /* @__PURE__ */ React.createElement("h2", null, "Control de tareas por tiempo"), /* @__PURE__ */ React.createElement("span", null, user.nombre || user.email)), /* @__PURE__ */ React.createElement("div", { className: "group-metrics", "aria-label": "Resumen de registros" }, /* @__PURE__ */ React.createElement(MetricTile, { icon: ClipboardCheck, label: "Mis registros", value: metrics.total }), /* @__PURE__ */ React.createElement(MetricTile, { icon: Timer, label: "Registros hoy", value: metrics.today }), /* @__PURE__ */ React.createElement(MetricTile, { icon: UserRound, label: "Operantes", value: metrics.workers }), /* @__PURE__ */ React.createElement(MetricTile, { icon: Hash, label: "Cantidad total", value: formatNumber(metrics.quantity) }))), status ? /* @__PURE__ */ React.createElement(Alert, { type: status.type }, status.message) : null, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "group-dashboard stack" }, /* @__PURE__ */ React.createElement("section", { className: "group-hero" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "eyebrow" }, user.rol || "Líder de equipo"), /* @__PURE__ */ React.createElement("h2", null, "Control de tareas por tiempo"), /* @__PURE__ */ React.createElement("span", null, user.nombre || user.email)), /* @__PURE__ */ React.createElement("div", { className: "group-metrics", "aria-label": "Resumen de registros" }, /* @__PURE__ */ React.createElement(MetricTile, { icon: ClipboardCheck, label: "Mis registros", value: metrics.total }), /* @__PURE__ */ React.createElement(MetricTile, { icon: Timer, label: "Registros hoy", value: metrics.today }), /* @__PURE__ */ React.createElement(MetricTile, { icon: UserRound, label: "Operantes", value: metrics.workers }), /* @__PURE__ */ React.createElement(MetricTile, { icon: Hash, label: "Cantidad total", value: formatNumber(metrics.quantity) }))), status ? /* @__PURE__ */ React.createElement(Alert, { type: status.type }, status.message) : null, /* @__PURE__ */ React.createElement(
     Panel,
     {
       title: "Iniciar registro de tarea",

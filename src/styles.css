@@ -4077,7 +4077,7 @@ tbody tr:hover {
   gap: 1rem;
 }
 
-/* Tarjeta de la tarea que el jefe de equipo dejo abierta hoy, arriba de
+/* Tarjeta de la tarea que el líder de equipo dejo abierta hoy, arriba de
    "Registrar lo realizado". */
 .today-leader-task-panel {
   border-color: rgba(45, 212, 191, 0.32);

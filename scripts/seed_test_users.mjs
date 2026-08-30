@@ -56,10 +56,10 @@ const usersToSeed = [
     fecha_cumpleanos: null
   },
   {
-    nombre: "Jefe de Equipo Demo",
+    nombre: "Lider de Equipo Demo",
     email: "equipo@empresa.com",
     password_hash: "Equipo123!",
-    rol: "jefe de equipo",
+    rol: "lider de equipo",
     activo: true,
     fecha_cumpleanos: null
   },

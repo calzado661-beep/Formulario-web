@@ -443,7 +443,7 @@ test("solo incluye asistentes activos con rol trabajador y respeta la seleccion"
   const database = fakeDatabase({
     usuarios: [
       { id: 8, nombre: "Ana", email: "ana@example.com", rol: "operante", activo: true },
-      { id: 9, nombre: "Luis", email: "luis@example.com", rol: "Jefe de Equipo", activo: true },
+      { id: 9, nombre: "Luis", email: "luis@example.com", rol: "Líder de Equipo", activo: true },
       { id: 10, nombre: "Inactivo", email: "inactivo@example.com", rol: "trabajador", activo: false },
       { id: 11, nombre: "Admin", email: "admin@example.com", rol: "administrador", activo: true },
       { id: 12, nombre: "Rosa", email: "rosa@example.com", rol: "TRABAJADOR", activo: true }
@@ -477,7 +477,7 @@ test("reporta como ausentes a los trabajadores activos sin asistencia puntual o 
   const database = fakeDatabase({
     usuarios: [
       { id: 8, nombre: "Ana", email: "ana@example.com", rol: "operante", activo: true },
-      { id: 9, nombre: "Luis", email: "luis@example.com", rol: "Jefe de Equipo", activo: true },
+      { id: 9, nombre: "Luis", email: "luis@example.com", rol: "Líder de Equipo", activo: true },
       { id: 12, nombre: "Rosa", email: "rosa@example.com", rol: "TRABAJADOR", activo: true }
     ],
     asistencias: [

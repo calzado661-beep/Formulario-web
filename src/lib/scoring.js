@@ -127,7 +127,7 @@ export function getTaskFieldFlags(task) {
     guia: taskFlagEnabled(task?.requiere_numero_guia),
     hangtag: taskFlagEnabled(task?.requiere_hangtag),
     tienda: taskFlagEnabled(task?.requiere_tienda),
-    // El tiempo solo lo registra el jefe de equipo: en el registro del
+    // El tiempo solo lo registra el líder de equipo: en el registro del
     // operante este campo nunca se muestra.
     tiempo: taskFlagEnabled(task?.requiere_tiempo)
   };
@@ -147,7 +147,7 @@ export function getTaskRequiredFlags(task) {
   };
 }
 
-// Una tarea pertenece al registro por tiempo del jefe de equipo cuando su
+// Una tarea pertenece al registro por tiempo del líder de equipo cuando su
 // bandera `requiere_tiempo` esta activa.
 export function isGroupLeaderTimeTask(task) {
   return taskFlagEnabled(task?.requiere_tiempo);

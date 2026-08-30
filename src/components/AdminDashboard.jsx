@@ -91,7 +91,7 @@ import {
   TextInput
 } from "./ui";
 
-const roleOptions = ["administrador", "operante", "jefe de equipo", "jefe de grupo", "otros"];
+const roleOptions = ["administrador", "operante", "lider de equipo", "jefe de grupo", "otros"];
 const taskTypes = ["cantidad", "fijo", "turno", "tiempo"];
 const trainingStatusOptions = [
   { value: "pendiente", label: "Pendiente" },
@@ -1398,6 +1398,7 @@ function BulkTrainingPanel({ users }) {
   const [statusFilter, setStatusFilter] = useState("activos");
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [successDialog, setSuccessDialog] = useState(null);
 
   const { data: courseStatusData, loading: courseStatusLoading, reload: reloadCourseStatus } = useAsyncData(
     () => (courseId ? getTrainingStatusByCourse(courseId) : Promise.resolve(null)),
@@ -1466,6 +1467,7 @@ function BulkTrainingPanel({ users }) {
         type: "success",
         message: `${result.updated} trabajador(es) quedaron con ${courseId} en "${trainingStatusLabel(estado).toLowerCase()}" (encargado: ${encargado}).`
       });
+      setSuccessDialog({ updated: result.updated, courseId, estado });
       setSelectedIds(new Set());
       reloadCourseStatus();
     } catch (err) {
@@ -1565,6 +1567,38 @@ function BulkTrainingPanel({ users }) {
       <div className="form-actions">
         <Button icon={Save} loading={saving} onClick={handleApply}>Aplicar a {selectedIds.size} trabajador(es)</Button>
       </div>
+
+      {successDialog ? (
+        <div className="save-success-overlay" role="presentation">
+          <section
+            className="save-success-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="training-success-title"
+            aria-describedby="training-success-description"
+          >
+            <div className="save-success-icon" aria-hidden="true">
+              <CheckCircle2 />
+            </div>
+            <div className="save-success-copy">
+              <p className="eyebrow">Proceso completado</p>
+              <h2 id="training-success-title">¡Capacitación guardada correctamente!</h2>
+              <p id="training-success-description">
+                {successDialog.updated} trabajador{successDialog.updated === 1 ? "" : "es"} quedaron con{" "}
+                {successDialog.courseId} en "{trainingStatusLabel(successDialog.estado).toLowerCase()}".
+              </p>
+            </div>
+            <Button
+              type="button"
+              className="save-success-confirm"
+              autoFocus
+              onClick={() => setSuccessDialog(null)}
+            >
+              OK, continuar
+            </Button>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1974,7 +2008,7 @@ function TaskForm({ form, setForm, onSubmit, saving, submitLabel }) {
         />
         <CheckboxInput label="Tarea activa" checked={form.activo} onChange={(activo) => setForm({ ...form, activo })} />
         <TaskFieldControl form={form} setForm={setForm} label="Marca" requestedKey="requiere_marca" requiredKey="obligatorio_marca" />
-        <TaskFieldControl form={form} setForm={setForm} label="Tiempo" requestedKey="requiere_tiempo" requiredKey="obligatorio_tiempo" hint="Solo el jefe de equipo registra el tiempo de estas tareas." />
+        <TaskFieldControl form={form} setForm={setForm} label="Tiempo" requestedKey="requiere_tiempo" requiredKey="obligatorio_tiempo" hint="Solo el líder de equipo registra el tiempo de estas tareas." />
         <TaskFieldControl form={form} setForm={setForm} label="Lote" requestedKey="requiere_lote" requiredKey="obligatorio_lote" />
         <TaskFieldControl form={form} setForm={setForm} label="Número de guía" requestedKey="requiere_numero_guia" requiredKey="obligatorio_numero_guia" />
         <TaskFieldControl form={form} setForm={setForm} label="Hangtag" requestedKey="requiere_hangtag" requiredKey="obligatorio_hangtag" hint="Muestra el selector con hangtag / sin hangtag." />
@@ -3989,7 +4023,7 @@ function LotesPanel() {
   const [selectedId, setSelectedId] = useState("");
   const [form, setForm] = useState(emptyLoteForm);
 
-  const teamLeaders = users.filter((user) => normalizeRole(user.rol) === "jefe de equipo" && boolValue(user.activo));
+  const teamLeaders = users.filter((user) => normalizeRole(user.rol) === "lider de equipo" && boolValue(user.activo));
   const selectedLote = lotes.find((lote) => String(lote.id) === String(selectedId));
 
   useEffect(() => {
@@ -4013,7 +4047,7 @@ function LotesPanel() {
     if (!form.marca_id) return "Selecciona una marca.";
     if (!form.fecha_ingreso) return "Selecciona una fecha de ingreso.";
     if (!form.proveedor.trim()) return "El proveedor es obligatorio.";
-    if (!form.usuario_id) return "Selecciona el jefe de equipo responsable del lote.";
+    if (!form.usuario_id) return "Selecciona el líder de equipo responsable del lote.";
     if (!LOTE_ESTADOS.some((option) => option.value === form.estado)) return "Selecciona un estado valido.";
     return null;
   }
@@ -4101,7 +4135,7 @@ function LotesPanel() {
       "Fecha de ingreso": formatDateLima(lote.fecha_ingreso),
       "Días": days === null ? null : `${days} día${days === 1 ? "" : "s"}`,
       Proveedor: lote.proveedor,
-      "Jefe de equipo": lote.usuario_nombre
+      "Líder de equipo": lote.usuario_nombre
     };
   });
 
@@ -4117,7 +4151,7 @@ function LotesPanel() {
         ) : (
           <DataTable
             rows={rows}
-            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Días", "Proveedor", "Jefe de equipo"]}
+            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Días", "Proveedor", "Líder de equipo"]}
             onRowClick={(row) => {
               setSelectedId(String(row.id));
               setTab("Editar");
@@ -4170,11 +4204,11 @@ function LotesPanel() {
               />
               <TextInput label="Proveedor" value={form.proveedor} onChange={(proveedor) => setForm({ ...form, proveedor })} />
               <SelectInput
-                label="Jefe de equipo"
+                label="Líder de equipo"
                 value={form.usuario_id}
                 onChange={(usuario_id) => setForm({ ...form, usuario_id })}
                 options={[
-                  { value: "", label: teamLeaders.length ? "Selecciona un jefe de equipo" : "No hay jefes de equipo activos" },
+                  { value: "", label: teamLeaders.length ? "Selecciona un líder de equipo" : "No hay líderes de equipo activos" },
                   ...teamLeaders.map((leader) => ({ value: String(leader.id), label: leader.nombre || leader.email }))
                 ]}
               />
@@ -4201,6 +4235,7 @@ const GUIA_MESES = [
 ];
 const GUIA_DATE_HEADER = "ESTADO";
 const GUIA_CODE_HEADER = "TDA ORIGEN";
+const GUIA_NISSEI_HEADER = "CODIGO NISSEI";
 const GUIA_ITEM_BATCH_SIZE = 1000;
 
 function guiaColLetter(ref) {
@@ -4322,8 +4357,9 @@ async function parseGuiasWorkbook(file) {
   });
   const dateCol = headerCols.find((col) => headerByCol[col] === GUIA_DATE_HEADER);
   const codeCol = headerCols.find((col) => headerByCol[col] === GUIA_CODE_HEADER);
-  if (!dateCol || !codeCol) {
-    throw new Error(`No se encontraron las columnas "${GUIA_DATE_HEADER}" y "${GUIA_CODE_HEADER}" en el archivo.`);
+  const nisseiCol = headerCols.find((col) => headerByCol[col] === GUIA_NISSEI_HEADER);
+  if (!dateCol || !codeCol || !nisseiCol) {
+    throw new Error(`No se encontraron las columnas "${GUIA_DATE_HEADER}", "${GUIA_CODE_HEADER}" y "${GUIA_NISSEI_HEADER}" en el archivo.`);
   }
 
   const guidesByCode = new Map();
@@ -4336,7 +4372,8 @@ async function parseGuiasWorkbook(file) {
     });
     const codigo = String(valuesByCol[codeCol] || "").trim();
     const fecha = guiaExcelSerialToISODate(valuesByCol[dateCol]);
-    if (!codigo || !fecha) continue;
+    const nissei = String(valuesByCol[nisseiCol] || "").trim().toUpperCase();
+    if (!codigo || !fecha || nissei !== "CD") continue;
     if (!guidesByCode.has(codigo)) guidesByCode.set(codigo, fecha);
 
     const datos = {};
@@ -4440,7 +4477,7 @@ function GuiasPanel() {
       if (!guides.length) {
         setImportStatus({
           type: "error",
-          message: `No se encontraron guias validas en el archivo. Verifica que tenga las columnas "${GUIA_DATE_HEADER}" y "${GUIA_CODE_HEADER}".`
+          message: `No se encontraron guias validas en el archivo. Verifica que tenga las columnas "${GUIA_DATE_HEADER}", "${GUIA_CODE_HEADER}" y "${GUIA_NISSEI_HEADER}", y que existan filas con "${GUIA_NISSEI_HEADER}" = CD.`
         });
         return;
       }
@@ -4548,7 +4585,8 @@ function GuiasPanel() {
       <Panel title="Importar guias" eyebrow="Reporte de salidas">
         <Alert>
           Sube el Excel de salidas (por ejemplo "Salidas 2026 enero.xlsx"). Cada guia se identifica por su codigo en
-          la columna "{GUIA_CODE_HEADER}" y su fecha se toma de la columna "{GUIA_DATE_HEADER}". Tambien se guarda
+          la columna "{GUIA_CODE_HEADER}" y su fecha se toma de la columna "{GUIA_DATE_HEADER}". Solo se toman en
+          cuenta las filas donde "{GUIA_NISSEI_HEADER}" sea CD; el resto se ignora. Tambien se guarda
           cada linea de producto de la guia, con todas las demas columnas del archivo. Puedes importar el mismo
           archivo mas de una vez o archivos de distintos meses: lo que ya existe no se sobrescribe ni se duplica,
           solo se agrega lo que falte.

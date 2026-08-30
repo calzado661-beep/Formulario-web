@@ -144,7 +144,7 @@ const INDICATORS = [
 
 const ROLE_OPTIONS = [
   { value: "administrador", label: "Administrador", active: 1 },
-  { value: "jefe de equipo", label: "Jefe de equipo", active: 2 },
+  { value: "lider de equipo", label: "Líder de equipo", active: 2 },
   { value: "operante", label: "Operante", active: 9 },
   { value: "otros", label: "Otros", active: 3 }
 ];
@@ -1601,7 +1601,7 @@ function HourlyRankingRecordsModal({ workerName, taskName, periodLabel, unit, ro
       <section className="pbi-ranking-records-dialog">
         <header className="pbi-ranking-records-header">
           <div>
-            <span className="pbi-card-eyebrow">Registros de jefe de equipo</span>
+            <span className="pbi-card-eyebrow">Registros de líder de equipo</span>
             <h2 id="pbi-ranking-records-title">{workerName}</h2>
             <p>{taskName} · {periodLabel} · {numberFormatter.format(rows.length)} registros</p>
           </div>
@@ -1998,7 +1998,7 @@ export default function FootwearDashboard() {
     matchesProductionDate(row.date)
     && matchesGlobalWorker(row.workerId)
     && (!selectedProductionRoles.length || selectedProductionRoles.includes(workerById.get(Number(row.workerId))?.role))
-    && ["operante", "jefe de equipo"].includes(workerById.get(Number(row.workerId))?.role)
+    && ["operante", "lider de equipo"].includes(workerById.get(Number(row.workerId))?.role)
     && (globalIncludeInactiveWorkers || workerById.get(Number(row.workerId))?.active)
     && allowedTaskIds.has(row.taskId)
   ));
@@ -2008,7 +2008,7 @@ export default function FootwearDashboard() {
     .filter((row) => operationalTaskIds.has(Number(row.taskId)))
     .map((row) => Number(row.workerId)));
   const eligibleProductionWorkers = WORKERS.filter((worker) => (
-    ["operante", "jefe de equipo"].includes(worker.role)
+    ["operante", "lider de equipo"].includes(worker.role)
     && (!selectedProductionRoles.length || selectedProductionRoles.includes(worker.role))
     && (globalIncludeInactiveWorkers || worker.active)
     && operationalWorkerIds.has(Number(worker.id))
@@ -2018,7 +2018,7 @@ export default function FootwearDashboard() {
     .map((type) => ({ value: type, label: type }));
   const productionRoleOptions = [
     { value: "operante", label: "Operante" },
-    { value: "jefe de equipo", label: "Jefe de equipo" }
+    { value: "lider de equipo", label: "Líder de equipo" }
   ];
   const operationalTaskOptions = OPERATIONAL_TASKS
     .filter((task) => !selectedTaskTypes.length || selectedTaskTypes.includes(task.type))
@@ -2176,7 +2176,7 @@ export default function FootwearDashboard() {
         lote: row.lote || "—",
         brand: row.brandId ? brandById.get(Number(row.brandId)) || `Marca ${row.brandId}` : "—",
         observation: row.observation || "—",
-        source: row.source === "jefe-equipo" ? "Jefe de equipo" : "Operante"
+        source: row.source === "jefe-equipo" ? "Líder de equipo" : "Operante"
       };
     });
   const averageActivities = visibleActivities;
@@ -2283,6 +2283,7 @@ export default function FootwearDashboard() {
     && matchesGlobalWorker(row.workerId)
     && (!trainingCourseIds.length || trainingCourseIds.includes(Number(row.trainingId)))
     && (!trainingStatuses.length || trainingStatuses.includes(normalizeTrainingStatus(row.state)))
+    && (globalIncludeInactiveWorkers || workerById.get(Number(row.workerId))?.active)
   ));
   const filteredTrainingProgress = [...visibleAssignments.reduce((totals, assignment) => {
     const worker = workerById.get(assignment.workerId);
@@ -2455,8 +2456,8 @@ export default function FootwearDashboard() {
   }, [lotes.map((lot) => lot.code).join("|")]);
   const selectedLot = lotes.find((lot) => lot.code === selectedLotCode);
   const etiquetadoTaskId = TASK_CATALOG.find((task) => String(task.name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim() === "etiquetado")?.id;
-  // El avance del lote solo suma lo registrado por jefes de equipo: en
-  // Etiquetado, el operante y el jefe de equipo hacen el mismo trabajo, y
+  // El avance del lote solo suma lo registrado por líderes de equipo: en
+  // Etiquetado, el operante y el líder de equipo hacen el mismo trabajo, y
   // sumar ambos duplicaria las cantidades sobre el mismo lote.
   const labeledPairsInLot = (dashboardData?.activities || []).filter((row) => (
     Number(row.taskId) === Number(etiquetadoTaskId)
@@ -2472,7 +2473,7 @@ export default function FootwearDashboard() {
   // "Incluir trabajadores inactivos" este marcado.
   const activeWorkers = peopleWorkers;
   const operantCount = activeWorkers.filter((worker) => worker.role === "operante").length;
-  const teamLeadCount = activeWorkers.filter((worker) => worker.role === "jefe de equipo").length;
+  const teamLeadCount = activeWorkers.filter((worker) => worker.role === "lider de equipo").length;
   const groupLeadCount = activeWorkers.filter((worker) => worker.role === "jefe de grupo").length;
   const latestAttendanceDate = (dashboardData?.attendances || []).map((row) => row.date).filter(Boolean).sort().at(-1);
   const attendanceForWorkers = (workers) => (dashboardData?.attendances || []).filter((row) => (
@@ -2482,14 +2483,14 @@ export default function FootwearDashboard() {
     else summary.present += 1;
     return summary;
   }, { present: 0, absent: 0 });
-  const operationalWorkers = activeWorkers.filter((worker) => ["operante", "jefe de equipo", "jefe de grupo"].includes(worker.role));
-  const administrativeWorkers = activeWorkers.filter((worker) => !["operante", "jefe de equipo", "jefe de grupo"].includes(worker.role));
+  const operationalWorkers = activeWorkers.filter((worker) => ["operante", "lider de equipo", "jefe de grupo"].includes(worker.role));
+  const administrativeWorkers = activeWorkers.filter((worker) => !["operante", "lider de equipo", "jefe de grupo"].includes(worker.role));
   const personnelKpis = [
     { label: "Total Trabajadores", value: activeWorkers.length, detail: latestAttendanceDate ? `Estado al ${formatCalendarDate(latestAttendanceDate)}` : "Sin asistencia registrada", attendance: attendanceForWorkers(activeWorkers) },
     {
       label: "Total Operantes",
       value: operantCount + teamLeadCount + groupLeadCount,
-      detail: `${operantCount} operantes · ${teamLeadCount} jefes de equipo${groupLeadCount ? ` · ${groupLeadCount} jefes de grupo` : ""}`
+      detail: `${operantCount} operantes · ${teamLeadCount} líderes de equipo${groupLeadCount ? ` · ${groupLeadCount} jefes de grupo` : ""}`
       , attendance: attendanceForWorkers(operationalWorkers)
     },
     { label: "Total Administrativo", value: administrativeWorkers.length, attendance: attendanceForWorkers(administrativeWorkers) }
@@ -2833,7 +2834,7 @@ export default function FootwearDashboard() {
                   className="pbi-card--chart pbi-card--ranking pbi-card--span-6"
                 >
                   <div className="pbi-ranking-task-filter">
-                    <label htmlFor="pbi-hourly-ranking-task">Tarea de jefe de equipo</label>
+                    <label htmlFor="pbi-hourly-ranking-task">Tarea de líder de equipo</label>
                     <select id="pbi-hourly-ranking-task" value={effectiveHourlyTaskId || ""} onChange={(event) => setHourlyRankingTaskId(event.target.value)}>
                       {timedRankingTasks.map((task) => <option key={task.id} value={task.id}>{task.shortName}</option>)}
                     </select>

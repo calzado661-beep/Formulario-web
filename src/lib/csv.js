@@ -1,4 +1,4 @@
-// Exportador de CSV compartido por las tablas de historial (jefe de equipo y
+// Exportador de CSV compartido por las tablas de historial (líder de equipo y
 // registro normal): mismas comillas/escapes y mismo BOM para que Excel abra
 // el archivo directo, sin tener que reimplementarlo en cada pantalla.
 

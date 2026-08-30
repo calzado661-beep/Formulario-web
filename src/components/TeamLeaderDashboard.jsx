@@ -134,12 +134,12 @@ function IncidentPanel({ user }) {
 
   return (
     <div className="stack">
-      <Panel title="Reportar incidencias" eyebrow="Jefe de equipo" actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
+      <Panel title="Reportar incidencias" eyebrow="Líder de equipo" actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
         {loading ? <LoadingBlock /> : null}
         {error ? <Alert type="error">{error}</Alert> : null}
         {status ? <Alert type={status.type}>{status.message}</Alert> : null}
         {!loading && !(data.tiendas || []).length ? <Alert>Aun no hay tiendas registradas.</Alert> : null}
-        {!loading && !(data.users || []).length ? <Alert>No hay usuarios operantes o jefes de equipo para seleccionar.</Alert> : null}
+        {!loading && !(data.users || []).length ? <Alert>No hay usuarios operantes o líderes de equipo para seleccionar.</Alert> : null}
 
         <form className="form-grid" onSubmit={handleSubmit}>
           <SelectInput

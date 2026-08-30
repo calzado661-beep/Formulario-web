@@ -1561,7 +1561,7 @@ async function handleReadFootwearDashboard(request, response) {
   }
 }
 
-// Una tarea es del registro por tiempo del jefe de equipo segun su bandera en
+// Una tarea es del registro por tiempo del líder de equipo segun su bandera en
 // la tabla `tarea`, no por su nombre.
 function isGroupLeaderTimeTask(task) {
   return getTaskFieldFlags(task).tiempo;
@@ -1622,11 +1622,11 @@ async function selectTaskScoreRanges(taskId = null) {
   return result.data || [];
 }
 
-// Las actividades por tiempo que registra un jefe de equipo a nombre de un
+// Las actividades por tiempo que registra un líder de equipo a nombre de un
 // operante viven en una tabla aparte. Se muestran en el historial del
 // operante puntuadas con las mismas reglas de "Configuracion de puntajes"
 // que usa cualquier otra tarea (segun cantidad); el tiempo registrado por el
-// jefe de equipo es solo informativo y no participa en el calculo.
+// líder de equipo es solo informativo y no participa en el calculo.
 async function selectGroupLeaderActivityLogsForWorker(workerId) {
   const result = await selectGroupLeaderRecordRows((query) =>
     query.eq("trabajador_id", workerId).order("created_at", { ascending: false })
@@ -1977,7 +1977,7 @@ async function handleDeleteTaskScoreRanges(request, response) {
 
 async function handleReadStores(request, response) {
   try {
-    if (!requireSessionRole(request, response, ["administrador", "operante", "jefe de equipo", "jefe de grupo"])) return;
+    if (!requireSessionRole(request, response, ["administrador", "operante", "lider de equipo", "jefe de grupo"])) return;
     const result = await supabase.from("tiendas").select("*").order("id", { ascending: true });
     if (result.error) throw result.error;
     sendJson(response, 200, { stores: result.data || [] });
@@ -2079,7 +2079,7 @@ async function enrichLotes(rows) {
 
 async function handleReadLotes(request, response) {
   try {
-    if (!requireSessionRole(request, response, ["administrador", "operante", "jefe de equipo", "jefe de grupo"])) return;
+    if (!requireSessionRole(request, response, ["administrador", "operante", "lider de equipo", "jefe de grupo"])) return;
     const result = await supabase.from("lotes").select(LOTE_SELECT_COLUMNS).order("id", { ascending: false });
     if (result.error) throw result.error;
     sendJson(response, 200, { lotes: await enrichLotes(result.data || []) });
@@ -2109,7 +2109,7 @@ function validateLotePayload(body) {
   if (!Number.isInteger(marcaId) || marcaId <= 0) throw invalidLote("Selecciona una marca.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaIngreso)) throw invalidLote("Selecciona una fecha de ingreso valida.");
   if (!proveedor) throw invalidLote("El proveedor es obligatorio.");
-  if (!Number.isInteger(usuarioId) || usuarioId <= 0) throw invalidLote("Selecciona el jefe de equipo responsable del lote.");
+  if (!Number.isInteger(usuarioId) || usuarioId <= 0) throw invalidLote("Selecciona el líder de equipo responsable del lote.");
   if (!LOTE_ESTADOS.includes(estado)) throw invalidLote("El estado del lote no es valido.");
   return {
     codigo_lote: codigoLote,
@@ -2125,8 +2125,8 @@ function validateLotePayload(body) {
 async function validateLoteResponsible(usuarioId) {
   const result = await supabase.from("usuarios").select("id,rol,activo").eq("id", usuarioId).maybeSingle();
   if (result.error) throw result.error;
-  if (!result.data || normalizeRole(result.data.rol) !== "jefe de equipo" || !isActive(result.data.activo)) {
-    throw invalidLote("Selecciona un jefe de equipo activo y valido.");
+  if (!result.data || normalizeRole(result.data.rol) !== "lider de equipo" || !isActive(result.data.activo)) {
+    throw invalidLote("Selecciona un líder de equipo activo y valido.");
   }
 }
 
@@ -3247,7 +3247,7 @@ async function handleSendActivityReport(request, response, configId = 1) {
 
 async function handleReadActivityLogs(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["administrador", "operante", "jefe de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["administrador", "operante", "lider de equipo", "jefe de grupo"]);
     if (!session) return;
     const url = new URL(request.url, `http://${request.headers.host}`);
     const workerId = url.searchParams.get("workerId");
@@ -3263,7 +3263,7 @@ async function handleReadActivityLogs(request, response) {
 
 async function handleCreateActivityLog(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["operante", "jefe de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["operante", "lider de equipo", "jefe de grupo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const submittedTime = body.tiempo_minutos ?? body.dato_extra;
@@ -3303,7 +3303,7 @@ async function handleCreateActivityLog(request, response) {
     const allowsGuideNumber = taskFields.guia;
     const allowsLote = taskFields.lote;
     if (isTimeTask && body.tiempo_minutos !== null && body.tiempo_minutos !== undefined && body.tiempo_minutos !== "") {
-      sendJson(response, 403, { error: "El operante no puede registrar el tiempo. Debe hacerlo el jefe de equipo." });
+      sendJson(response, 403, { error: "El operante no puede registrar el tiempo. Debe hacerlo el líder de equipo." });
       return;
     }
     const brandItems = normalizedBrandItems(body.marcas);
@@ -3477,7 +3477,7 @@ const GROUP_RECORD_COLUMNS_BASE =
 
 // marca_id/tienda_id solo existen despues de aplicar sql/024. Hasta entonces,
 // esta consulta cae de vuelta a las columnas base para no romper el resto del
-// panel de jefe de equipo (lista de tareas, historial, etc.).
+// panel de líder de equipo (lista de tareas, historial, etc.).
 async function selectGroupLeaderRecordRows(applyFilters) {
   let query = supabase.from("registros_tareas_jefe_equipo").select(GROUP_RECORD_COLUMNS_CURRENT);
   query = applyFilters(query);
@@ -3541,7 +3541,7 @@ function enrichGroupRecords(records, users, tasks, brands = [], stores = []) {
 }
 
 // Promedio de referencia manual por tarea (sql/031): reemplaza el calculo
-// automatico anterior por tarea/hangtag. Cada tarea de jefe de equipo tiene
+// automatico anterior por tarea/hangtag. Cada tarea de líder de equipo tiene
 // su propio numero porque rinden a ritmos distintos; una tarea sin promedio
 // fijado simplemente no se compara (queda sin dato en el historial). Las
 // tareas que usan hangtag (hoy, Etiquetado) guardan un promedio separado
@@ -3586,7 +3586,7 @@ async function loadGroupLeaderData() {
   const recordTasks = (tasksResult.data || []).filter((task) => isGroupLeaderTimeTask(task));
   const tasks = recordTasks.filter((task) => isActive(task.activo));
   const workers = users.filter((user) => normalizeRole(user.rol) === "operante" && isActive(user.activo));
-  const leaders = users.filter((user) => ["jefe de equipo", "jefe de grupo"].includes(normalizeRole(user.rol)) && isActive(user.activo));
+  const leaders = users.filter((user) => ["lider de equipo", "jefe de grupo"].includes(normalizeRole(user.rol)) && isActive(user.activo));
   const records = enrichGroupRecords(
     (recordsResult.data || []).map((record) => ({
       ...record,
@@ -3628,7 +3628,7 @@ async function loadGroupLeaderData() {
     recordTasks,
     leaders,
     // Sin filtrar por rol ni por activo: un registro puede tener como
-    // trabajador a alguien inactivo o a un jefe de equipo que hizo la tarea el
+    // trabajador a alguien inactivo o a un líder de equipo que hizo la tarea el
     // mismo. `workers`/`leaders` siguen restringidos para los selectores de
     // alta; esto es para poder mostrar y agrupar cualquier registro existente
     // (por ejemplo en el Ranking).
@@ -3653,7 +3653,7 @@ async function loadGroupLeaderData() {
 
 async function handleUpdateAverageReference(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo", "administrador"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo", "administrador"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const taskId = Number(body.tarea_id);
@@ -3707,7 +3707,7 @@ async function handleUpdateAverageReference(request, response) {
 
 async function handleGroupLeaderContext(request, response) {
   try {
-    if (!requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"])) return;
+    if (!requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"])) return;
     const data = await loadGroupLeaderData();
     sendJson(response, 200, data);
   } catch (error) {
@@ -3785,7 +3785,7 @@ async function handleWorkerLiveProgress(request, response) {
 
 async function handleCreateGroupLeaderRecordLegacy(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
     if (!session) return;
     const rawBody = await readBody(request);
     const body = JSON.parse(rawBody || "{}");
@@ -4167,7 +4167,7 @@ async function validateGroupRecordBase(body, { current = null, validateWorker = 
 
 async function handleCreateGroupLeaderRecord(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const { payload } = await validateGroupRecordBase(body);
@@ -4194,7 +4194,7 @@ async function handleCreateGroupLeaderRecord(request, response) {
 
 async function handleUpdateGroupLeaderRecord(request, response, recordId) {
   try {
-    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const currentResult = await supabase
@@ -4257,7 +4257,7 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
 
 async function handleDeleteGroupLeaderRecord(request, response, recordId) {
   try {
-    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const currentResult = await supabase
@@ -4406,7 +4406,7 @@ async function insertLiveActivityHistory(activityId, quantity, userId, type, poi
 
 async function handleCreateLiveGroupLeaderActivity(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const { task, taskId, workerId } = await validateLiveActivityContext(body);
@@ -4504,7 +4504,7 @@ async function handleCreateLiveGroupLeaderActivity(request, response) {
 
 async function handleUpdateLiveGroupLeaderActivity(request, response, activityId) {
   try {
-    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const currentResult = await supabase.from("actividades_jefe_equipo").select("*").eq("id", activityId).maybeSingle();
@@ -4657,7 +4657,7 @@ async function handleUpdateLiveGroupLeaderActivity(request, response, activityId
 
 async function handleCancelLiveGroupLeaderActivity(request, response, activityId) {
   try {
-    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
     if (!session) return;
     const currentResult = await supabase.from("actividades_jefe_equipo").select("id,encargado_id,estado,registro_tarea_id").eq("id", activityId).maybeSingle();
     if (currentResult.error) throw currentResult.error;
@@ -4725,7 +4725,7 @@ async function loadIncidentData() {
 
 async function handleIncidentContext(request, response) {
   try {
-    if (!requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"])) return;
+    if (!requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"])) return;
     sendJson(response, 200, await loadIncidentData());
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron cargar las incidencias." });
@@ -4734,7 +4734,7 @@ async function handleIncidentContext(request, response) {
 
 async function handleCreateIncident(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["jefe de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const workerId = Number(body.usuario_id);
