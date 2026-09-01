@@ -321,6 +321,19 @@ function ResetIcon() {
   );
 }
 
+function ThemeIcon({ theme }) {
+  return theme === "light" ? (
+    <svg className="pbi-button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="4.5" />
+      <path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7" />
+    </svg>
+  ) : (
+    <svg className="pbi-button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M20.2 14.6A8.7 8.7 0 0 1 9.4 3.8a8.7 8.7 0 1 0 10.8 10.8Z" />
+    </svg>
+  );
+}
+
 function SearchIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1691,10 +1704,12 @@ function MovementRecordsModal({ month, movementLabel, rows, workerById, onClose 
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [onClose]);
+  const isExit = movementLabel === "Salidas";
   const detailRows = rows.map((row) => ({
     id: row.id,
     worker: workerById.get(Number(row.workerId))?.name || `Usuario ${row.workerId}`,
     date: formatCalendarDate(row.date),
+    reason: row.reason || "Sin especificar",
     rawDate: row.date
   })).sort((a, b) => String(b.rawDate).localeCompare(String(a.rawDate)));
   return createPortal(
@@ -1712,7 +1727,8 @@ function MovementRecordsModal({ month, movementLabel, rows, workerById, onClose 
         </header>
         <DataTable caption={`${movementLabel} de personal en ${month}`} columns={[
           { key: "worker", label: "Trabajador" },
-          { key: "date", label: "Fecha" }
+          { key: "date", label: "Fecha" },
+          ...(isExit ? [{ key: "reason", label: "Motivo de salida" }] : [])
         ]} rows={detailRows} />
       </section>
     </div>,
@@ -1945,6 +1961,13 @@ export default function FootwearDashboard() {
   const dashboardRef = useRef(null);
   const dashboardRequestRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [pbiTheme, setPbiTheme] = useState(() => {
+    try {
+      return localStorage.getItem("pbiDashboardTheme") === "dark" ? "dark" : "light";
+    } catch {
+      return "light";
+    }
+  });
   const [dashboardData, setDashboardData] = useState(null);
   const [dashboardError, setDashboardError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -2028,6 +2051,22 @@ export default function FootwearDashboard() {
       document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
     };
   }, []);
+
+  // El modal de "ampliar grafico" se monta con un portal directo a document.body,
+  // fuera del arbol del shell, asi que no puede heredar el tema por CSS normal.
+  // Marcar el tema en <body> deja que tanto el shell como cualquier portal lean
+  // el mismo estado con un selector `body[data-pbi-theme="light"] .pbi-...`.
+  useEffect(() => {
+    document.body.dataset.pbiTheme = pbiTheme;
+    try {
+      localStorage.setItem("pbiDashboardTheme", pbiTheme);
+    } catch {
+      // localStorage no disponible (modo privado, etc.): el tema sigue funcionando en esta sesion.
+    }
+    return () => {
+      delete document.body.dataset.pbiTheme;
+    };
+  }, [pbiTheme]);
 
   const WORKERS = useMemo(() => dashboardData?.workers || [], [dashboardData]);
   const TASK_CATALOG = useMemo(() => (dashboardData?.tasks || []).map((task) => ({ ...task, shortName: task.name })), [dashboardData]);
@@ -2520,12 +2559,14 @@ export default function FootwearDashboard() {
   const showRotationHeadcount = globalPeriodYear !== "all";
   let filteredRotationWithHeadcount = filteredRotation;
   if (showRotationHeadcount) {
-    // Igual que Rotacion/Motivos de Salida: cuenta activos e inactivos, sin
-    // que el switch "incluir inactivos" (ni el estado actual del trabajador)
-    // afecte el conteo. Antes solo se contaban los activos de HOY, lo cual
-    // desalineaba el ancla con los movimientos (que ya incluyen inactivos).
+    // El ancla es la plantilla ACTIVA de hoy (no todos los registros
+    // historicos): WORKERS incluye a todo trabajador que alguna vez tuvo
+    // cuenta, activo o no, asi que sin este filtro el ancla queda inflada con
+    // quienes ya salieron y "personal al fin de mes" deja de representar la
+    // cantidad real de gente trabajando en ese momento.
     const rotationCurrentTotal = WORKERS.filter((worker) => (
-      matchesGlobalWorker(worker.id)
+      worker.active
+      && matchesGlobalWorker(worker.id)
       && (!selectedRoles.length || selectedRoles.includes(worker.role))
     )).length;
     const selectedYear = Math.min(Number(globalPeriodYear) || CURRENT_LIMA_YEAR, CURRENT_LIMA_YEAR);
@@ -2768,6 +2809,16 @@ export default function FootwearDashboard() {
             <button className="pbi-icon-btn" type="button" onClick={resetFilters} aria-label="Restablecer todos los filtros">
               <ResetIcon />
               <span>Restablecer</span>
+            </button>
+            <button
+              className="pbi-icon-btn"
+              type="button"
+              onClick={() => setPbiTheme((current) => (current === "light" ? "dark" : "light"))}
+              aria-pressed={pbiTheme === "light"}
+              aria-label={pbiTheme === "light" ? "Cambiar a modo oscuro" : "Cambiar a modo claro"}
+            >
+              <ThemeIcon theme={pbiTheme} />
+              <span>{pbiTheme === "light" ? "Modo claro" : "Modo oscuro"}</span>
             </button>
             <button
               className="pbi-fullscreen-btn"
