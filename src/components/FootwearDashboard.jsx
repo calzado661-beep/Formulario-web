@@ -2096,11 +2096,17 @@ export default function FootwearDashboard() {
   ];
   // No se ofrecen meses futuros del año actual: un registro con fecha mal
   // cargada (o programada a futuro, como un ingreso de personal) no deberia
-  // habilitar un mes que todavia no llega.
-  const globalAvailableMonths = [...new Set(globalPeriodRows
-    .filter((row) => globalPeriodYear === "all" || Number(String(row.date || "").slice(0, 4)) === Number(globalPeriodYear))
-    .map((row) => Number(String(row.date || "").slice(5, 7)))
-    .filter((month) => month >= 1 && month <= 12))]
+  // habilitar un mes que todavia no llega. El mes actual siempre se incluye
+  // aunque todavia no tenga ningun dato (recien empezo): si no, el <select>
+  // no encuentra su <option> y el navegador muestra "Todos los meses" aunque
+  // el filtro real siga puesto en el mes actual, confundiendo a quien lo ve.
+  const globalAvailableMonths = [...new Set([
+    ...globalPeriodRows
+      .filter((row) => globalPeriodYear === "all" || Number(String(row.date || "").slice(0, 4)) === Number(globalPeriodYear))
+      .map((row) => Number(String(row.date || "").slice(5, 7)))
+      .filter((month) => month >= 1 && month <= 12),
+    ...(globalPeriodYear === "all" || globalPeriodYear === String(CURRENT_LIMA_YEAR) ? [CURRENT_LIMA_MONTH] : [])
+  ])]
     .filter((month) => globalPeriodYear !== String(CURRENT_LIMA_YEAR) || month <= CURRENT_LIMA_MONTH)
     .sort((a, b) => a - b);
   const isCurrentMonthSelected = globalPeriodYear === String(CURRENT_LIMA_YEAR) && globalPeriodMonth === String(CURRENT_LIMA_MONTH);
