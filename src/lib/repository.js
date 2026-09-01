@@ -224,9 +224,11 @@ export async function selectUsers() {
   return ensureOk(await db().from("usuarios").select("*").order("id", { ascending: true })) || [];
 }
 
+// Usado solo por el panel de Asistencia: ahi se marca a cualquier persona
+// del sistema (incluye administradores, jefes de grupo y "otros"), no solo a
+// quienes ejecutan tareas operativas.
 export async function listWorkers() {
-  const users = await selectUsers();
-  return users.filter((user) => ["trabajador", "operante", "lider de equipo"].includes(normalizeRole(user.rol)));
+  return selectUsers();
 }
 
 export async function listAssignableWorkers() {

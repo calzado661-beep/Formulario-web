@@ -468,6 +468,22 @@ async function saveEmploymentDates(userId, dates) {
     latestIngreso && latestSalida && latestSalida.fecha_movimiento >= latestIngreso.fecha_movimiento
   );
 
+  // Reingreso: si habia un periodo cerrado (ingreso + salida) y ahora se
+  // borra la salida, es que la persona volvio a entrar, no que la salida
+  // haya sido un error. En vez de borrar ese registro (perdiendo el rastro
+  // de cuando se fue), se deja el periodo anterior intacto como historial y
+  // se agrega un ingreso nuevo para el periodo que arranca ahora. Asi el
+  // grafico de rotacion sigue mostrando la salida vieja y el reingreso.
+  if (wasClosed && !dates.salida) {
+    const reentryDate = dates.ingreso > latestSalida.fecha_movimiento ? dates.ingreso : currentLimaDate();
+    await insertPersonnelMovement({
+      usuario_id: userId,
+      tipo_movimiento: "Ingreso",
+      fecha_movimiento: reentryDate
+    });
+    return;
+  }
+
   let ingresoMovement;
   if (latestIngreso && wasClosed && dates.ingreso > latestSalida.fecha_movimiento) {
     ingresoMovement = await insertPersonnelMovement({
@@ -508,14 +524,6 @@ async function saveEmploymentDates(userId, dates) {
         motivo: dates.motivo || null
       });
     }
-  } else if (
-    latestSalida &&
-    latestIngreso &&
-    Number(ingresoMovement.id) === Number(latestIngreso.id) &&
-    latestSalida.fecha_movimiento >= latestIngreso.fecha_movimiento
-  ) {
-    const removed = await supabase.from("movimientos_personal").delete().eq("id", latestSalida.id);
-    if (removed.error) throw removed.error;
   }
 }
 
@@ -1428,6 +1436,16 @@ async function handleReadFootwearDashboard(request, response) {
       birthday: dashboardDate(user.fecha_cumpleanos)
     }));
 
+    // El indicador de cumpleanos del dashboard incluye a todos, administrador
+    // incluido, a diferencia de "workers" (que a proposito deja afuera al
+    // administrador para no contarlo en los totales de personal operativo).
+    const birthdayPeople = users.map((user) => ({
+      id: Number(user.id),
+      name: String(user.nombre || `Usuario ${user.id}`),
+      active: isActive(user.activo),
+      birthday: dashboardDate(user.fecha_cumpleanos)
+    }));
+
     const normalizeActivity = (row, source) => {
       const task = scoredTaskById.get(Number(row.tarea_id));
       const storedPoints = row.puntaje === null || row.puntaje === undefined ? null : Number(row.puntaje);
@@ -1469,6 +1487,7 @@ async function handleReadFootwearDashboard(request, response) {
       generatedAt: new Date().toISOString(),
       years: dashboardYears,
       workers: safeWorkers,
+      birthdayPeople,
       tasks: tasks.map((task) => ({
         id: Number(task.id),
         name: taskTitle(task) || `Tarea ${task.id}`,

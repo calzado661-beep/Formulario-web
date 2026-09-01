@@ -2688,12 +2688,17 @@ export default function FootwearDashboard() {
   ];
   const nextBirthdays = (() => {
     const today = new Date();
-    return peopleWorkers.filter((worker) => worker.active && worker.birthday).map((worker) => {
-      const [, month, day] = worker.birthday.split("-").map(Number);
-      let date = new Date(today.getFullYear(), month - 1, day);
-      if (date < new Date(today.getFullYear(), today.getMonth(), today.getDate())) date = new Date(today.getFullYear() + 1, month - 1, day);
-      return { ...worker, nextBirthday: date };
-    }).sort((a, b) => a.nextBirthday - b.nextBirthday).slice(0, 2);
+    // A diferencia de WORKERS (que deja afuera al administrador para no
+    // inflar los totales de personal operativo), birthdayPeople incluye a
+    // todos, asi que el administrador tambien aparece en este indicador.
+    return (dashboardData?.birthdayPeople || [])
+      .filter((person) => person.active && person.birthday && matchesGlobalWorker(person.id))
+      .map((person) => {
+        const [, month, day] = person.birthday.split("-").map(Number);
+        let date = new Date(today.getFullYear(), month - 1, day);
+        if (date < new Date(today.getFullYear(), today.getMonth(), today.getDate())) date = new Date(today.getFullYear() + 1, month - 1, day);
+        return { ...person, nextBirthday: date };
+      }).sort((a, b) => a.nextBirthday - b.nextBirthday).slice(0, 2);
   })();
 
   function closeOpenSlicers() {
