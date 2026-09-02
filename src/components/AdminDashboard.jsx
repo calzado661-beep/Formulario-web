@@ -2223,7 +2223,7 @@ const attendanceStateOptions = [
   { value: "ASISTENCIA", label: "Asistencia", abbreviation: "A" },
   { value: "TARDANZA", label: "Tardanza", abbreviation: "AT" },
   { value: "MEDIO_TURNO", label: "Medio turno", abbreviation: "MT" },
-  { value: "APOYO", label: "Apoyo", abbreviation: "TDA" },
+  { value: "APOYO", label: "Apoyo", abbreviation: "AP" },
   { value: "PERMISO", label: "Permiso", abbreviation: "P" },
   { value: "DESCANSO_MEDICO", label: "Descanso Médico", abbreviation: "DM" },
   { value: "SUSPENSION", label: "Suspensión", abbreviation: "S" }
