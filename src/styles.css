@@ -243,6 +243,7 @@ h2 {
   justify-content: space-between;
   height: 100vh;
   padding: 1rem;
+  overflow-y: auto;
   border-right: 1px solid var(--border);
   background:
     linear-gradient(180deg, rgba(10, 18, 16, 0.96), rgba(8, 12, 11, 0.94)),
@@ -250,6 +251,29 @@ h2 {
   box-shadow: 12px 0 36px rgba(0, 0, 0, 0.22);
   backdrop-filter: blur(16px);
   transition: padding 0.22s ease;
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.sidebar-top {
+  flex-shrink: 0;
+}
+
+.sidebar-logout {
+  flex-shrink: 0;
 }
 
 .sidebar-header-row {
