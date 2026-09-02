@@ -23,7 +23,7 @@ import {
   updateGroupLeaderAverageReference,
   updateGroupLeaderRecord
 } from "../lib/repository";
-import { formatDateLima, formatDateTimeLima, limaDateTimeToISO, todayLimaISO, yesterdayLimaISO } from "../lib/dates";
+import { formatDateLima, formatDateTimeLima, limaDateTimeToISO, todayLimaISO } from "../lib/dates";
 import { downloadCsv } from "../lib/csv";
 import {
   getGroupLeaderTaskMode,
@@ -170,7 +170,7 @@ function TaskAverageField({ label, value, onSave }) {
 }
 function GroupLeaderDashboard({ user }) {
   const [workspace, setWorkspace] = useState("Registrar actividad (tiempo)");
-  const tabs = ["Registrar actividad (tiempo)", "Registrar actividad normal", "Registrar incidencias", "Ranking"];
+  const tabs = ["Registrar actividad (tiempo)", "Registrar actividad normal", "Registrar errores", "Ranking"];
   return /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(
     Tabs,
     {
@@ -178,7 +178,7 @@ function GroupLeaderDashboard({ user }) {
       active: workspace,
       onChange: setWorkspace
     }
-  ), workspace === "Registrar actividad normal" ? /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(Panel, { title: "Registrar actividad normal", eyebrow: "Registro propio" }, /* @__PURE__ */ React.createElement(Alert, null, "Los registros de este apartado quedar\xE1n asociados a tu propio usuario, no al operante.")), /* @__PURE__ */ React.createElement(WorkerDashboard, { user, embedded: true })) : workspace === "Registrar actividad (tiempo)" ? /* @__PURE__ */ React.createElement(GroupTimeDashboard, { user }) : workspace === "Registrar incidencias" ? /* @__PURE__ */ React.createElement(IncidentDashboard, { user }) : /* @__PURE__ */ React.createElement(RankingDashboard, { user }));
+  ), workspace === "Registrar actividad normal" ? /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(Panel, { title: "Registrar actividad normal", eyebrow: "Registro propio" }, /* @__PURE__ */ React.createElement(Alert, null, "Los registros de este apartado quedar\xE1n asociados a tu propio usuario, no al operante.")), /* @__PURE__ */ React.createElement(WorkerDashboard, { user, embedded: true })) : workspace === "Registrar actividad (tiempo)" ? /* @__PURE__ */ React.createElement(GroupTimeDashboard, { user }) : workspace === "Registrar errores" ? /* @__PURE__ */ React.createElement(IncidentDashboard, { user }) : /* @__PURE__ */ React.createElement(RankingDashboard, { user }));
 }
 // Metrica activa del grafico de ranking: cada una sabe leer su valor de una
 // entrada ya agregada y formatearlo para la barra.
@@ -188,13 +188,21 @@ const RANKING_METRICS = {
   minutos: { label: "Minutos totales", getValue: (entry) => entry.minutos, format: (value) => formatDuration(value) || "0 min" }
 };
 
+const RANKING_MONTHS = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+];
+
 function RankingDashboard({ user }) {
+  const today = todayLimaISO();
   const [taskId, setTaskId] = useState("");
   const [topLimit, setTopLimit] = useState("5");
-  const [period, setPeriod] = useState("mes");
+  const [selectedYear, setSelectedYear] = useState(today.slice(0, 4));
+  const [selectedMonth, setSelectedMonth] = useState(today.slice(5, 7));
+  const [selectedDay, setSelectedDay] = useState("");
   const [metric, setMetric] = useState("rendimiento");
-  const [peopleScope, setPeopleScope] = useState("operantes");
-  const [includeInactive, setIncludeInactive] = useState(false);
+  const [peopleScope, setPeopleScope] = useState("juntos");
+  const [includeInactive, setIncludeInactive] = useState(true);
   const { data, loading, error, reload } = useAsyncData(
     loadGroupLeaderContext,
     [user?.id],
@@ -202,6 +210,32 @@ function RankingDashboard({ user }) {
   );
   const tasks = (data.tasks || []).filter(isGroupLeaderTimeTask);
   const records = data.records || [];
+  const recordYears = useMemo(() => [...new Set(records
+    .map((record) => String(record.fecha_registro || "").slice(0, 4))
+    .filter((year) => /^\d{4}$/.test(year)))]
+    .sort((a, b) => Number(b) - Number(a)), [records]);
+  useEffect(() => {
+    if (recordYears.length && !recordYears.includes(selectedYear)) setSelectedYear(recordYears[0]);
+  }, [recordYears, selectedYear]);
+  const dayOptions = useMemo(() => {
+    const year = Number(selectedYear);
+    const month = Number(selectedMonth);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return [];
+    const todayYear = Number(today.slice(0, 4));
+    const todayMonth = Number(today.slice(5, 7));
+    const todayDay = Number(today.slice(8, 10));
+    const monthPosition = year * 12 + month;
+    const todayPosition = todayYear * 12 + todayMonth;
+    const lastDay = monthPosition > todayPosition
+      ? 0
+      : monthPosition === todayPosition
+        ? todayDay
+        : new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return Array.from({ length: lastDay }, (_, index) => {
+      const value = String(index + 1).padStart(2, "0");
+      return { value, label: `Día ${index + 1}` };
+    });
+  }, [selectedYear, selectedMonth, today]);
   // Union de todos los que el servidor conoce: operantes, jefes y cualquier
   // otro usuario que haya quedado como trabajador de un registro (por
   // ejemplo, un líder de equipo que hizo la tarea el mismo).
@@ -216,9 +250,6 @@ function RankingDashboard({ user }) {
     });
     return map;
   }, [data.allUsers, data.workers, data.leaders]);
-  const today = todayLimaISO();
-  const yesterday = yesterdayLimaISO();
-  const currentMonth = today.slice(0, 7);
   const taskFlagsById = useMemo(
     () => new Map((data.tasks || []).map((task) => [String(task.id), getTaskFieldFlags(task)])),
     [data.tasks]
@@ -238,14 +269,16 @@ function RankingDashboard({ user }) {
       if (!taskIds.has(String(record.tarea_id))) continue;
       if (taskId && String(record.tarea_id) !== String(taskId)) continue;
       const recordDate = String(record.fecha_registro || "").slice(0, 10);
-      if (period === "dia" && recordDate !== today) continue;
-      if (period === "ayer" && recordDate !== yesterday) continue;
-      if (period === "mes" && recordDate.slice(0, 7) !== currentMonth) continue;
+      if (recordDate.slice(0, 4) !== selectedYear) continue;
+      if (recordDate.slice(5, 7) !== selectedMonth) continue;
+      if (selectedDay && recordDate.slice(8, 10) !== selectedDay) continue;
       const person = peopleById.get(String(record.trabajador_id));
       if (!person) continue;
       if (!includeInactive && !person.activo) continue;
       const personRole = normalizeRole(person.rol);
-      if (peopleScope === "operantes" && !["operante", "lider de equipo"].includes(personRole)) continue;
+      if (peopleScope === "operantes" && personRole !== "operante") continue;
+      if (peopleScope === "jefes" && personRole !== "lider de equipo") continue;
+      if (peopleScope === "juntos" && !["operante", "lider de equipo"].includes(personRole)) continue;
       const cantidad = Number(record.cantidad || 0);
       const minutos = Number(record.tiempo_minutos || 0);
       if (cantidad <= 0 || minutos <= 0) continue;
@@ -284,7 +317,7 @@ function RankingDashboard({ user }) {
       return { id: task.id, nombre: getTaskTitle(task) || `Tarea ${task.id}`, ranked };
     }).filter(Boolean);
     return { rankingByTask, hangtagAverages };
-  }, [records, tasks, peopleById, period, peopleScope, includeInactive, currentMonth, today, yesterday, taskId, taskFlagsById]);
+  }, [records, tasks, peopleById, selectedYear, selectedMonth, selectedDay, peopleScope, includeInactive, taskId, taskFlagsById]);
   const visibleRanking = taskId ? rankingByTask.filter((item) => String(item.id) === String(taskId)) : rankingByTask;
   const limit = Number(topLimit);
   return (
@@ -294,7 +327,7 @@ function RankingDashboard({ user }) {
           <div className="hangtag-summary-header">
             <p className="eyebrow">Se ajusta a los filtros de abajo</p>
             <h2>Promedio por hangtag</h2>
-            <p>Rendimiento en pares por hora, con y sin hangtag por separado. Cambia con el periodo, la tarea y "incluir inactivos" que elijas mas abajo.</p>
+            <p>Rendimiento en pares por hora, con y sin hangtag por separado. Cambia con la fecha, la tarea y "incluir inactivos" que elijas más abajo.</p>
           </div>
           <div className="hangtag-summary-grid">
             {hangtagTasks.map((task) => {
@@ -328,18 +361,37 @@ function RankingDashboard({ user }) {
         <Alert>
           El rendimiento se calcula como cantidad total entre tiempo total, expresado por hora, sobre las tareas de
           líder de equipo que registran cantidad y tiempo. Incluye a jefes que hicieron la tarea ellos mismos. Por
-          defecto se muestra el mes actual, operantes y jefes activos: ajusta los filtros para verlo distinto.
+          Por defecto se muestra el año y mes actuales, todos los días transcurridos, operantes y jefes incluyendo inactivos.
         </Alert>
         <div className="history-toolbar">
           <SelectInput
-            label="Periodo"
-            value={period}
-            onChange={setPeriod}
+            label="Año"
+            value={selectedYear}
+            onChange={(year) => {
+              setSelectedYear(year);
+              setSelectedDay("");
+            }}
+            options={recordYears.map((year) => ({ value: year, label: year }))}
+          />
+          <SelectInput
+            label="Mes"
+            value={selectedMonth}
+            onChange={(month) => {
+              setSelectedMonth(month);
+              setSelectedDay("");
+            }}
+            options={RANKING_MONTHS.map((label, index) => ({
+              value: String(index + 1).padStart(2, "0"),
+              label
+            }))}
+          />
+          <SelectInput
+            label="Día"
+            value={selectedDay}
+            onChange={setSelectedDay}
             options={[
-              { value: "dia", label: "Hoy" },
-              { value: "ayer", label: "Ayer" },
-              { value: "mes", label: "Mes actual" },
-              { value: "general", label: "Todo" }
+              { value: "", label: "Todos los días" },
+              ...dayOptions
             ]}
           />
           <SelectInput
@@ -373,8 +425,9 @@ function RankingDashboard({ user }) {
             value={peopleScope}
             onChange={setPeopleScope}
             options={[
-              { value: "operantes", label: "Operantes y jefes" },
-              { value: "todos", label: "Todos (incluye Otros)" }
+              { value: "operantes", label: "Solo operantes" },
+              { value: "jefes", label: "Solo jefes de equipo" },
+              { value: "juntos", label: "Jefes y operantes" }
             ]}
           />
           <CheckboxInput
@@ -393,7 +446,11 @@ function RankingDashboard({ user }) {
         );
         const limited = limit ? ordered.slice(0, limit) : ordered;
         return (
-          <Panel key={item.id} title={item.nombre} eyebrow={peopleScope === "todos" ? "Top de todo el personal" : "Top operantes y jefes"}>
+          <Panel
+            key={item.id}
+            title={item.nombre}
+            eyebrow={peopleScope === "operantes" ? "Top operantes" : peopleScope === "jefes" ? "Top jefes de equipo" : "Top jefes y operantes"}
+          >
             <RankingColumnChart entries={limited} metric={metric} />
           </Panel>
         );
@@ -602,7 +659,7 @@ export function IncidentDashboard({ user }) {
         observacion: form.observacion.trim() || null
       });
       setForm(initialIncidentForm);
-      setStatus({ type: "success", message: "Incidencia registrada correctamente." });
+      setStatus({ type: "success", message: "Error registrado correctamente." });
       reload();
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });
@@ -618,12 +675,12 @@ export function IncidentDashboard({ user }) {
     Tienda: incident.tienda_nombre || storeNames.get(Number(incident.tienda_id)) || incident.tienda_id,
     "Tipo de error": incident.tipo_error,
     Observaci\u00F3n: incident.observacion,
-    Turno: incident.turno
+    Turno: ["incidencia", "error"].includes(String(incident.turno || "").toLowerCase()) ? "error" : incident.turno
   }));
   return /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(
     Panel,
     {
-      title: "Registrar incidencia",
+      title: "Registrar error",
       eyebrow: "Líder de equipo",
       actions: /* @__PURE__ */ React.createElement(Button, { variant: "secondary", icon: RefreshCcw, onClick: reload }, "Actualizar")
     },
@@ -658,8 +715,8 @@ export function IncidentDashboard({ user }) {
       {
         label: "Turno",
         value: form.turno,
-        onChange: (turno) => updateForm({ turno, usuario_id: turno === "incidencia" ? "" : form.usuario_id, area_id: turno === "incidencia" ? form.area_id : "" }),
-        options: ["turno regular", "incidencia", "turno extra"]
+        onChange: (turno) => updateForm({ turno, usuario_id: turno === "error" ? "" : form.usuario_id, area_id: turno === "error" ? form.area_id : "" }),
+        options: ["turno regular", "error", "turno extra"]
       }
     ), /* @__PURE__ */ React.createElement(
       SelectInput,
@@ -707,7 +764,7 @@ export function IncidentDashboard({ user }) {
         onChange: (observacion) => updateForm({ observacion }),
         placeholder: "Detalle opcional"
       }
-    ), /* @__PURE__ */ React.createElement("div", { className: "form-span form-actions" }, /* @__PURE__ */ React.createElement(Button, { type: "submit", icon: Save, loading: saving }, "Guardar incidencia")), status ? /* @__PURE__ */ React.createElement(Alert, { type: status.type }, status.message) : null)
+    ), /* @__PURE__ */ React.createElement("div", { className: "form-span form-actions" }, /* @__PURE__ */ React.createElement(Button, { type: "submit", icon: Save, loading: saving }, "Guardar error")), status ? /* @__PURE__ */ React.createElement(Alert, { type: status.type }, status.message) : null)
   ), /* @__PURE__ */ React.createElement(Panel, { title: "Historial de errores", eyebrow: "Datos registrados" }, /* @__PURE__ */ React.createElement(DataTable, { rows, empty: "Todav\xEDa no hay errores registrados.", compact: true })));
 }
 function GroupTimeDashboard({ user }) {

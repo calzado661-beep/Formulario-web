@@ -1244,7 +1244,7 @@ export async function listErrorTasks() {
 
 export async function loadIncidentContext() {
   const apiResult = await requestLocalApi("/api/incidents/context");
-  if (!apiResult) throw new Error("El backend local debe estar activo para registrar incidencias.");
+  if (!apiResult) throw new Error("El backend local debe estar activo para registrar errores.");
   return {
     workers: apiResult.workers || [],
     tasks: apiResult.tasks || [],
@@ -1259,7 +1259,7 @@ export async function createIncident(payload) {
     method: "POST",
     body: JSON.stringify(payload)
   });
-  if (!apiResult?.incident) throw new Error("No se pudo guardar la incidencia.");
+  if (!apiResult?.incident) throw new Error("No se pudo guardar el error.");
   return apiResult.incident;
 }
 
