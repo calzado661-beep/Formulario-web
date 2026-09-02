@@ -5,6 +5,7 @@ import {
   createActivityReportSettings,
   createAmonestacion,
   createAttendanceReportSettings,
+  createBrand,
   createEncargado,
   createLote,
   createTask,
@@ -14,6 +15,7 @@ import {
   deleteActivityReportSettings,
   deleteAmonestacion,
   deleteAttendanceReportSettings,
+  deleteBrand,
   deleteLote,
   deleteTask,
   deleteTienda,
@@ -54,6 +56,7 @@ import {
   updateTask,
   updateAttendanceReportSettings,
   updateActivityReportSettings,
+  updateBrand,
   updateEncargado,
   updateLote,
   updateTienda,
@@ -75,6 +78,7 @@ import {
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
 import FootwearDashboard from "./FootwearDashboard";
+import { IncidentPanel } from "./TeamLeaderDashboard";
 import {
   Alert,
   Button,
@@ -126,8 +130,8 @@ const ADMIN_SECTION_HELP = {
     text: "Programa el envío automático por correo de reportes de asistencia y de registros de actividades, y revisa su historial de envíos."
   },
   Tiendas: {
-    title: "Tiendas",
-    text: "Catálogo de tiendas o sedes, usado al registrar tareas operativas y errores por tienda."
+    title: "Tiendas y Marcas",
+    text: "Catálogo de tiendas/sedes y de marcas (dos pestañas), usados al registrar tareas operativas, lotes y errores."
   },
   Lotes: {
     title: "Lotes",
@@ -136,6 +140,10 @@ const ADMIN_SECTION_HELP = {
   Guias: {
     title: "Guías",
     text: "Importa el reporte de salidas (Excel) para cargar las guías del mes, y consulta el catálogo de guías con su fecha y cantidad de pares. Estas guías alimentan el margen de error del dashboard."
+  },
+  Errores: {
+    title: "Errores",
+    text: "Reporta incidencias/errores por trabajador (tarea, tienda, número de guía, tipo de error) — la misma sección que usa el jefe de equipo — y consulta el historial de errores registrados."
   },
   Amonestaciones: {
     title: "Amonestaciones",
@@ -195,6 +203,7 @@ export default function AdminDashboard({ section }) {
   if (section === "Tiendas") return <><StoresPanel /><AdminHelpButton section="Tiendas" /></>;
   if (section === "Lotes") return <><LotesPanel /><AdminHelpButton section="Lotes" /></>;
   if (section === "Guias") return <><GuiasPanel /><AdminHelpButton section="Guias" /></>;
+  if (section === "Errores") return <><IncidentPanel /><AdminHelpButton section="Errores" /></>;
   if (section === "Amonestaciones") return <><WarningsPanel /><AdminHelpButton section="Amonestaciones" /></>;
   if (section === "Documentos") return <><DocumentsPanel /><AdminHelpButton section="Documentos" /></>;
   return <FootwearDashboard />;
@@ -216,7 +225,7 @@ function calculateAge(birthISO) {
   return age >= 0 ? String(age) : "";
 }
 
-const sexoOptions = ["Masculino", "Femenino", "Otro"];
+const sexoOptions = ["Hombre", "Mujer", "No especificado"];
 const estadoCivilOptions = ["Soltero(a)", "Casado(a)", "Conviviente", "Divorciado(a)", "Viudo(a)"];
 const gradoAcademicoOptions = ["Primaria", "Secundaria", "Tecnico", "Universitario", "Postgrado"];
 const tallaPoloOptions = ["S", "M", "L", "XL", "XXL"];
@@ -234,7 +243,8 @@ const personalDataFieldKeys = [
   "estado_civil",
   "hijos",
   "talla_zapatillas",
-  "talla_polo"
+  "talla_polo",
+  "alergia"
 ];
 
 function emptyPersonalDataFields() {
@@ -253,7 +263,7 @@ function PersonalDataFields({ form, setForm }) {
   return (
     <>
       <TextInput label="DNI" value={form.dni} onChange={(dni) => setForm({ ...form, dni })} maxLength={20} />
-      <SelectInput label="Sexo" value={form.sexo} onChange={(sexo) => setForm({ ...form, sexo })} options={withBlank(sexoOptions)} />
+      <SelectInput label="Sexo" value={form.sexo} onChange={(sexo) => setForm({ ...form, sexo })} options={sexoOptions.map((option) => ({ value: option, label: option }))} />
       <TextInput label="Telefono" value={form.telefono} onChange={(telefono) => setForm({ ...form, telefono })} maxLength={30} />
       <TextInput label="Telefono de emergencia" value={form.telefono_emergencia} onChange={(telefono_emergencia) => setForm({ ...form, telefono_emergencia })} maxLength={30} />
       <TextInput label="Distrito" value={form.distrito} onChange={(distrito) => setForm({ ...form, distrito })} maxLength={120} />
@@ -267,6 +277,9 @@ function PersonalDataFields({ form, setForm }) {
       <TextInput label="Numero de hijos" type="number" min="0" step="1" value={form.hijos} onChange={(hijos) => setForm({ ...form, hijos })} />
       <TextInput label="Talla de zapatillas" value={form.talla_zapatillas} onChange={(talla_zapatillas) => setForm({ ...form, talla_zapatillas })} maxLength={10} />
       <SelectInput label="Talla de polo" value={form.talla_polo} onChange={(talla_polo) => setForm({ ...form, talla_polo })} options={withBlank(tallaPoloOptions)} />
+      <div className="form-span">
+        <TextArea label="Alergia" value={form.alergia} onChange={(alergia) => setForm({ ...form, alergia })} rows={2} placeholder="Ej. Ninguna, o detalla la alergia" />
+      </div>
     </>
   );
 }
@@ -303,6 +316,7 @@ const userColumnLabels = {
   hijos: "Numero de hijos",
   talla_zapatillas: "Talla de zapatillas",
   talla_polo: "Talla de polo",
+  alergia: "Alergia",
   fecha_ingreso: "Fecha de ingreso",
   fecha_salida: "Fecha de salida",
   motivo_salida: "Motivo de salida",
@@ -399,6 +413,7 @@ function UsersPanel() {
           rol: createForm.rol,
           activo: createForm.activo,
           fecha_cumpleanos: createForm.fecha_cumpleanos || null,
+          fecha_ingreso: todayLimaISO(),
           sueldo: Number(createForm.sueldo),
           ...personalDataPayload(createForm)
         },
@@ -498,7 +513,7 @@ function UsersPanel() {
 
   const inactiveCount = users.filter((user) => !boolValue(user.activo)).length;
   const visibleUsers = showInactive ? users : users.filter((user) => boolValue(user.activo));
-  const userColumns = Array.from(new Set(visibleUsers.flatMap((user) => Object.keys(user))));
+  const userColumns = Array.from(new Set(visibleUsers.flatMap((user) => Object.keys(user)))).filter((key) => key !== "id");
   const rows = visibleUsers.map((user) => Object.fromEntries(
     userColumns.map((key) => {
       const label = userColumnLabel(key);
@@ -532,6 +547,7 @@ function UsersPanel() {
             rows={rows}
             columns={tableColumns}
             className="users-management-table"
+            pageSize={0}
             empty={showInactive ? "No hay usuarios registrados." : "No hay usuarios activos. Presiona \"Mostrar inactivos\" para verlos."}
           />
         )}
@@ -553,6 +569,7 @@ function UsersPanel() {
               value={createForm.password}
               onChange={(password) => setCreateForm({ ...createForm, password })}
             />
+            <TextInput label="Fecha de ingreso" type="date" value={todayLimaISO()} onChange={() => {}} disabled hint="Se registra automaticamente con la fecha de hoy" />
             <TextInput
               label="Fecha de nacimiento"
               type="date"
@@ -2223,11 +2240,12 @@ function AttendancePanel() {
   const [workerSearch, setWorkerSearch] = useState("");
   const [historyTab, setHistoryTab] = useState("Registros de Asistencia");
   const [historyUserId, setHistoryUserId] = useState("todos");
-  const [historyMonth, setHistoryMonth] = useState("todos");
+  const [historyMonth, setHistoryMonth] = useState(() => todayLimaISO().slice(0, 7));
   const [historyDay, setHistoryDay] = useState("todos");
   const [historyWorkerStatus, setHistoryWorkerStatus] = useState("todos");
   const [historyDateOrder, setHistoryDateOrder] = useState("desc");
   const [attendanceValues, setAttendanceValues] = useState({});
+  const [attendanceObservations, setAttendanceObservations] = useState({});
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
   const [successDialog, setSuccessDialog] = useState(null);
@@ -2264,15 +2282,23 @@ function AttendancePanel() {
 
   useEffect(() => {
     const currentMap = Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.estado || "FALTA").toUpperCase()]));
+    const observationMap = Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.observacion || "")]));
     const nextValues = {};
+    const nextObservations = {};
     (data.workers || []).forEach((worker) => {
       nextValues[worker.id] = currentMap[worker.id] || "";
+      nextObservations[worker.id] = observationMap[worker.id] || "";
     });
     setAttendanceValues(nextValues);
+    setAttendanceObservations(nextObservations);
   }, [data.current, data.workers]);
 
   const currentMarks = useMemo(
     () => Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.estado || "FALTA").toUpperCase()])),
+    [data.current]
+  );
+  const currentObservations = useMemo(
+    () => Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.observacion || "")])),
     [data.current]
   );
 
@@ -2299,6 +2325,10 @@ function AttendancePanel() {
     setAttendanceValues((current) => ({ ...current, [worker.id]: estado }));
   }
 
+  function setObservation(worker, value) {
+    setAttendanceObservations((current) => ({ ...current, [worker.id]: value }));
+  }
+
   function handleSearchKeyDown(event) {
     if (event.key !== "Enter") return;
     event.preventDefault();
@@ -2314,8 +2344,11 @@ function AttendancePanel() {
       let updated = 0;
       for (const worker of data.workers || []) {
         const estado = attendanceValues[worker.id] || "FALTA";
-        if ((currentMarks[worker.id] || "FALTA") !== estado) {
-          await markAttendance(worker.id, selectedDate, ATTENDANCE_PRESENT_STATES.has(estado), "", { estado });
+        const observacion = (attendanceObservations[worker.id] || "").trim();
+        const estadoChanged = (currentMarks[worker.id] || "FALTA") !== estado;
+        const observacionChanged = (currentObservations[worker.id] || "") !== observacion;
+        if (estadoChanged || observacionChanged) {
+          await markAttendance(worker.id, selectedDate, ATTENDANCE_PRESENT_STATES.has(estado), "", { estado, observacion });
           updated += 1;
         }
       }
@@ -2330,29 +2363,34 @@ function AttendancePanel() {
   }
 
   const allUsers = data.allUsers || [];
-  const historyPeople = allUsers.filter((user) => normalizeRole(user.rol) !== "administrador");
-  const administratorIds = new Set(
-    allUsers.filter((user) => normalizeRole(user.rol) === "administrador").map((user) => Number(user.id))
-  );
+  const historyPeople = allUsers;
   const workerById = Object.fromEntries(historyPeople.map((worker) => [worker.id, worker]));
   const workerNameById = Object.fromEntries(historyPeople.map((worker) => [worker.id, worker.nombre || worker.email]));
   const workerEmailById = Object.fromEntries(historyPeople.map((worker) => [worker.id, worker.email]));
   const historyUsers = [...historyPeople].sort((left, right) =>
     String(left.nombre || left.email || "").localeCompare(String(right.nombre || right.email || ""), "es")
   );
-  const historyUsersForStatus = historyUsers.filter((worker) => {
-    if (historyWorkerStatus === "todos") return true;
-    return historyWorkerStatus === "activos" ? boolValue(worker.activo) : !boolValue(worker.activo);
-  });
-  const historyRecords = (data.attendances || []).filter((item) => !administratorIds.has(Number(item.usuario_id)));
+  const historyRecords = data.attendances || [];
   const historyMonths = [...new Set(
     historyRecords.map((item) => String(item.fecha || "").slice(0, 7)).filter((value) => /^\d{4}-\d{2}$/.test(value))
   )].sort((left, right) => right.localeCompare(left));
   const historyDays = [...new Set(
     historyRecords.map((item) => String(item.fecha || "").slice(8, 10)).filter((value) => /^\d{2}$/.test(value))
   )].sort((left, right) => Number(left) - Number(right));
+  // El selector "Usuario" solo debe listar personas con registros dentro del
+  // mes/dia filtrado (no tiene sentido ofrecer a alguien sin datos ahi).
+  const usersWithRecordsInDateRange = new Set(
+    historyRecords
+      .filter((item) => historyMonth === "todos" || String(item.fecha || "").startsWith(`${historyMonth}-`))
+      .filter((item) => historyDay === "todos" || String(item.fecha || "").slice(8, 10) === historyDay)
+      .map((item) => Number(item.usuario_id))
+  );
+  const historyUsersForStatus = historyUsers.filter((worker) => {
+    if (!usersWithRecordsInDateRange.has(Number(worker.id))) return false;
+    if (historyWorkerStatus === "todos") return true;
+    return historyWorkerStatus === "activos" ? boolValue(worker.activo) : !boolValue(worker.activo);
+  });
   const filteredAttendances = (data.attendances || [])
-    .filter((item) => !administratorIds.has(Number(item.usuario_id)))
     .filter((item) => historyUserId === "todos" || String(item.usuario_id) === historyUserId)
     .filter((item) => historyMonth === "todos" || String(item.fecha || "").startsWith(`${historyMonth}-`))
     .filter((item) => historyDay === "todos" || String(item.fecha || "").slice(8, 10) === historyDay)
@@ -2378,11 +2416,12 @@ function AttendancePanel() {
     "Tipo de retiro": item.retiro_anticipado ? (item.tipo_retiro === "apoyo" ? "Apoyo a otra area" : "Personal") : "",
     "Motivo del retiro": item.motivo_retiro || "",
     "Retirado en": item.retirado_en ? formatDateTimeLima(item.retirado_en) : "",
-    "Marcado en": ATTENDANCE_PRESENT_STATES.has(String(item.estado || "").toUpperCase()) ? formatDateTimeLima(item.created_at) : ""
+    "Marcado en": ATTENDANCE_PRESENT_STATES.has(String(item.estado || "").toUpperCase()) ? formatDateTimeLima(item.created_at) : "",
+    Observación: item.observacion || ""
   }));
 
   function exportAttendance() {
-    const columns = ["Fecha", "Trabajador", "Email", "Estado", "Sigla"];
+    const columns = ["Fecha", "Trabajador", "Email", "Estado", "Sigla", "Observación"];
     downloadExcelTable("historial_asistencia.xls", columns, attendanceRows);
   }
 
@@ -2390,11 +2429,23 @@ function AttendancePanel() {
     setHistoryWorkerStatus(value);
     if (historyUserId === "todos") return;
     const selectedWorker = historyUsers.find((worker) => String(worker.id) === historyUserId);
-    const remainsVisible = selectedWorker && (
+    const remainsVisible = selectedWorker && usersWithRecordsInDateRange.has(Number(selectedWorker.id)) && (
       value === "todos"
       || (value === "activos" ? boolValue(selectedWorker.activo) : !boolValue(selectedWorker.activo))
     );
     if (!remainsVisible) setHistoryUserId("todos");
+  }
+
+  // Cambiar el mes o el dia puede dejar al usuario seleccionado sin registros
+  // en ese rango; en ese caso se vuelve a "Todos" para no mostrar una lista vacia.
+  function changeHistoryMonth(value) {
+    setHistoryMonth(value);
+    setHistoryUserId("todos");
+  }
+
+  function changeHistoryDay(value) {
+    setHistoryDay(value);
+    setHistoryUserId("todos");
   }
 
   return (
@@ -2442,6 +2493,7 @@ function AttendancePanel() {
               {attendanceStateOptions.map((option) => (
                 <abbr key={option.value} role="columnheader" title={option.label}>{option.abbreviation}</abbr>
               ))}
+              <span role="columnheader">Observación</span>
             </div>
             {visibleWorkers.map((worker) => {
               const estado = attendanceValues[worker.id] || "";
@@ -2471,6 +2523,17 @@ function AttendancePanel() {
                       </label>
                     );
                   })}
+                  <span className="attendance-observation" role="cell">
+                    <input
+                      className="input"
+                      type="text"
+                      value={attendanceObservations[worker.id] || ""}
+                      onChange={(event) => setObservation(worker, event.target.value)}
+                      placeholder="Observación (opcional)"
+                      maxLength={500}
+                      aria-label={`Observación para ${worker.nombre || worker.email}`}
+                    />
+                  </span>
                 </div>
               );
             })}
@@ -2537,20 +2600,22 @@ function AttendancePanel() {
           <SelectInput
             label="Mes"
             value={historyMonth}
-            onChange={setHistoryMonth}
+            onChange={changeHistoryMonth}
             options={[
               { value: "todos", label: "Todos" },
-              ...historyMonths.map((month) => ({
-                value: month,
-                label: new Intl.DateTimeFormat("es-PE", { month: "long", year: "numeric", timeZone: "UTC" })
-                  .format(new Date(`${month}-01T12:00:00Z`))
-              }))
+              ...[...new Set([todayLimaISO().slice(0, 7), ...historyMonths])]
+                .sort((left, right) => right.localeCompare(left))
+                .map((month) => ({
+                  value: month,
+                  label: new Intl.DateTimeFormat("es-PE", { month: "long", year: "numeric", timeZone: "UTC" })
+                    .format(new Date(`${month}-01T12:00:00Z`))
+                }))
             ]}
           />
           <SelectInput
             label="Día"
             value={historyDay}
-            onChange={setHistoryDay}
+            onChange={changeHistoryDay}
             options={[
               { value: "todos", label: "Todos" },
               ...historyDays.map((day) => ({ value: day, label: String(Number(day)) }))
@@ -2578,7 +2643,7 @@ function AttendancePanel() {
         </div>
         <DataTable
           rows={attendanceRows}
-          columns={["Fecha", "Trabajador", "Email", "Estado", "Sigla", "Marcado en"]}
+          columns={["Fecha", "Trabajador", "Email", "Estado", "Sigla", "Marcado en", "Observación"]}
           pageSize={25}
           empty="No hay asistencias para los filtros seleccionados."
         />
@@ -3955,6 +4020,16 @@ function downloadExcelTable(filename, columns, rows, label = "Datos") {
 }
 
 function StoresPanel() {
+  const [section, setSection] = useState("Tiendas");
+  return (
+    <div className="stack">
+      <Tabs tabs={["Tiendas", "Marcas"]} active={section} onChange={setSection} />
+      {section === "Tiendas" ? <StoresSection /> : <BrandsSection />}
+    </div>
+  );
+}
+
+function StoresSection() {
   const { data: stores = [], loading, error, reload } = useAsyncData(listTiendas, [], []);
   const [tab, setTab] = useState("Crear");
   const [status, setStatus] = useState(null);
@@ -4034,7 +4109,12 @@ function StoresPanel() {
   return (
     <div className="stack">
       <Panel title="Gestion de tiendas" eyebrow="Catalogo">
-        {loading ? <LoadingBlock /> : <DataTable rows={stores} />}
+        {loading ? <LoadingBlock /> : (
+          <DataTable
+            rows={stores.map((store) => ({ Nombre: store.nombre, Activo: boolValue(store.activo) }))}
+            columns={["Nombre", "Activo"]}
+          />
+        )}
         {error ? <Alert type="error">{error}</Alert> : null}
       </Panel>
       <Panel actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
@@ -4064,6 +4144,122 @@ function StoresPanel() {
             <div className="danger-zone form-span">
               <p>Eliminaras la tienda {selectedStore.nombre}.</p>
               <Button type="button" variant="danger" icon={Trash2} loading={saving} onClick={submitDelete}>Eliminar tienda</Button>
+            </div>
+          ) : null}
+        </form>
+      </Panel>
+    </div>
+  );
+}
+
+function BrandsSection() {
+  const { data: brands = [], loading, error, reload } = useAsyncData(listBrands, [], []);
+  const [tab, setTab] = useState("Crear");
+  const [status, setStatus] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [nombre, setNombre] = useState("");
+  const [selectedId, setSelectedId] = useState("");
+
+  const selectedBrand = brands.find((brand) => String(brand.id) === String(selectedId));
+
+  useEffect(() => {
+    if (!selectedBrand) return;
+    setNombre(selectedBrand.nombre || "");
+  }, [selectedBrand?.id]);
+
+  async function submitCreate(event) {
+    event.preventDefault();
+    if (!nombre.trim()) {
+      setStatus({ type: "error", message: "El nombre de marca es obligatorio." });
+      return;
+    }
+    setSaving(true);
+    try {
+      await createBrand({ nombre: nombre.trim() });
+      setNombre("");
+      setStatus({ type: "success", message: "Marca creada correctamente." });
+      reload();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitEdit(event) {
+    event.preventDefault();
+    if (!selectedBrand) return;
+    if (!nombre.trim()) {
+      setStatus({ type: "error", message: "El nombre de marca es obligatorio." });
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateBrand(selectedBrand.id, { nombre: nombre.trim() });
+      setStatus({ type: "success", message: "Marca actualizada correctamente." });
+      reload();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitDelete() {
+    if (!selectedBrand) return;
+    setSaving(true);
+    try {
+      await deleteBrand(selectedBrand.id);
+      setSelectedId("");
+      setNombre("");
+      setStatus({ type: "success", message: "Marca eliminada correctamente." });
+      reload();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <Panel title="Gestion de marcas" eyebrow="Catalogo">
+        {loading ? <LoadingBlock /> : (
+          <DataTable
+            rows={[...brands].sort((left, right) => String(left.nombre || "").localeCompare(String(right.nombre || ""), "es"))}
+            columns={["nombre"]}
+            className="brands-management-table"
+            pageSize={0}
+          />
+        )}
+        {error ? <Alert type="error">{error}</Alert> : null}
+      </Panel>
+      <Panel actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
+        <Tabs tabs={["Crear", "Editar", "Eliminar"]} active={tab} onChange={setTab} />
+        <StatusAlert status={status} />
+        <form className="form-grid" onSubmit={tab === "Crear" ? submitCreate : submitEdit}>
+          {tab !== "Crear" ? (
+            <SelectInput
+              label="Marca"
+              value={selectedId}
+              onChange={setSelectedId}
+              options={[
+                { value: "", label: "Selecciona una marca" },
+                ...brands.map((brand) => ({ value: String(brand.id), label: `${brand.id} - ${brand.nombre}` }))
+              ]}
+            />
+          ) : null}
+          {tab !== "Eliminar" ? (
+            <>
+              <TextInput label="Nombre de marca" value={nombre} onChange={setNombre} />
+              <div className="form-span">
+                <Button type="submit" icon={Save} loading={saving}>{tab === "Crear" ? "Crear marca" : "Guardar cambios"}</Button>
+              </div>
+            </>
+          ) : selectedBrand ? (
+            <div className="danger-zone form-span">
+              <p>Eliminaras la marca {selectedBrand.nombre}.</p>
+              <Button type="button" variant="danger" icon={Trash2} loading={saving} onClick={submitDelete}>Eliminar marca</Button>
             </div>
           ) : null}
         </form>
@@ -4999,7 +5195,7 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
   const workerEmailById = Object.fromEntries(users.map((user) => [user.id, user.email]));
   const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || `Tarea ${task.id}`]));
 
-  const userColumns = ["Nombre", "Nombres completos", "Usuario", "Rol", "Activo", "DNI", "Telefono", "Telefono emergencia", "Direccion", "Distrito", "Fecha nacimiento", "Sueldo"];
+  const userColumns = ["Nombre", "Nombres completos", "Usuario", "Rol", "Activo", "DNI", "Telefono", "Telefono emergencia", "Direccion", "Distrito", "Fecha nacimiento", "Sueldo", "Alergia"];
   const userRows = users.map((user) => ({
     Nombre: user.nombre,
     "Nombres completos": user.nombres_completos || "",
@@ -5012,7 +5208,8 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
     Direccion: user.direccion || "",
     Distrito: user.distrito || "",
     "Fecha nacimiento": user.fecha_cumpleanos || "",
-    Sueldo: Number(user.sueldo || 0).toFixed(2)
+    Sueldo: Number(user.sueldo || 0).toFixed(2),
+    Alergia: user.alergia || ""
   }));
 
   const attendanceColumns = ["Fecha", "Trabajador", "Email", "Estado", "Sigla"];

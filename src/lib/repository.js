@@ -529,6 +529,34 @@ export async function listBrands() {
   return result.data || [];
 }
 
+export async function createBrand(payload) {
+  const apiResult = await requestLocalApi("/api/brands", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  if (apiResult?.brand) return apiResult.brand;
+
+  return ensureOk(await db().from("marcas").insert(payload).select("*").single());
+}
+
+export async function updateBrand(brandId, changes) {
+  const apiResult = await requestLocalApi(`/api/brands/${encodeURIComponent(brandId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes)
+  });
+  if (apiResult?.brand) return apiResult.brand;
+
+  return ensureOk(await db().from("marcas").update(changes).eq("id", brandId).select("*").single());
+}
+
+export async function deleteBrand(brandId) {
+  const apiResult = await requestLocalApi(`/api/brands/${encodeURIComponent(brandId)}`, { method: "DELETE" });
+  if (apiResult?.deleted) return apiResult;
+
+  ensureOk(await db().from("marcas").delete().eq("id", brandId));
+  return { deleted: true };
+}
+
 export async function listTaskScoringRules(taskId = null) {
   const query = taskId ? `?taskId=${encodeURIComponent(taskId)}` : "";
   const apiResult = await requestLocalApi(`/api/task-score-ranges${query}`);
@@ -1170,6 +1198,23 @@ export async function listAllActivityLogs() {
     }
   }
   return [];
+}
+
+export async function updateActivityRecord(id, changes) {
+  const apiResult = await requestLocalApi(`/api/activity-records/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes)
+  });
+  if (apiResult?.record) return apiResult.record;
+  throw new Error("El backend debe estar activo para editar un registro de tarea.");
+}
+
+export async function deleteActivityRecord(id) {
+  const apiResult = await requestLocalApi(`/api/activity-records/${encodeURIComponent(id)}`, {
+    method: "DELETE"
+  });
+  if (apiResult?.deleted) return apiResult;
+  throw new Error("El backend debe estar activo para eliminar un registro de tarea.");
 }
 
 export async function listIncidentes() {

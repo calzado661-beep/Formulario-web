@@ -16,7 +16,7 @@ export const DEFAULT_PAGE_SIZE = 10;
 // dentro de rango cuando la lista se acorta por un filtro o una recarga.
 export function usePagination(totalRows, pageSize = DEFAULT_PAGE_SIZE) {
   const [page, setPage] = useState(0);
-  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(totalRows / pageSize)) : 1;
   const currentPage = Math.min(page, totalPages - 1);
 
   useEffect(() => {

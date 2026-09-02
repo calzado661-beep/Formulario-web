@@ -2079,6 +2079,107 @@ h2.pbi-section-heading {
   width: min(720px, 96vw);
 }
 
+.pbi-record-edit-dialog {
+  width: min(560px, 94vw);
+}
+
+.pbi-record-delete-dialog {
+  width: min(440px, 94vw);
+}
+
+.pbi-record-edit-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem 1rem;
+  padding: 1.1rem;
+}
+
+.pbi-record-edit-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--pbi-muted);
+}
+
+.pbi-record-edit-span {
+  grid-column: 1 / -1;
+}
+
+.pbi-record-edit-form input,
+.pbi-record-edit-form select,
+.pbi-record-edit-form textarea {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--pbi-line-strong);
+  border-radius: 8px;
+  background: var(--pbi-tint);
+  color: var(--pbi-ink);
+  font-size: 0.85rem;
+}
+
+.pbi-record-edit-form textarea {
+  resize: vertical;
+}
+
+.pbi-record-edit-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: rgba(220, 38, 38, 0.14);
+  color: #fca5a5;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.pbi-record-edit-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.3rem;
+}
+
+.pbi-record-delete-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1.1rem;
+  color: var(--pbi-ink);
+  font-size: 0.88rem;
+}
+
+.pbi-record-delete-body .pbi-record-edit-actions {
+  margin-top: 0;
+}
+
+.pbi-button {
+  padding: 0.55rem 1.1rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--pbi-blue);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.pbi-button--secondary {
+  background: var(--pbi-tint-strong);
+  color: var(--pbi-ink);
+  border: 1px solid var(--pbi-line-strong);
+}
+
+.pbi-button--danger {
+  background: #dc2626;
+}
+
+@media (max-width: 560px) {
+  .pbi-record-edit-form {
+    grid-template-columns: 1fr;
+  }
+}
+
 .pbi-hourly-target-control {
   display: grid;
   grid-template-columns: minmax(180px, auto) minmax(150px, 220px) minmax(180px, 1fr);
@@ -3005,7 +3106,7 @@ h2.pbi-section-heading {
 }
 
 #pbi-task-detail .pbi-data-table {
-  min-width: 1500px;
+  min-width: 1650px;
 }
 
 .pbi-data-table {
@@ -3087,6 +3188,46 @@ h2.pbi-section-heading {
 .pbi-data-table td[data-align="right"],
 .pbi-data-table th[data-align="right"] {
   text-align: right;
+}
+
+.pbi-task-detail-actions {
+  display: inline-flex;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.pbi-icon-button {
+  display: inline-grid;
+  width: 1.9rem;
+  height: 1.9rem;
+  place-items: center;
+  border: 1px solid var(--pbi-line-strong);
+  border-radius: 8px;
+  background: var(--pbi-tint);
+  color: var(--pbi-ink);
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+
+.pbi-icon-button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.pbi-icon-button:hover {
+  border-color: var(--pbi-blue);
+  background: var(--pbi-blue);
+  color: #fff;
+}
+
+.pbi-icon-button--danger:hover {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #fff;
 }
 
 .pbi-badge {

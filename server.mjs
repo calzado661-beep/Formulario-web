@@ -540,7 +540,8 @@ const OPTIONAL_TEXT_USER_FIELDS = [
   "estado_civil",
   "talla_zapatillas",
   "talla_polo",
-  "nombres_completos"
+  "nombres_completos",
+  "alergia"
 ];
 
 function userPayloadForDb(body, { creating = false } = {}) {
@@ -606,6 +607,7 @@ async function handleCreateUser(request, response) {
   try {
     if (!requireAdministrator(request, response)) return;
     const body = JSON.parse((await readBody(request)) || "{}");
+    const employmentDates = validateEmploymentDates(body);
     const payload = userPayloadForDb(body, { creating: true });
     let result = await supabase.from("usuarios").insert(payload).select("*").single();
     if (isPrimaryKeySequenceConflict(result.error)) {
@@ -619,8 +621,9 @@ async function handleCreateUser(request, response) {
       userMutationError(response, result.error, "No se pudo crear el usuario.");
       return;
     }
+    if (employmentDates?.ingreso) await saveEmploymentDates(result.data.id, employmentDates);
     const { password_hash: _passwordHash, password: _password, ...user } = result.data;
-    sendJson(response, 201, { user });
+    sendJson(response, 201, { user: { ...user, fecha_ingreso: employmentDates?.ingreso || null } });
   } catch (error) {
     const status = error instanceof SyntaxError ? 400 : 400;
     sendJson(response, status, { error: error.message || "No se pudo crear el usuario." });
@@ -1458,10 +1461,12 @@ async function handleReadFootwearDashboard(request, response) {
         : 0;
       return {
         id: `${source}-${row.id}`,
+        rawId: Number(row.id),
         source,
         workerId: Number(row.usuario_id || row.trabajador_id),
         taskId: Number(row.tarea_id),
         date: dashboardDate(row.fecha_registro || row.created_at),
+        createdAt: row.created_at || null,
         shift: String(row.turno || "").trim() || null,
         quantity: Number(row.cantidad || 0),
         minutes,
@@ -1767,6 +1772,84 @@ async function handleReadBrands(_request, response) {
     sendJson(response, 200, { brands: await selectBrands() });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron cargar las marcas." });
+  }
+}
+
+async function handleCreateBrand(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const payload = { nombre: String(body.nombre || "").trim() };
+    if (!payload.nombre) {
+      sendJson(response, 400, { error: "El nombre de la marca es obligatorio." });
+      return;
+    }
+    let result = await supabase.from("marcas").insert(payload).select("*").single();
+    if (isPrimaryKeySequenceConflict(result.error)) {
+      result = await supabase.from("marcas").insert({ ...payload, id: await nextTableId("marcas") }).select("*").single();
+    }
+    if (result.error) {
+      userMutationError(response, result.error, "No se pudo crear la marca.");
+      return;
+    }
+    sendJson(response, 201, { brand: result.data });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo crear la marca." });
+  }
+}
+
+async function handleUpdateBrand(request, response, brandId) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    if (!Number.isInteger(brandId) || brandId <= 0) {
+      sendJson(response, 400, { error: "Marca invalida." });
+      return;
+    }
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const nombre = body.nombre === undefined ? undefined : String(body.nombre).trim();
+    if (nombre === undefined) {
+      sendJson(response, 400, { error: "No hay cambios para guardar." });
+      return;
+    }
+    if (!nombre) {
+      sendJson(response, 400, { error: "El nombre de la marca es obligatorio." });
+      return;
+    }
+    const result = await supabase.from("marcas").update({ nombre }).eq("id", brandId).select("*").maybeSingle();
+    if (result.error) {
+      userMutationError(response, result.error, "No se pudo actualizar la marca.");
+      return;
+    }
+    if (!result.data) {
+      sendJson(response, 404, { error: "Marca no encontrada." });
+      return;
+    }
+    sendJson(response, 200, { brand: result.data });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo actualizar la marca." });
+  }
+}
+
+async function handleDeleteBrand(request, response, brandId) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    if (!Number.isInteger(brandId) || brandId <= 0) {
+      sendJson(response, 400, { error: "Marca invalida." });
+      return;
+    }
+    const result = await supabase.from("marcas").delete().eq("id", brandId).select("id").maybeSingle();
+    if (result.error?.code === "23503") {
+      sendJson(response, 409, { error: "No se puede eliminar la marca porque tiene lotes o registros relacionados." });
+      return;
+    }
+    if (result.error) throw result.error;
+    if (!result.data) {
+      sendJson(response, 404, { error: "Marca no encontrada." });
+      return;
+    }
+    sendJson(response, 200, { deleted: true });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo eliminar la marca." });
   }
 }
 
@@ -2733,6 +2816,12 @@ async function handleMarkAttendance(request, response) {
       sendJson(response, 400, { error: "El motivo del retiro no puede superar 500 caracteres." });
       return;
     }
+    const hasObservacion = "observacion" in body;
+    const observacion = String(body.observacion || "").trim();
+    if (observacion.length > 500) {
+      sendJson(response, 400, { error: "La observación no puede superar 500 caracteres." });
+      return;
+    }
     if (requestedEarlyExit && !present) {
       sendJson(response, 400, { error: "Solo un trabajador presente (Puntual o Tardanza) puede figurar con retiro anticipado." });
       return;
@@ -2758,6 +2847,7 @@ async function handleMarkAttendance(request, response) {
       estado,
       created_at: present ? (existingResult.data?.created_at || new Date().toISOString()) : null,
       registrado_por_id: session.id,
+      ...(hasObservacion ? { observacion: observacion || null } : {}),
       ...(existingResult.data?.id ? { updated_at: new Date().toISOString() } : {})
     };
     if (hasWithdrawalFields) {
@@ -3298,6 +3388,21 @@ async function handleCreateActivityLog(request, response) {
       sendJson(response, 403, { error: "El operante no puede registrar tiempo, horas ni minutos." });
       return;
     }
+    if (normalizeRole(session.rol) === "operante" && body.fecha_registro) {
+      const requestedDate = String(body.fecha_registro).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
+        sendJson(response, 400, { error: "La fecha de registro no es valida." });
+        return;
+      }
+      const today = currentLimaDate();
+      const oldestAllowed = new Date(`${today}T00:00:00`);
+      oldestAllowed.setDate(oldestAllowed.getDate() - 3);
+      const oldestAllowedIso = oldestAllowed.toISOString().slice(0, 10);
+      if (requestedDate > today || requestedDate < oldestAllowedIso) {
+        sendJson(response, 400, { error: "La fecha de registro solo puede ser hasta 3 dias antes de hoy." });
+        return;
+      }
+    }
     const tableName = await getTaskTableName();
     const taskResult = await supabase.from(tableName).select("*").eq("id", Number(body.tarea_id)).eq("es_operativa", true).maybeSingle();
     if (taskResult.error || !taskResult.data) {
@@ -3487,6 +3592,80 @@ async function handleCreateActivityLog(request, response) {
     sendJson(response, 201, { log });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo guardar el registro." });
+  }
+}
+
+// Edicion/eliminacion puntual desde el detalle de registro de tareas del
+// dashboard admin. Solo toca los campos visibles en esa tabla; no recalcula
+// el puntaje guardado para no alterar rankings ya cerrados.
+async function handleUpdateActivityRecord(request, response, id) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    if (!Number.isInteger(id) || id <= 0) {
+      sendJson(response, 400, { error: "Registro invalido." });
+      return;
+    }
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const payload = {};
+    if (body.fecha_registro !== undefined) {
+      const fecha = String(body.fecha_registro || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+        sendJson(response, 400, { error: "La fecha no es valida." });
+        return;
+      }
+      payload.fecha_registro = fecha;
+    }
+    if (body.turno !== undefined) payload.turno = String(body.turno || "").trim() || null;
+    if (body.cantidad !== undefined) {
+      const cantidad = nullableNumber(body.cantidad);
+      if (cantidad === null || cantidad < 0) {
+        sendJson(response, 400, { error: "La cantidad debe ser un numero mayor o igual a cero." });
+        return;
+      }
+      payload.cantidad = cantidad;
+    }
+    if (body.numero_guia !== undefined) payload.numero_guia = String(body.numero_guia || "").trim() || null;
+    if (body.lote !== undefined) payload.dato_extra = String(body.lote || "").trim().toUpperCase() || null;
+    if (body.marca_id !== undefined) payload.marca_id = nullableNumber(body.marca_id);
+    if (body.observacion !== undefined) payload.observacion = String(body.observacion || "").trim() || null;
+    if (!Object.keys(payload).length) {
+      sendJson(response, 400, { error: "No hay cambios para guardar." });
+      return;
+    }
+    const result = await supabase.from("registros_tareas").update(payload).eq("id", id).select("*").maybeSingle();
+    if (result.error) {
+      sendJson(response, 500, { error: result.error.message || "No se pudo actualizar el registro." });
+      return;
+    }
+    if (!result.data) {
+      sendJson(response, 404, { error: "Registro no encontrado." });
+      return;
+    }
+    sendJson(response, 200, { record: result.data });
+  } catch (error) {
+    sendJson(response, 400, { error: error.message || "No se pudo actualizar el registro." });
+  }
+}
+
+async function handleDeleteActivityRecord(request, response, id) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    if (!Number.isInteger(id) || id <= 0) {
+      sendJson(response, 400, { error: "Registro invalido." });
+      return;
+    }
+    const result = await supabase.from("registros_tareas").delete().eq("id", id).select("id").maybeSingle();
+    if (result.error) {
+      sendJson(response, 500, { error: result.error.message || "No se pudo eliminar el registro." });
+      return;
+    }
+    if (!result.data) {
+      sendJson(response, 404, { error: "Registro no encontrado." });
+      return;
+    }
+    sendJson(response, 200, { deleted: true });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudo eliminar el registro." });
   }
 }
 
@@ -5014,6 +5193,18 @@ export async function handleRequest(request, response, { serveFiles = true } = {
     return;
   }
 
+  if (request.url?.startsWith("/api/brands/") && ["PATCH", "DELETE"].includes(request.method)) {
+    const brandId = Number(new URL(request.url, `http://${request.headers.host}`).pathname.split("/").pop());
+    if (request.method === "PATCH") await handleUpdateBrand(request, response, brandId);
+    else await handleDeleteBrand(request, response, brandId);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/brands") && request.method === "POST") {
+    await handleCreateBrand(request, response);
+    return;
+  }
+
   if (request.url?.startsWith("/api/users/") && ["PATCH", "DELETE"].includes(request.method)) {
     const userId = Number(new URL(request.url, `http://${request.headers.host}`).pathname.split("/").pop());
     if (request.method === "PATCH") await handleUpdateUser(request, response, userId);
@@ -5225,6 +5416,13 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (request.url?.startsWith("/api/activity-logs") && request.method === "POST") {
     await handleCreateActivityLog(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/activity-records/") && ["PATCH", "DELETE"].includes(request.method)) {
+    const recordId = Number(new URL(request.url, `http://${request.headers.host}`).pathname.split("/").pop());
+    if (request.method === "PATCH") await handleUpdateActivityRecord(request, response, recordId);
+    else await handleDeleteActivityRecord(request, response, recordId);
     return;
   }
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   BellRing,
+  Bug,
   CalendarCheck2,
   ClipboardList,
   FileSpreadsheet,
@@ -30,9 +31,10 @@ const adminItems = [
   { key: "Tareas", label: "Tareas y puntajes", icon: ClipboardList },
   { key: "Asistencia", icon: CalendarCheck2 },
   { key: "Notificaciones", icon: BellRing },
-  { key: "Tiendas", icon: Store },
+  { key: "Tiendas", label: "Tiendas y Marcas", icon: Store },
   { key: "Lotes", icon: Package },
   { key: "Guias", icon: Truck },
+  { key: "Errores", icon: Bug },
   { key: "Amonestaciones", icon: AlertTriangle },
   { key: "Documentos", icon: FileSpreadsheet }
 ];

@@ -38,7 +38,7 @@ export default function TeamLeaderDashboard({ user }) {
   );
 }
 
-function IncidentPanel({ user }) {
+export function IncidentPanel({ user }) {
   const { data, loading, error, reload } = useAsyncData(
     async () => {
       const [tasks, tiendas, users, incidentes] = await Promise.all([
@@ -179,8 +179,8 @@ function IncidentPanel({ user }) {
         </form>
       </Panel>
 
-      <Panel title="Historial de incidentes">
-        {!loading && !rows.length ? <Alert>Todavia no hay incidentes registrados.</Alert> : null}
+      <Panel title="Historial de errores">
+        {!loading && !rows.length ? <Alert>Todavia no hay errores registrados.</Alert> : null}
         <DataTable rows={rows} />
       </Panel>
     </div>

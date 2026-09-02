@@ -1034,29 +1034,34 @@ input:-webkit-autofill:focus {
 }
 
 /* La lista administrativa puede contener todos los campos del perfil. */
-.users-management-table {
+.users-management-table,
+.brands-management-table {
   max-height: 540px;
   overflow: auto;
   scrollbar-width: auto;
   scrollbar-color: var(--accent) #e9edf3;
 }
 
-.users-management-table::-webkit-scrollbar {
+.users-management-table::-webkit-scrollbar,
+.brands-management-table::-webkit-scrollbar {
   width: 13px;
   height: 13px;
 }
 
-.users-management-table::-webkit-scrollbar-track {
+.users-management-table::-webkit-scrollbar-track,
+.brands-management-table::-webkit-scrollbar-track {
   background: #e9edf3;
 }
 
-.users-management-table::-webkit-scrollbar-thumb {
+.users-management-table::-webkit-scrollbar-thumb,
+.brands-management-table::-webkit-scrollbar-thumb {
   background: var(--accent);
   border: 3px solid #e9edf3;
   border-radius: 999px;
 }
 
-.users-management-table table {
+.users-management-table table,
+.brands-management-table table {
   min-width: max-content;
 }
 
@@ -1230,13 +1235,13 @@ tbody tr:hover {
 }
 
 .attendance-matrix {
-  min-width: 760px;
+  min-width: 960px;
 }
 
 .attendance-matrix-header,
 .attendance-matrix-row {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) repeat(8, minmax(52px, 68px));
+  grid-template-columns: minmax(260px, 1fr) repeat(8, minmax(52px, 68px)) minmax(200px, 260px);
   align-items: center;
 }
 
@@ -1360,6 +1365,26 @@ tbody tr:hover {
 .attendance-state-check:has(input:focus-visible) {
   outline: 3px solid rgba(45, 212, 191, 0.35);
   outline-offset: 2px;
+}
+
+.attendance-observation {
+  padding: 0.5rem 0.75rem;
+}
+
+.attendance-observation input {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.82rem;
+  color: var(--text-strong);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.attendance-observation input:focus-visible {
+  outline: 2px solid rgba(45, 212, 191, 0.35);
+  outline-offset: 1px;
+  border-color: var(--accent);
 }
 
 .attendance-marked-badge svg {
@@ -4628,12 +4653,12 @@ tbody tr:hover {
   }
 
   .attendance-matrix {
-    min-width: 700px;
+    min-width: 880px;
   }
 
   .attendance-matrix-header,
   .attendance-matrix-row {
-    grid-template-columns: minmax(220px, 1fr) repeat(8, 56px);
+    grid-template-columns: minmax(220px, 1fr) repeat(8, 56px) minmax(180px, 220px);
   }
 
   .attendance-today-list,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { loadFootwearDashboard, updateGroupLeaderAverageReference } from "../lib/repository";
+import { loadFootwearDashboard, updateGroupLeaderAverageReference, updateActivityRecord, deleteActivityRecord } from "../lib/repository";
 import { attendanceGroup } from "../lib/operations";
 import {
   averageEmployeeTenureMonths,
@@ -309,6 +309,23 @@ function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d="m6 6 12 12M18 6 6 18" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4 20h4l10.5-10.5a2 2 0 0 0 0-2.83l-1.17-1.17a2 2 0 0 0-2.83 0L4 16v4Z" />
+      <path d="m13.5 6.5 4 4" />
+    </svg>
+  );
+}
+
+function DeleteIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-9 0 1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6" />
     </svg>
   );
 }
@@ -1898,6 +1915,170 @@ function ErrorRecordsModal({ shiftLabel, errorType, rows, onClose }) {
   );
 }
 
+function ActivityRecordEditModal({ record, brands, onClose, onSave }) {
+  const [form, setForm] = useState({
+    fecha_registro: record.date || "",
+    turno: record.shift || "",
+    cantidad: record.quantity === null || record.quantity === undefined ? "" : String(record.quantity),
+    numero_guia: record.guideNumber || "",
+    lote: record.lote || "",
+    marca_id: record.brandId ? String(record.brandId) : "",
+    observacion: record.observation || ""
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event) => { if (event.key === "Escape" && !saving) onClose(); };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose, saving]);
+
+  function update(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    const cantidad = Number(form.cantidad);
+    if (form.cantidad === "" || !Number.isFinite(cantidad) || cantidad < 0) {
+      setError("Ingresa una cantidad valida y mayor o igual a cero.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(record.rawId, {
+        fecha_registro: form.fecha_registro,
+        turno: form.turno.trim() || null,
+        cantidad,
+        numero_guia: form.numero_guia.trim() || null,
+        lote: form.lote.trim() || null,
+        marca_id: form.marca_id ? Number(form.marca_id) : null,
+        observacion: form.observacion.trim() || null
+      });
+      onClose();
+    } catch (err) {
+      setError(err.message || "No se pudo guardar el registro.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return createPortal(
+    <div className="pbi-visual-modal" role="dialog" aria-modal="true" aria-labelledby="pbi-edit-record-title" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !saving) onClose();
+    }}>
+      <section className="pbi-ranking-records-dialog pbi-record-edit-dialog">
+        <header className="pbi-ranking-records-header">
+          <div>
+            <span className="pbi-card-eyebrow">Editar registro</span>
+            <h2 id="pbi-edit-record-title">Registro de tarea</h2>
+          </div>
+          <button type="button" className="pbi-ranking-records-close" onClick={onClose} disabled={saving} aria-label="Cerrar edición">×</button>
+        </header>
+        <form className="pbi-record-edit-form" onSubmit={submit}>
+          {error ? <p className="pbi-record-edit-error">{error}</p> : null}
+          <label>
+            <span>Fecha</span>
+            <input type="date" value={form.fecha_registro} onChange={(event) => update("fecha_registro", event.target.value)} required />
+          </label>
+          <label>
+            <span>Turno</span>
+            <input type="text" value={form.turno} onChange={(event) => update("turno", event.target.value)} maxLength={60} />
+          </label>
+          <label>
+            <span>Cantidad</span>
+            <input type="number" min="0" step="1" value={form.cantidad} onChange={(event) => update("cantidad", event.target.value)} required />
+          </label>
+          <label>
+            <span>N.º de guía</span>
+            <input type="text" value={form.numero_guia} onChange={(event) => update("numero_guia", event.target.value)} maxLength={60} />
+          </label>
+          <label>
+            <span>Lote</span>
+            <input type="text" value={form.lote} onChange={(event) => update("lote", event.target.value)} maxLength={60} />
+          </label>
+          <label>
+            <span>Marca</span>
+            <select value={form.marca_id} onChange={(event) => update("marca_id", event.target.value)}>
+              <option value="">Sin marca</option>
+              {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+            </select>
+          </label>
+          <label className="pbi-record-edit-span">
+            <span>Observación</span>
+            <textarea value={form.observacion} onChange={(event) => update("observacion", event.target.value)} rows={2} maxLength={500} />
+          </label>
+          <div className="pbi-record-edit-actions">
+            <button type="button" className="pbi-button pbi-button--secondary" onClick={onClose} disabled={saving}>Cancelar</button>
+            <button type="submit" className="pbi-button" disabled={saving}>{saving ? "Guardando..." : "Guardar cambios"}</button>
+          </div>
+        </form>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
+function ActivityRecordDeleteModal({ record, workerName, onClose, onConfirm }) {
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event) => { if (event.key === "Escape" && !deleting) onClose(); };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose, deleting]);
+
+  async function confirm() {
+    setDeleting(true);
+    setError("");
+    try {
+      await onConfirm(record.rawId);
+      onClose();
+    } catch (err) {
+      setError(err.message || "No se pudo eliminar el registro.");
+      setDeleting(false);
+    }
+  }
+
+  return createPortal(
+    <div className="pbi-visual-modal" role="dialog" aria-modal="true" aria-labelledby="pbi-delete-record-title" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !deleting) onClose();
+    }}>
+      <section className="pbi-ranking-records-dialog pbi-record-delete-dialog">
+        <header className="pbi-ranking-records-header">
+          <div>
+            <span className="pbi-card-eyebrow">Eliminar registro</span>
+            <h2 id="pbi-delete-record-title">¿Eliminar este registro?</h2>
+          </div>
+          <button type="button" className="pbi-ranking-records-close" onClick={onClose} disabled={deleting} aria-label="Cerrar">×</button>
+        </header>
+        <div className="pbi-record-delete-body">
+          {error ? <p className="pbi-record-edit-error">{error}</p> : null}
+          <p>Se eliminará permanentemente el registro de {workerName} del {formatCalendarDate(record.date)}. Esta acción no se puede deshacer.</p>
+          <div className="pbi-record-edit-actions">
+            <button type="button" className="pbi-button pbi-button--secondary" onClick={onClose} disabled={deleting}>Cancelar</button>
+            <button type="button" className="pbi-button pbi-button--danger" onClick={confirm} disabled={deleting}>{deleting ? "Eliminando..." : "Eliminar"}</button>
+          </div>
+        </div>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
 function IndicatorKpi({ label, value, suffix, detail }) {
   return (
     <article className="pbi-kpi pbi-kpi--indicator">
@@ -1941,6 +2122,13 @@ function formatCalendarDate(dateStr) {
   const [year, month, day] = String(dateStr || "").split("-");
   if (!year || !month || !day) return dateStr || "";
   return `${day}/${month}/${year}`;
+}
+
+function formatRecordTime(createdAt) {
+  if (!createdAt) return "—";
+  const parsed = new Date(createdAt);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return new Intl.DateTimeFormat("es-PE", { timeZone: "America/Lima", hour: "2-digit", minute: "2-digit" }).format(parsed);
 }
 
 function selectedLabel(options, values, fallback) {
@@ -1998,6 +2186,8 @@ export default function FootwearDashboard() {
   const [selectedMovementDetail, setSelectedMovementDetail] = useState(null);
   const [selectedErrorDetail, setSelectedErrorDetail] = useState(null);
   const [showHelpModal, setShowHelpModal] = useState(false);
+  const [editingRecord, setEditingRecord] = useState(null);
+  const [deletingRecord, setDeletingRecord] = useState(null);
 
   const refreshDashboard = useCallback(async ({ silent = false } = {}) => {
     dashboardRequestRef.current?.abort();
@@ -2017,6 +2207,17 @@ export default function FootwearDashboard() {
       }
     }
   }, []);
+
+  async function handleSaveActivityRecord(rawId, changes) {
+    const updated = await updateActivityRecord(rawId, changes);
+    await refreshDashboard({ silent: true });
+    return updated;
+  }
+
+  async function handleDeleteActivityRecord(rawId) {
+    await deleteActivityRecord(rawId);
+    await refreshDashboard({ silent: true });
+  }
 
   useEffect(() => {
     refreshDashboard();
@@ -2352,7 +2553,9 @@ export default function FootwearDashboard() {
       const worker = workerById.get(Number(row.workerId));
       return {
         id: row.id,
+        rawId: row.rawId,
         date: formatCalendarDate(row.date),
+        hora: formatRecordTime(row.createdAt),
         worker: worker?.name || `Usuario ${row.workerId}`,
         task: task?.shortName || `Tarea ${row.taskId}`,
         shift: row.shift || "—",
@@ -2362,7 +2565,8 @@ export default function FootwearDashboard() {
         lote: row.lote || "—",
         brand: row.brandId ? brandById.get(Number(row.brandId)) || `Marca ${row.brandId}` : "—",
         observation: row.observation || "—",
-        source: row.source === "jefe-equipo" ? "Líder de equipo" : "Operante"
+        source: row.source === "jefe-equipo" ? "Líder de equipo" : "Operante",
+        raw: row
       };
     });
   const averageActivities = visibleActivities;
@@ -3009,6 +3213,7 @@ export default function FootwearDashboard() {
                     caption="Detalle de registros operativos por tarea"
                     columns={[
                       { key: "date", label: "Fecha" },
+                      { key: "hora", label: "Hora" },
                       { key: "worker", label: "Trabajador" },
                       { key: "task", label: "Tarea" },
                       { key: "shift", label: "Turno" },
@@ -3018,7 +3223,33 @@ export default function FootwearDashboard() {
                       { key: "lote", label: "Lote" },
                       { key: "brand", label: "Marca" },
                       { key: "observation", label: "Observación" },
-                      { key: "source", label: "Origen" }
+                      { key: "source", label: "Origen" },
+                      {
+                        key: "actions",
+                        label: "Acciones",
+                        render: (_value, row) => (
+                          <span className="pbi-task-detail-actions">
+                            <button
+                              type="button"
+                              className="pbi-icon-button"
+                              onClick={() => setEditingRecord(row.raw)}
+                              aria-label={`Editar registro de ${row.worker}`}
+                              title="Editar registro"
+                            >
+                              <EditIcon />
+                            </button>
+                            <button
+                              type="button"
+                              className="pbi-icon-button pbi-icon-button--danger"
+                              onClick={() => setDeletingRecord(row.raw)}
+                              aria-label={`Eliminar registro de ${row.worker}`}
+                              title="Eliminar registro"
+                            >
+                              <DeleteIcon />
+                            </button>
+                          </span>
+                        )
+                      }
                     ]}
                     rows={taskDetailRows}
                   />
@@ -3424,6 +3655,22 @@ export default function FootwearDashboard() {
           <HelpIcon />
         </button>
         {showHelpModal ? <DashboardHelpModal onClose={() => setShowHelpModal(false)} /> : null}
+        {editingRecord ? (
+          <ActivityRecordEditModal
+            record={editingRecord}
+            brands={dashboardData?.brands || []}
+            onClose={() => setEditingRecord(null)}
+            onSave={handleSaveActivityRecord}
+          />
+        ) : null}
+        {deletingRecord ? (
+          <ActivityRecordDeleteModal
+            record={deletingRecord}
+            workerName={workerById.get(Number(deletingRecord.workerId))?.name || `Usuario ${deletingRecord.workerId}`}
+            onClose={() => setDeletingRecord(null)}
+            onConfirm={handleDeleteActivityRecord}
+          />
+        ) : null}
       </div>
     </section>
   );

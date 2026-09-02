@@ -120,6 +120,15 @@ function RegisterActivity({ user }) {
   const [status, setStatus] = useState(null);
   const [successDialog, setSuccessDialog] = useState(null);
   const [saving, setSaving] = useState(false);
+  const maxRecordDate = todayLimaISO();
+  // El operante puede corregir actividad de hasta 3 dias atras (por ejemplo si
+  // se le olvido registrar), nunca a futuro ni mas antiguo que ese limite.
+  const minRecordDate = useMemo(() => {
+    const limit = new Date(`${maxRecordDate}T00:00:00`);
+    limit.setDate(limit.getDate() - 3);
+    return limit.toISOString().slice(0, 10);
+  }, [maxRecordDate]);
+  const [recordDate, setRecordDate] = useState(maxRecordDate);
 
   const taskMap = useMemo(() => {
     return Object.fromEntries(
@@ -308,12 +317,15 @@ function RegisterActivity({ user }) {
       setStatus({ type: "error", message: validation });
       return;
     }
+    if (!recordDate || recordDate < minRecordDate || recordDate > maxRecordDate) {
+      setStatus({ type: "error", message: "La fecha de registro solo puede ser hasta 3 dias antes de hoy." });
+      return;
+    }
 
     setSaving(true);
     try {
-      const today = todayLimaISO();
       const existingLogs = await listWorkerActivityLogs(user.id);
-      const logsToday = existingLogs.filter((log) => String(log.fecha_registro) === today);
+      const logsToday = existingLogs.filter((log) => String(log.fecha_registro) === recordDate);
       const hasFullShiftInBatch = records.some((record) => isFullShift(record.turno));
 
       if (logsToday.length) {
@@ -349,7 +361,7 @@ function RegisterActivity({ user }) {
             usuario_id: user.id,
             tarea_id: shape.task.id,
             actividad_nombre: shape.title,
-            fecha_registro: today,
+            fecha_registro: recordDate,
             cantidad: shape.cantidad,
             tipo_medicion: shape.type,
             cumplimiento: shape.cumplimiento,
@@ -384,6 +396,7 @@ function RegisterActivity({ user }) {
       }
 
       setRecords([emptyRecord()]);
+      setRecordDate(maxRecordDate);
       setSuccessDialog({ saved, totalPoints });
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });
@@ -427,6 +440,15 @@ function RegisterActivity({ user }) {
       {!loading && !tasks.length ? <Alert>No tienes tareas asignadas para registrar actividades.</Alert> : null}
 
       <div className="record-toolbar">
+        <TextInput
+          label="Fecha de registro"
+          type="date"
+          value={recordDate}
+          onChange={setRecordDate}
+          min={minRecordDate}
+          max={maxRecordDate}
+          hint="Puedes registrar actividad de hasta 3 dias atras."
+        />
         <Button variant="secondary" icon={Plus} onClick={addRecord} disabled={records.length >= taskKeys.length}>
           Agregar tarea
         </Button>
@@ -738,8 +760,10 @@ function liveProgressTime(value) {
 // en curso ahora mismo, para que sea lo primero que se ve al entrar.
 function TodayLeaderTaskCard({ user, onUse }) {
   const requestRef = useRef(null);
+  const lastSignatureRef = useRef("");
   const [activities, setActivities] = useState([]);
   const [loaded, setLoaded] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -751,10 +775,23 @@ function TodayLeaderTaskCard({ user, onUse }) {
         const result = await loadWorkerLiveProgress({ signal: controller.signal });
         if (cancelled) return;
         const today = todayLimaISO();
+        // Solo etiquetado: es la unica tarea donde el jefe de equipo registra
+        // en nombre del operante y este debe confirmar el dato el mismo dia.
         const leaderRecordsToday = (result.activities || []).filter(
           (activity) => ["historial_jefe_equipo", "jefe_equipo"].includes(activity.origen)
             && String(activity.fecha_registro || "").slice(0, 10) === today
+            && normalizeText(activity.tarea_nombre || activity.actividad_nombre) === "etiquetado"
         );
+        // Si el jefe de equipo hizo varios registros de etiquetado hoy, se
+        // acumulan en una sola tarjeta para que el operante registre una vez.
+        const signature = leaderRecordsToday
+          .map((activity) => `${activity.record_id ?? activity.id}:${activity.cantidad}`)
+          .sort()
+          .join("|");
+        if (signature !== lastSignatureRef.current) {
+          lastSignatureRef.current = signature;
+          setDismissed(false);
+        }
         setActivities(leaderRecordsToday);
         setLoaded(true);
       } catch (err) {
@@ -771,31 +808,47 @@ function TodayLeaderTaskCard({ user, onUse }) {
     };
   }, [user?.id]);
 
-  if (!loaded || !activities.length) return null;
+  const summary = activities.length
+    ? {
+        ...activities[0],
+        cantidad: activities.reduce((sum, activity) => sum + Number(activity.cantidad || 0), 0),
+        recordCount: activities.length
+      }
+    : null;
+
+  if (!loaded || !summary || dismissed) return null;
 
   return (
     <Panel title="Tu líder de equipo te registro esto hoy" eyebrow="Datos para completar" className="today-leader-task-panel">
       <div className="today-leader-task-grid">
-        {activities.map((activity) => (
-          <article className="today-leader-task-card" key={activity.id}>
-            <header>
-              <Timer />
-              <strong>{activity.tarea_nombre || activity.actividad_nombre || `Tarea ${activity.tarea_id || ""}`}</strong>
-            </header>
-            <dl>
-              <div><dt>Cantidad</dt><dd>{liveProgressNumber(activity.cantidad)}</dd></div>
-              <div><dt>Marca</dt><dd>{activity.marca_nombre || "No aplica"}</dd></div>
-              <div><dt>Lote</dt><dd>{activity.lote || "No aplica"}</dd></div>
-              <div><dt>Tienda</dt><dd>{activity.tienda_nombre || "No aplica"}</dd></div>
-              <div><dt>Hangtag</dt><dd>{activity.tipo_etiquetado || "No aplica"}</dd></div>
-            </dl>
-            <small>
-              Registrada por {activity.encargado_nombre || "tu líder de equipo"} · inicio{" "}
-              {liveProgressTime(activity.hora_inicio || activity.horaInicio)} · {activity.estado === "EN_CURSO" ? "En curso" : "Cerrada por el jefe"}
-            </small>
-            <Button type="button" variant="secondary" onClick={() => onUse(activity)}>Usar estos datos</Button>
-          </article>
-        ))}
+        <article className="today-leader-task-card">
+          <header>
+            <Timer />
+            <strong>{summary.tarea_nombre || summary.actividad_nombre || `Tarea ${summary.tarea_id || ""}`}</strong>
+          </header>
+          <dl>
+            <div><dt>Cantidad</dt><dd>{liveProgressNumber(summary.cantidad)}</dd></div>
+            <div><dt>Marca</dt><dd>{summary.marca_nombre || "No aplica"}</dd></div>
+            <div><dt>Lote</dt><dd>{summary.lote || "No aplica"}</dd></div>
+            <div><dt>Tienda</dt><dd>{summary.tienda_nombre || "No aplica"}</dd></div>
+            <div><dt>Hangtag</dt><dd>{summary.tipo_etiquetado || "No aplica"}</dd></div>
+          </dl>
+          <small>
+            Registrada por {summary.encargado_nombre || "tu líder de equipo"} · inicio{" "}
+            {liveProgressTime(summary.hora_inicio || summary.horaInicio)} · {summary.estado === "EN_CURSO" ? "En curso" : "Cerrada por el jefe"}
+            {summary.recordCount > 1 ? ` · Cantidad acumulada de ${summary.recordCount} registros` : ""}
+          </small>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              onUse(summary);
+              setDismissed(true);
+            }}
+          >
+            Usar estos datos
+          </Button>
+        </article>
       </div>
     </Panel>
   );
