@@ -169,8 +169,8 @@ function TaskAverageField({ label, value, onSave }) {
   );
 }
 function GroupLeaderDashboard({ user }) {
-  const [workspace, setWorkspace] = useState("Registrar actividad (tiempo)");
-  const tabs = ["Registrar actividad (tiempo)", "Registrar actividad normal", "Registrar errores", "Ranking"];
+  const [workspace, setWorkspace] = useState("Registro de tiempos de operarios");
+  const tabs = ["Registro de tiempos de operarios", "Registro operario", "Registrar errores", "Ranking"];
   return /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(
     Tabs,
     {
@@ -178,7 +178,7 @@ function GroupLeaderDashboard({ user }) {
       active: workspace,
       onChange: setWorkspace
     }
-  ), workspace === "Registrar actividad normal" ? /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(Panel, { title: "Registrar actividad normal", eyebrow: "Registro propio" }, /* @__PURE__ */ React.createElement(Alert, null, "Los registros de este apartado quedar\xE1n asociados a tu propio usuario, no al operante.")), /* @__PURE__ */ React.createElement(WorkerDashboard, { user, embedded: true })) : workspace === "Registrar actividad (tiempo)" ? /* @__PURE__ */ React.createElement(GroupTimeDashboard, { user }) : workspace === "Registrar errores" ? /* @__PURE__ */ React.createElement(IncidentDashboard, { user }) : /* @__PURE__ */ React.createElement(RankingDashboard, { user }));
+  ), workspace === "Registro operario" ? /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(Panel, { title: "Registro operario", eyebrow: "Registro propio" }, /* @__PURE__ */ React.createElement(Alert, null, "Los registros de este apartado quedar\xE1n asociados a tu propio usuario, no al operante.")), /* @__PURE__ */ React.createElement(WorkerDashboard, { user, embedded: true })) : workspace === "Registro de tiempos de operarios" ? /* @__PURE__ */ React.createElement(GroupTimeDashboard, { user }) : workspace === "Registrar errores" ? /* @__PURE__ */ React.createElement(IncidentDashboard, { user }) : /* @__PURE__ */ React.createElement(RankingDashboard, { user }));
 }
 // Metrica activa del grafico de ranking: cada una sabe leer su valor de una
 // entrada ya agregada y formatearlo para la barra.
