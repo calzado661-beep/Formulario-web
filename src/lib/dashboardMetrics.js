@@ -179,10 +179,11 @@ export function averageEmployeeTenureMonths(movements, {
         openStart = null;
       }
     }
-    if (openStart) {
-      totalDays += Math.max(0, utcDay(todayIso) - utcDay(openStart));
-      hasPeriod = true;
-    }
+    // El periodo abierto (trabajador activo sin fecha de salida aun) no se
+    // cuenta: mezclar antiguedad "en curso" con periodos ya cerrados hacia que
+    // una ola de contrataciones nuevas hundiera el promedio de golpe, aunque
+    // la retencion real no hubiera cambiado. Por eso esto mide cuanto duraron
+    // en promedio los que ya salieron, no la antiguedad del equipo actual.
     if (hasPeriod) tenureDaysByWorker.set(workerId, totalDays);
   });
 

@@ -33,7 +33,10 @@ function pointsByThreshold(value, thresholds) {
 
 export function normalizeRole(role) {
   const value = normalizeText(role);
-  return value === "trabajador" ? "operante" : value;
+  if (value === "trabajador") return "operante";
+  if (value === "jefe de equipo") return "lider de equipo";
+  if (value === "jefe de grupo") return "lider de equipo";
+  return value;
 }
 
 export function isWorkerRole(role) {

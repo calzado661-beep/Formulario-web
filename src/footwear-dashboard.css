@@ -1237,7 +1237,7 @@
 .pbi-kpi-label {
   max-width: 100%;
   color: var(--pbi-muted);
-  font-size: clamp(0.7rem, 0.76vw, 0.88rem);
+  font-size: clamp(0.84rem, 0.98vw, 1.08rem);
   font-weight: 700;
   line-height: 1.18;
   overflow-wrap: anywhere;
@@ -1362,7 +1362,7 @@
 }
 
 .pbi-kpi--paired {
-  min-height: 82px;
+  min-height: 92px;
   align-content: stretch;
   gap: 0;
   padding: 0;
@@ -1373,9 +1373,10 @@
   padding: 0.34rem 0.5rem;
   background: var(--pbi-blue);
   color: #fff;
-  font-size: 0.74rem;
+  font-size: clamp(0.78rem, 0.92vw, 0.98rem);
   letter-spacing: 0.025em;
   text-align: left;
+  line-height: 1.25;
 }
 
 .pbi-kpi-pair {
@@ -5265,4 +5266,72 @@ body[data-pbi-theme="light"] .dashboard-mobile-menu:hover {
 
 body[data-pbi-theme="light"] .dashboard-workspace {
   background: #e3ecf4;
+}
+
+/* Todos los controles de filtro usan la misma superficie clara. Esto evita
+   que los filtros locales de tablas y graficos se pierdan sobre el lienzo
+   oscuro, y mantiene la misma apariencia cuando se cambia de seccion. */
+.pbi-dashboard-shell .pbi-filter,
+.pbi-dashboard-shell .pbi-slicer,
+.pbi-dashboard-shell .pbi-compact-check,
+.pbi-dashboard-shell .pbi-brand-only-filter,
+.pbi-dashboard-shell .pbi-powerbi-date-filter {
+  background: #f5f9fc;
+  color: #172033;
+}
+
+.pbi-dashboard-shell .pbi-slicer-dropdown,
+.pbi-dashboard-shell .pbi-slicer-popover {
+  background: #ffffff;
+  color: #172033;
+  box-shadow: 0 18px 42px rgba(9, 30, 53, 0.2);
+}
+
+.pbi-dashboard-shell .pbi-filter-control select,
+.pbi-dashboard-shell .pbi-filter > input,
+.pbi-dashboard-shell .pbi-floating-period-panel select,
+.pbi-dashboard-shell .pbi-ranking-task-filter select,
+.pbi-dashboard-shell .pbi-visual-filter select,
+.pbi-dashboard-shell .pbi-lot-progress-head select,
+.pbi-visual-modal .pbi-hourly-modal-fields select,
+.pbi-visual-modal .pbi-hourly-modal-fields input,
+.pbi-visual-modal .pbi-record-edit-form select,
+.pbi-visual-modal .pbi-record-edit-form input,
+.pbi-visual-modal .pbi-record-edit-form textarea {
+  background: #ffffff;
+  color: #172033;
+  color-scheme: light;
+}
+
+.pbi-dashboard-shell .pbi-slicer-label,
+.pbi-dashboard-shell .pbi-filter-label,
+.pbi-dashboard-shell .pbi-slicer-select-all,
+.pbi-dashboard-shell .pbi-slicer-action,
+.pbi-dashboard-shell .pbi-slicer-option,
+.pbi-dashboard-shell .pbi-compact-check,
+.pbi-dashboard-shell .pbi-ranking-task-filter select,
+.pbi-dashboard-shell .pbi-visual-filter select,
+.pbi-dashboard-shell .pbi-powerbi-date-filter > legend {
+  color: #163b61;
+}
+
+.pbi-dashboard-shell .pbi-slicer-value,
+.pbi-dashboard-shell .pbi-slicer-summary,
+.pbi-dashboard-shell .pbi-slicer-search input,
+.pbi-dashboard-shell .pbi-slicer-search-input {
+  color: #172033;
+}
+
+.pbi-dashboard-shell .pbi-slicer-search {
+  background: #f2f6fa;
+  color: #163b61;
+}
+
+.pbi-dashboard-shell .pbi-slicer-checkbox {
+  background: #ffffff;
+}
+
+.pbi-dashboard-shell .pbi-date-preview > span {
+  background: #ffffff;
+  color: #163b61;
 }

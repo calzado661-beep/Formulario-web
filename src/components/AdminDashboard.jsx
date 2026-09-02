@@ -40,6 +40,7 @@ import {
   listLogAsistencias,
   listLotes,
   listPenalizaciones,
+  listPersonnelMovements,
   listTasks,
   listTiendas,
   listTrainingCourses,
@@ -78,7 +79,7 @@ import {
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
 import FootwearDashboard from "./FootwearDashboard";
-import { IncidentPanel } from "./TeamLeaderDashboard";
+import { IncidentDashboard } from "./GroupLeaderDashboard";
 import {
   Alert,
   Button,
@@ -95,7 +96,7 @@ import {
   TextInput
 } from "./ui";
 
-const roleOptions = ["administrador", "operante", "lider de equipo", "jefe de grupo", "otros"];
+const roleOptions = ["administrador", "operante", "lider de equipo", "otros"];
 const taskTypes = ["cantidad", "fijo", "turno", "tiempo"];
 const trainingStatusOptions = [
   { value: "pendiente", label: "Pendiente" },
@@ -111,7 +112,7 @@ function trainingStatusLabel(status) {
 const ADMIN_SECTION_HELP = {
   Usuarios: {
     title: "Usuarios",
-    text: "Crea, edita y desactiva trabajadores: nombre, correo, rol (administrador, operante, jefe de equipo, jefe de grupo, otros), sueldo, cumpleaños y estado activo/inactivo."
+    text: "Crea, edita y desactiva trabajadores: nombre, correo, rol (administrador, operante, líder de equipo, otros), sueldo, cumpleaños y estado activo/inactivo. Abajo, \"Trabajadores con reingreso\" lista a quienes salieron y volvieron a entrar más de una vez, con el detalle de cada ingreso/salida."
   },
   Capacitaciones: {
     title: "Capacitaciones",
@@ -135,7 +136,7 @@ const ADMIN_SECTION_HELP = {
   },
   Lotes: {
     title: "Lotes",
-    text: "Catálogo de lotes de mercadería: código, marca, cantidad, proveedor, jefe de equipo responsable y estado (pendiente/completado). Muestra los días que lleva cada lote hasta completarse."
+    text: "Catálogo de lotes de mercadería: código, marca, cantidad, proveedor, líder de equipo responsable y estado (pendiente/completado). Muestra los días que lleva cada lote hasta completarse."
   },
   Guias: {
     title: "Guías",
@@ -143,7 +144,7 @@ const ADMIN_SECTION_HELP = {
   },
   Errores: {
     title: "Errores",
-    text: "Reporta incidencias/errores por trabajador (tarea, tienda, número de guía, tipo de error) — la misma sección que usa el jefe de equipo — y consulta el historial de errores registrados."
+    text: "Reporta incidencias/errores por trabajador o por área (tarea, tienda, número de guía, tipo de error) — la misma sección que usa el líder de equipo — y consulta el historial de errores registrados."
   },
   Amonestaciones: {
     title: "Amonestaciones",
@@ -203,7 +204,7 @@ export default function AdminDashboard({ section }) {
   if (section === "Tiendas") return <><StoresPanel /><AdminHelpButton section="Tiendas" /></>;
   if (section === "Lotes") return <><LotesPanel /><AdminHelpButton section="Lotes" /></>;
   if (section === "Guias") return <><GuiasPanel /><AdminHelpButton section="Guias" /></>;
-  if (section === "Errores") return <><IncidentPanel /><AdminHelpButton section="Errores" /></>;
+  if (section === "Errores") return <><IncidentDashboard /><AdminHelpButton section="Errores" /></>;
   if (section === "Amonestaciones") return <><WarningsPanel /><AdminHelpButton section="Amonestaciones" /></>;
   if (section === "Documentos") return <><DocumentsPanel /><AdminHelpButton section="Documentos" /></>;
   return <FootwearDashboard />;
@@ -513,12 +514,12 @@ function UsersPanel() {
 
   const inactiveCount = users.filter((user) => !boolValue(user.activo)).length;
   const visibleUsers = showInactive ? users : users.filter((user) => boolValue(user.activo));
-  const userColumns = Array.from(new Set(visibleUsers.flatMap((user) => Object.keys(user)))).filter((key) => key !== "id");
+  const userColumns = Array.from(new Set(visibleUsers.flatMap((user) => Object.keys(user))))
+    .filter((key) => !["id", "activo", "alias"].includes(key));
   const rows = visibleUsers.map((user) => Object.fromEntries(
     userColumns.map((key) => {
       const label = userColumnLabel(key);
       if (key === "rol") return [label, normalizeRole(user[key])];
-      if (key === "activo") return [label, boolValue(user[key])];
       if (key === "sueldo") return [label, Number(user[key] || 0).toLocaleString("es-PE", { style: "currency", currency: "PEN" })];
       return [label, user[key]];
     })
@@ -534,7 +535,13 @@ function UsersPanel() {
           <Button
             variant="secondary"
             icon={showInactive ? EyeOff : Eye}
-            onClick={() => setShowInactive((current) => !current)}
+            onClick={() => {
+              setShowInactive((current) => {
+                const next = !current;
+                if (!next && selectedUser && !boolValue(selectedUser.activo)) setEditId("");
+                return next;
+              });
+            }}
           >
             {showInactive ? "Ocultar inactivos" : `Mostrar inactivos (${inactiveCount})`}
           </Button>
@@ -555,8 +562,7 @@ function UsersPanel() {
       </Panel>
 
       <Panel actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
-        <Tabs tabs={["Crear", "Editar", "Eliminar"]} active={tab} onChange={setTab} />
-        <StatusAlert status={status} />
+        <Tabs tabs={["Crear", "Editar", "Eliminar", "Reingresos"]} active={tab} onChange={setTab} />
 
         {tab === "Crear" ? (
           <form className="form-grid" onSubmit={handleCreate}>
@@ -605,7 +611,7 @@ function UsersPanel() {
               onChange={setEditId}
               options={[
                 { value: "", label: "Selecciona un usuario" },
-                ...users.map((user) => ({ value: String(user.id), label: `${user.id} - ${user.email}` }))
+                ...visibleUsers.map((user) => ({ value: String(user.id), label: user.nombres_completos || user.nombre || user.email }))
               ]}
             />
             {tab === "Editar" && selectedUser ? (
@@ -683,7 +689,9 @@ function UsersPanel() {
             ) : null}
           </div>
         ) : null}
+        {tab !== "Reingresos" ? <StatusAlert status={status} /> : null}
       </Panel>
+      {tab === "Reingresos" ? <RehiresSection /> : null}
       {confirmingDelete && selectedUser ? (
         <div
           className="delete-confirm-overlay"
@@ -710,6 +718,66 @@ function UsersPanel() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function RehiresSection() {
+  const { data: movements = [], loading, error, reload } = useAsyncData(listPersonnelMovements, [], []);
+
+  const movementsByWorker = new Map();
+  for (const movement of movements) {
+    const key = Number(movement.usuarioId);
+    if (!movementsByWorker.has(key)) movementsByWorker.set(key, []);
+    movementsByWorker.get(key).push(movement);
+  }
+
+  const rehiredWorkers = [...movementsByWorker.entries()]
+    .map(([usuarioId, items]) => {
+      const sorted = [...items].sort((left, right) => String(left.fecha || "").localeCompare(String(right.fecha || "")) || left.id - right.id);
+      const ingresoCount = sorted.filter((item) => normalizeText(item.tipo) === "ingreso").length;
+      return { usuarioId, items: sorted, ingresoCount, worker: sorted[sorted.length - 1] };
+    })
+    .filter((entry) => entry.ingresoCount > 1)
+    .sort((left, right) => String(left.worker.workerName || "").localeCompare(String(right.worker.workerName || ""), "es"));
+
+  return (
+    <Panel
+      title="Trabajadores con reingreso"
+      eyebrow="Historial de ingresos y salidas"
+      actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}
+    >
+      {loading ? <LoadingBlock /> : null}
+      {error ? <Alert type="error">{error}</Alert> : null}
+      {!loading && !rehiredWorkers.length ? <Alert>No hay trabajadores con más de un ingreso registrado.</Alert> : null}
+      {rehiredWorkers.length ? (
+        <div className="details-list">
+          {rehiredWorkers.map((entry) => (
+            <details key={entry.usuarioId} className="detail-card">
+              <summary>
+                <span>
+                  <strong>{entry.worker.workerName}</strong>
+                  <br />
+                  <small>
+                    {entry.worker.workerEmail} · {normalizeRole(entry.worker.workerRole) || "sin rol"} ·{" "}
+                    {entry.worker.workerActive ? "Activo" : "Inactivo"}
+                  </small>
+                </span>
+                <span>{entry.ingresoCount} ingresos</span>
+              </summary>
+              <DataTable
+                rows={entry.items.map((item) => ({
+                  Fecha: formatDateLima(item.fecha),
+                  Tipo: normalizeText(item.tipo) === "ingreso" ? "Ingreso" : "Salida",
+                  Motivo: item.motivo || ""
+                }))}
+                columns={["Fecha", "Tipo", "Motivo"]}
+                compact
+              />
+            </details>
+          ))}
+        </div>
+      ) : null}
+    </Panel>
   );
 }
 
@@ -849,7 +917,6 @@ function WorkerTrainingProfile({ user, onClose }) {
           <b>{summary.percent}%</b>
         </div>
 
-        {status ? <StatusAlert status={status} /> : null}
         {loading ? <LoadingBlock label="Cargando capacitaciones" /> : null}
         {error ? (
           <Alert type="error">
@@ -909,6 +976,7 @@ function WorkerTrainingProfile({ user, onClose }) {
             })}
           </div>
         ) : null}
+        {status ? <StatusAlert status={status} /> : null}
       </section>
     </div>
   );
@@ -1636,7 +1704,6 @@ function BulkTrainingPanel({ users }) {
         <Button variant="secondary" type="button" onClick={() => setSelectedIds(new Set())}>Quitar seleccion</Button>
         <span className="attendance-marked-count">{selectedIds.size} seleccionados</span>
       </div>
-      <StatusAlert status={status} />
       {courseId ? (
         <Alert>
           Lista: {sourceStatus ? trainingStatusLabel(sourceStatus) : "Todos"} ({filteredUsers.length})
@@ -1662,6 +1729,7 @@ function BulkTrainingPanel({ users }) {
           );
         })}
       </div>
+      <StatusAlert status={status} />
       <div className="form-actions">
         <Button icon={Save} loading={saving} onClick={handleApply}>Aplicar a {selectedIds.size} trabajador(es)</Button>
       </div>
@@ -1866,7 +1934,6 @@ function PenaltiesSection() {
       >
         {loading ? <LoadingBlock /> : null}
         {error ? <Alert type="error">{error}</Alert> : null}
-        <StatusAlert status={status} />
         <Alert>
           Define cuantos puntos resta cada ocurrencia. Ingresa el valor como numero positivo: se descuenta esa cantidad
           por cada carta de amonestacion, memorandum, inasistencia (solo Falta y Suspension) o tardanza.
@@ -1887,6 +1954,7 @@ function PenaltiesSection() {
               />
             ))}
           </div>
+          <StatusAlert status={status} />
           <div className="form-actions">
             <Button type="submit" icon={Save} loading={saving} disabled={loading}>Guardar puntos en contra</Button>
           </div>
@@ -2047,7 +2115,6 @@ function TaskScoringSection() {
 
       <Panel actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
         <Tabs tabs={["Crear tarea", "Editar tarea", "Eliminar tarea"]} active={tab} onChange={setTab} />
-        <StatusAlert status={status} />
 
         {tab === "Crear tarea" ? (
           <TaskForm form={createForm} setForm={setCreateForm} onSubmit={handleCreate} saving={saving} submitLabel="Crear tarea" />
@@ -2076,6 +2143,7 @@ function TaskScoringSection() {
             ) : null}
           </div>
         )}
+        <StatusAlert status={status} />
       </Panel>
     </div>
   );
@@ -2242,7 +2310,7 @@ function AttendancePanel() {
   const [historyUserId, setHistoryUserId] = useState("todos");
   const [historyMonth, setHistoryMonth] = useState(() => todayLimaISO().slice(0, 7));
   const [historyDay, setHistoryDay] = useState("todos");
-  const [historyWorkerStatus, setHistoryWorkerStatus] = useState("todos");
+  const [historyWorkerStatus, setHistoryWorkerStatus] = useState("activos");
   const [historyDateOrder, setHistoryDateOrder] = useState("desc");
   const [attendanceValues, setAttendanceValues] = useState({});
   const [attendanceObservations, setAttendanceObservations] = useState({});
@@ -2461,7 +2529,6 @@ function AttendancePanel() {
           />
           <Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>
         </div>
-        <StatusAlert status={status} />
         {loading ? <LoadingBlock /> : null}
         {error ? <Alert type="error">{error}</Alert> : null}
         {!loading && !workers.length ? <Alert>No hay trabajadores registrados.</Alert> : null}
@@ -2539,6 +2606,7 @@ function AttendancePanel() {
             })}
           </div>
         </div>
+        <StatusAlert status={status} />
         <div className="form-actions">
           <Button icon={Save} loading={saving} onClick={handleSave}>Guardar asistencia</Button>
         </div>
@@ -3028,8 +3096,6 @@ function ActivityNotificationsPanel() {
             </div>
           </div>
         ) : null}
-        <StatusAlert status={status} />
-
         {!loading && !error && !gmailConfigured ? (
           <Alert type="error">
             Falta configurar GMAIL_APP_PASSWORD como variable privada de Netlify. Puedes crear borradores, pero no activarlos ni enviarlos.
@@ -3330,6 +3396,7 @@ function ActivityNotificationsPanel() {
             );
           })}
         </div> : null}
+        <StatusAlert status={status} />
       </Panel>
 
       <Panel title="Reporte de cumplimiento" eyebrow="Vista previa">
@@ -3624,20 +3691,6 @@ function AttendanceNotificationsPanel() {
             </div>
           </div>
         ) : null}
-        <div className="notification-live-region" aria-live="polite">
-          <StatusAlert status={status} />
-          {status ? (
-            <button
-              type="button"
-              className="notification-status-close"
-              aria-label="Cerrar mensaje"
-              onClick={() => setStatus(null)}
-            >
-              <X aria-hidden="true" />
-            </button>
-          ) : null}
-        </div>
-
         {!loading && !error && !gmailConfigured ? (
           <Alert type="error">
             Falta configurar GMAIL_APP_PASSWORD como variable privada de Netlify. Puedes crear borradores, pero no activarlos ni enviarlos.
@@ -3911,6 +3964,19 @@ function AttendanceNotificationsPanel() {
             );
           })}
         </div> : null}
+        <div className="notification-live-region" aria-live="polite">
+          <StatusAlert status={status} />
+          {status ? (
+            <button
+              type="button"
+              className="notification-status-close"
+              aria-label="Cerrar mensaje"
+              onClick={() => setStatus(null)}
+            >
+              <X aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
       </Panel>
 
       <Panel title="Historial de envios" eyebrow="Seguimiento">
@@ -4119,7 +4185,6 @@ function StoresSection() {
       </Panel>
       <Panel actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
         <Tabs tabs={["Crear", "Editar", "Eliminar"]} active={tab} onChange={setTab} />
-        <StatusAlert status={status} />
         <form className="form-grid" onSubmit={tab === "Crear" ? submitCreate : submitEdit}>
           {tab !== "Crear" ? (
             <SelectInput
@@ -4146,6 +4211,9 @@ function StoresSection() {
               <Button type="button" variant="danger" icon={Trash2} loading={saving} onClick={submitDelete}>Eliminar tienda</Button>
             </div>
           ) : null}
+          <div className="form-span">
+            <StatusAlert status={status} />
+          </div>
         </form>
       </Panel>
     </div>
@@ -4236,7 +4304,6 @@ function BrandsSection() {
       </Panel>
       <Panel actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
         <Tabs tabs={["Crear", "Editar", "Eliminar"]} active={tab} onChange={setTab} />
-        <StatusAlert status={status} />
         <form className="form-grid" onSubmit={tab === "Crear" ? submitCreate : submitEdit}>
           {tab !== "Crear" ? (
             <SelectInput
@@ -4262,6 +4329,9 @@ function BrandsSection() {
               <Button type="button" variant="danger" icon={Trash2} loading={saving} onClick={submitDelete}>Eliminar marca</Button>
             </div>
           ) : null}
+          <div className="form-span">
+            <StatusAlert status={status} />
+          </div>
         </form>
       </Panel>
     </div>
@@ -4441,7 +4511,6 @@ function LotesPanel() {
 
       <Panel>
         <Tabs tabs={["Crear", "Editar", "Eliminar"]} active={tab} onChange={setTab} />
-        <StatusAlert status={status} />
         <form className="form-grid" onSubmit={tab === "Crear" ? submitCreate : submitEdit}>
           {tab !== "Crear" ? (
             <SelectInput
@@ -4500,6 +4569,9 @@ function LotesPanel() {
               <Button type="button" variant="danger" icon={Trash2} loading={saving} onClick={submitDelete}>Eliminar lote</Button>
             </div>
           ) : null}
+          <div className="form-span">
+            <StatusAlert status={status} />
+          </div>
         </form>
       </Panel>
     </div>
@@ -4908,7 +4980,6 @@ function GuiasPanel() {
           />
           <Button variant="secondary" icon={FileSpreadsheet} loading={exporting} disabled={!hasMonthSelection} onClick={handleExport}>Exportar Excel del mes</Button>
         </div>
-        <StatusAlert status={exportStatus} />
         <div className="toolbar">
           <input
             key={monthFileInputKey}
@@ -4920,8 +4991,9 @@ function GuiasPanel() {
           />
           <Button variant="secondary" icon={Upload} loading={monthImporting} disabled={!hasMonthSelection} onClick={handleImportMonth}>Importar mes</Button>
         </div>
-        <StatusAlert status={monthImportStatus} />
         <DataTable rows={tableRows} columns={["Codigo", "Fecha", "Mes", "Año", "Cantidad"]} pageSize={25} empty="No hay guias para estos filtros." />
+        <StatusAlert status={exportStatus} />
+        <StatusAlert status={monthImportStatus} />
       </Panel>
     </div>
   );
@@ -5059,7 +5131,6 @@ function WarningsPanel() {
 
       <Panel>
         <Tabs tabs={["Registrar", "Eliminar"]} active={tab} onChange={setTab} />
-        <StatusAlert status={status} />
 
         {tab === "Registrar" ? (
           <form className="form-grid" onSubmit={handleCreate}>
@@ -5127,6 +5198,7 @@ function WarningsPanel() {
             ) : null}
           </div>
         )}
+        <StatusAlert status={status} />
       </Panel>
 
       <Panel title="Historial de amonestaciones" eyebrow="Detalle">

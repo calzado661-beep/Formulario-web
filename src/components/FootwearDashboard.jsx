@@ -789,7 +789,7 @@ function LoteDurationChart({ lots }) {
         tooltipFormatter={(item) => ({
           value: `${numberFormatter.format(item.value)} día${item.value === 1 ? "" : "s"}`,
           detail: [
-            `Jefe de equipo: ${item.teamLeaderName || "—"}`,
+            `Líder de equipo: ${item.teamLeaderName || "—"}`,
             `Marca: ${item.brandName || "—"}`,
             `Pares: ${numberFormatter.format(item.quantity || 0)}`,
             `Ingreso: ${item.startDate ? formatCalendarDate(item.startDate) : "—"}`,
@@ -1759,10 +1759,10 @@ const DASHBOARD_HELP_SECTIONS = [
     items: [
       { title: "Margen de error", text: "Registros de error del período sobre la cantidad de guías distintas registradas en ese mismo período." },
       { title: "Ausentismo / Tardanza", text: "Porcentaje de faltas o llegadas tarde sobre el total de asistencias marcadas en el período." },
-      { title: "Permanencia promedio", text: "Meses promedio que llevan todos los trabajadores, activos e inactivos. No se ve afectado por ningún filtro." },
+      { title: "Permanencia promedio", text: "Meses promedio que duraron los trabajadores con un período laboral ya cerrado (con fecha de salida). No cuenta el tiempo en curso de quienes siguen activos, para que las contrataciones nuevas no bajen el promedio. No se ve afectado por ningún filtro." },
       { title: "Promedio de días por lote", text: "Días promedio que tardan los lotes en completarse. Los pendientes cuentan sus días contra hoy, así que suben solos cada día." },
       { title: "Promedio / Totales Guías y Pares", text: "Promedio diario y totales de guías distintas y pares registrados en el período filtrado." },
-      { title: "Avance de pares por lote", text: "Pares etiquetados por el jefe de equipo frente a la cantidad total del lote seleccionado." },
+      { title: "Avance de pares por lote", text: "Pares etiquetados por el líder de equipo frente a la cantidad total del lote seleccionado." },
       { title: "Próximo Cumpleaños", text: "Próximos cumpleaños del equipo, ordenados por fecha." }
     ]
   },
@@ -2699,8 +2699,11 @@ export default function FootwearDashboard() {
   }), { absent: 0, punctual: 0, late: 0 });
   const attendanceTotal = attendanceTotals.absent + attendanceTotals.punctual + attendanceTotals.late;
   // No se filtra por nada (ni periodo, ni cargo, ni trabajador, ni el switch
-  // de inactivos): siempre es la permanencia de TODOS los trabajadores,
-  // activos e inactivos.
+  // de inactivos). Solo cuenta periodos laborales ya CERRADOS (con fecha de
+  // salida): el periodo abierto de un trabajador activo no suma, para que una
+  // ola de contrataciones nuevas no hunda el promedio con dias recien
+  // empezados. Por eso mide cuanto duraron en promedio los que ya salieron,
+  // no la antiguedad del equipo actual.
   const tenure = averageEmployeeTenureMonths(dashboardData?.movements || [], {
     allowedWorkerIds: new Set(WORKERS.map((worker) => Number(worker.id)))
   });
@@ -2725,7 +2728,7 @@ export default function FootwearDashboard() {
     { label: "Margen de error", detail: `${numberFormatter.format(totalErrorCount)} errores / ${numberFormatter.format(totalGuideCount)} guías distintas`, value: `${errorMargin.toFixed(2)}%` },
     { label: "Ausentismo", detail: "Registro de asistencias", value: `${attendanceTotal ? ((attendanceTotals.absent / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
     { label: "Tardanza", detail: "Llegadas fuera de hora", value: `${attendanceTotal ? ((attendanceTotals.late / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
-    { label: "Permanencia promedio", detail: `${tenure.workerCount} trabajador(es) con periodos laborales`, suffix: "meses", value: tenure.months.toFixed(2) },
+    { label: "Permanencia promedio", detail: `${tenure.workerCount} trabajador(es) con periodos laborales cerrados`, suffix: "meses", value: tenure.months.toFixed(2) },
     { label: "Promedio de días por lote", detail: `${loteDurations.length} lote(s)`, suffix: "días", value: avgLoteDurationDays.toFixed(1) }
   ];
   // No se filtra por periodo ni por trabajador: el historial de amonestaciones
@@ -2869,7 +2872,6 @@ export default function FootwearDashboard() {
   const activeWorkers = peopleWorkers;
   const operantCount = activeWorkers.filter((worker) => worker.role === "operante").length;
   const teamLeadCount = activeWorkers.filter((worker) => worker.role === "lider de equipo").length;
-  const groupLeadCount = activeWorkers.filter((worker) => worker.role === "jefe de grupo").length;
   const latestAttendanceDate = (dashboardData?.attendances || []).map((row) => row.date).filter(Boolean).sort().at(-1);
   const attendanceForWorkers = (workers) => (dashboardData?.attendances || []).filter((row) => (
     row.date === latestAttendanceDate && workers.some((worker) => Number(worker.id) === Number(row.workerId))
@@ -2878,17 +2880,34 @@ export default function FootwearDashboard() {
     else summary.present += 1;
     return summary;
   }, { present: 0, absent: 0 });
-  const operationalWorkers = activeWorkers.filter((worker) => ["operante", "lider de equipo", "jefe de grupo"].includes(worker.role));
-  const administrativeWorkers = activeWorkers.filter((worker) => !["operante", "lider de equipo", "jefe de grupo"].includes(worker.role));
+  const operationalWorkers = activeWorkers.filter((worker) => ["operante", "lider de equipo"].includes(worker.role));
+  const administrativeWorkers = activeWorkers.filter((worker) => !["operante", "lider de equipo"].includes(worker.role));
+  // WORKERS deja afuera al administrador a propósito (no debe inflar las
+  // métricas operativas), pero "Total Trabajadores" y "Total Administrativo"
+  // sí deben contarlo. birthdayPeople incluye a todos, así que cualquiera ahí
+  // que no esté en WORKERS es administrador.
+  const workerIds = new Set(WORKERS.map((worker) => Number(worker.id)));
+  const activeAdmins = (dashboardData?.birthdayPeople || [])
+    .filter((person) => !workerIds.has(Number(person.id)))
+    .filter((person) => globalIncludeInactiveWorkers || person.active);
   const personnelKpis = [
-    { label: "Total Trabajadores", value: activeWorkers.length, detail: latestAttendanceDate ? `Estado al ${formatCalendarDate(latestAttendanceDate)}` : "Sin asistencia registrada", attendance: attendanceForWorkers(activeWorkers) },
+    {
+      label: "Total Trabajadores",
+      value: activeWorkers.length + activeAdmins.length,
+      detail: latestAttendanceDate ? `Estado al ${formatCalendarDate(latestAttendanceDate)}` : "Sin asistencia registrada",
+      attendance: attendanceForWorkers([...activeWorkers, ...activeAdmins])
+    },
     {
       label: "Total Operantes",
-      value: operantCount + teamLeadCount + groupLeadCount,
-      detail: `${operantCount} operantes · ${teamLeadCount} líderes de equipo${groupLeadCount ? ` · ${groupLeadCount} jefes de grupo` : ""}`
-      , attendance: attendanceForWorkers(operationalWorkers)
+      value: operantCount + teamLeadCount,
+      detail: `${operantCount} operantes · ${teamLeadCount} líderes de equipo`,
+      attendance: attendanceForWorkers(operationalWorkers)
     },
-    { label: "Total Administrativo", value: administrativeWorkers.length, attendance: attendanceForWorkers(administrativeWorkers) }
+    {
+      label: "Total Administrativo",
+      value: administrativeWorkers.length + activeAdmins.length,
+      attendance: attendanceForWorkers([...administrativeWorkers, ...activeAdmins])
+    }
   ];
   const nextBirthdays = (() => {
     const today = new Date();
@@ -3145,14 +3164,14 @@ export default function FootwearDashboard() {
             <section className="pbi-section-grid pbi-section-grid--indicators" aria-label="Indicadores generales">
               {filteredIndicators.map((item) => <IndicatorKpi key={item.label} {...item} />)}
               <PairedMetricKpi
-                label="Promedio Guías y Pares"
+                label={`Promedio Guías y Pares · ${selectedMonthTitleLabel}`}
                 items={[
                   { detail: "Guías", value: oneDecimalFormatter.format(guiasAvgPerDay) },
                   { detail: "Pares", value: oneDecimalFormatter.format(paresAvgPerDay) }
                 ]}
               />
               <PairedMetricKpi
-                label="Totales Guías y Pares"
+                label={`Totales Guías y Pares · ${selectedMonthTitleLabel}`}
                 items={[
                   { detail: "Guías", value: numberFormatter.format(totalGuideCount) },
                   { detail: "Pares", value: numberFormatter.format(guiasTotalPares) }

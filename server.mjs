@@ -199,7 +199,10 @@ function normalizeRole(role) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
-  return value === "trabajador" ? "operante" : value;
+  if (value === "trabajador") return "operante";
+  if (value === "jefe de equipo") return "lider de equipo";
+  if (value === "jefe de grupo") return "lider de equipo";
+  return value;
 }
 
 function normalizeTaskName(value) {
@@ -1767,6 +1770,44 @@ async function handleReadUsers(_request, response) {
   }
 }
 
+// Historial completo de ingresos/salidas por trabajador, usado para detectar
+// reingresos (mas de un "Ingreso") en el panel de Usuarios. selectUsers() solo
+// trae el ultimo ingreso/salida de cada uno, no sirve para esto.
+async function handleReadPersonnelMovements(request, response) {
+  try {
+    if (!requireAdministrator(request, response)) return;
+    const [movementsResult, usersResult] = await Promise.all([
+      supabase
+        .from("movimientos_personal")
+        .select("id,usuario_id,tipo_movimiento,fecha_movimiento,motivo")
+        .order("usuario_id", { ascending: true })
+        .order("fecha_movimiento", { ascending: true })
+        .order("id", { ascending: true }),
+      supabase.from("usuarios").select("id,nombre,email,rol,activo")
+    ]);
+    if (movementsResult.error) throw movementsResult.error;
+    if (usersResult.error) throw usersResult.error;
+    const userById = new Map((usersResult.data || []).map((user) => [Number(user.id), user]));
+    const movements = (movementsResult.data || []).map((row) => {
+      const user = userById.get(Number(row.usuario_id));
+      return {
+        id: Number(row.id),
+        usuarioId: Number(row.usuario_id),
+        workerName: user?.nombre || user?.email || `Usuario ${row.usuario_id}`,
+        workerEmail: user?.email || null,
+        workerRole: user?.rol || null,
+        workerActive: user ? isActive(user.activo) : null,
+        tipo: String(row.tipo_movimiento || "").trim(),
+        fecha: row.fecha_movimiento,
+        motivo: row.motivo || null
+      };
+    });
+    sendJson(response, 200, { movements });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudieron cargar los movimientos de personal." });
+  }
+}
+
 async function handleReadBrands(_request, response) {
   try {
     sendJson(response, 200, { brands: await selectBrands() });
@@ -2082,7 +2123,7 @@ async function handleDeleteTaskScoreRanges(request, response) {
 
 async function handleReadStores(request, response) {
   try {
-    if (!requireSessionRole(request, response, ["administrador", "operante", "lider de equipo", "jefe de grupo"])) return;
+    if (!requireSessionRole(request, response, ["administrador", "operante", "lider de equipo"])) return;
     const result = await supabase.from("tiendas").select("*").order("id", { ascending: true });
     if (result.error) throw result.error;
     sendJson(response, 200, { stores: result.data || [] });
@@ -2184,7 +2225,7 @@ async function enrichLotes(rows) {
 
 async function handleReadLotes(request, response) {
   try {
-    if (!requireSessionRole(request, response, ["administrador", "operante", "lider de equipo", "jefe de grupo"])) return;
+    if (!requireSessionRole(request, response, ["administrador", "operante", "lider de equipo"])) return;
     const result = await supabase.from("lotes").select(LOTE_SELECT_COLUMNS).order("id", { ascending: false });
     if (result.error) throw result.error;
     sendJson(response, 200, { lotes: await enrichLotes(result.data || []) });
@@ -3359,7 +3400,7 @@ async function handleSendActivityReport(request, response, configId = 1) {
 
 async function handleReadActivityLogs(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["administrador", "operante", "lider de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["administrador", "operante", "lider de equipo"]);
     if (!session) return;
     const url = new URL(request.url, `http://${request.headers.host}`);
     const workerId = url.searchParams.get("workerId");
@@ -3375,7 +3416,7 @@ async function handleReadActivityLogs(request, response) {
 
 async function handleCreateActivityLog(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["operante", "lider de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["operante", "lider de equipo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const submittedTime = body.tiempo_minutos ?? body.dato_extra;
@@ -3402,6 +3443,15 @@ async function handleCreateActivityLog(request, response) {
         sendJson(response, 400, { error: "La fecha de registro solo puede ser hasta 3 dias antes de hoy." });
         return;
       }
+    }
+    let horaRegistro = null;
+    if (body.hora_registro !== undefined && body.hora_registro !== null && body.hora_registro !== "") {
+      const requestedHora = String(body.hora_registro).trim();
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(requestedHora)) {
+        sendJson(response, 400, { error: "La hora de registro no es valida." });
+        return;
+      }
+      horaRegistro = requestedHora;
     }
     const tableName = await getTaskTableName();
     const taskResult = await supabase.from(tableName).select("*").eq("id", Number(body.tarea_id)).eq("es_operativa", true).maybeSingle();
@@ -3503,6 +3553,7 @@ async function handleCreateActivityLog(request, response) {
       usuario_id: Number(session.id),
       tarea_id: Number(body.tarea_id),
       fecha_registro: body.fecha_registro ? String(body.fecha_registro) : new Date().toISOString().slice(0, 10),
+      hora_registro: horaRegistro,
       cantidad: requestedQuantity,
       turno: body.turno ? String(body.turno).trim() : null,
       cumplimiento: body.cumplimiento === undefined ? null : Boolean(body.cumplimiento),
@@ -3787,7 +3838,7 @@ async function loadGroupLeaderData() {
   const recordTasks = (tasksResult.data || []).filter((task) => isGroupLeaderTimeTask(task));
   const tasks = recordTasks.filter((task) => isActive(task.activo));
   const workers = users.filter((user) => normalizeRole(user.rol) === "operante" && isActive(user.activo));
-  const leaders = users.filter((user) => ["lider de equipo", "jefe de grupo"].includes(normalizeRole(user.rol)) && isActive(user.activo));
+  const leaders = users.filter((user) => ["lider de equipo"].includes(normalizeRole(user.rol)) && isActive(user.activo));
   const records = enrichGroupRecords(
     (recordsResult.data || []).map((record) => ({
       ...record,
@@ -3854,7 +3905,7 @@ async function loadGroupLeaderData() {
 
 async function handleUpdateAverageReference(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo", "administrador"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "administrador"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const taskId = Number(body.tarea_id);
@@ -3908,7 +3959,7 @@ async function handleUpdateAverageReference(request, response) {
 
 async function handleGroupLeaderContext(request, response) {
   try {
-    if (!requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"])) return;
+    if (!requireSessionRole(request, response, ["lider de equipo"])) return;
     const data = await loadGroupLeaderData();
     sendJson(response, 200, data);
   } catch (error) {
@@ -3986,7 +4037,7 @@ async function handleWorkerLiveProgress(request, response) {
 
 async function handleCreateGroupLeaderRecordLegacy(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo"]);
     if (!session) return;
     const rawBody = await readBody(request);
     const body = JSON.parse(rawBody || "{}");
@@ -4368,7 +4419,7 @@ async function validateGroupRecordBase(body, { current = null, validateWorker = 
 
 async function handleCreateGroupLeaderRecord(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const { payload } = await validateGroupRecordBase(body);
@@ -4395,7 +4446,7 @@ async function handleCreateGroupLeaderRecord(request, response) {
 
 async function handleUpdateGroupLeaderRecord(request, response, recordId) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const currentResult = await supabase
@@ -4458,7 +4509,7 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
 
 async function handleDeleteGroupLeaderRecord(request, response, recordId) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const currentResult = await supabase
@@ -4607,7 +4658,7 @@ async function insertLiveActivityHistory(activityId, quantity, userId, type, poi
 
 async function handleCreateLiveGroupLeaderActivity(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const { task, taskId, workerId } = await validateLiveActivityContext(body);
@@ -4705,7 +4756,7 @@ async function handleCreateLiveGroupLeaderActivity(request, response) {
 
 async function handleUpdateLiveGroupLeaderActivity(request, response, activityId) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const currentResult = await supabase.from("actividades_jefe_equipo").select("*").eq("id", activityId).maybeSingle();
@@ -4858,7 +4909,7 @@ async function handleUpdateLiveGroupLeaderActivity(request, response, activityId
 
 async function handleCancelLiveGroupLeaderActivity(request, response, activityId) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo"]);
     if (!session) return;
     const currentResult = await supabase.from("actividades_jefe_equipo").select("id,encargado_id,estado,registro_tarea_id").eq("id", activityId).maybeSingle();
     if (currentResult.error) throw currentResult.error;
@@ -4926,7 +4977,7 @@ async function loadIncidentData() {
 
 async function handleIncidentContext(request, response) {
   try {
-    if (!requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"])) return;
+    if (!requireSessionRole(request, response, ["administrador", "lider de equipo"])) return;
     sendJson(response, 200, await loadIncidentData());
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron cargar las incidencias." });
@@ -4935,7 +4986,7 @@ async function handleIncidentContext(request, response) {
 
 async function handleCreateIncident(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo", "jefe de grupo"]);
+    const session = requireSessionRole(request, response, ["administrador", "lider de equipo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const workerId = Number(body.usuario_id);
@@ -5185,6 +5236,11 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (request.url?.startsWith("/api/users") && request.method === "GET") {
     await handleReadUsers(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/personnel-movements") && request.method === "GET") {
+    await handleReadPersonnelMovements(request, response);
     return;
   }
 

@@ -43,12 +43,12 @@ export default function App() {
     >
       {role === "administrador" ? <AdminDashboard section={adminSection} /> : null}
       {role === "operante" ? <WorkerDashboard user={user} /> : null}
-      {["lider de equipo", "jefe de grupo"].includes(role) ? <GroupLeaderDashboard user={user} /> : null}
+      {role === "lider de equipo" ? <GroupLeaderDashboard user={user} /> : null}
       {role === "otros" ? (
         <Alert>Este usuario pertenece al rol Otros y no tiene modulos operativos asignados.</Alert>
       ) : null}
-      {!["administrador", "operante", "lider de equipo", "jefe de grupo", "otros"].includes(role) ? (
-        <Alert type="error">Rol no reconocido. Usa administrador, operante, líder de equipo o jefe de grupo.</Alert>
+      {!["administrador", "operante", "lider de equipo", "otros"].includes(role) ? (
+        <Alert type="error">Rol no reconocido. Usa administrador, operante, líder de equipo u otros.</Alert>
       ) : null}
     </Layout>
   );

@@ -137,7 +137,6 @@ export function IncidentPanel({ user }) {
       <Panel title="Reportar incidencias" eyebrow="Líder de equipo" actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
         {loading ? <LoadingBlock /> : null}
         {error ? <Alert type="error">{error}</Alert> : null}
-        {status ? <Alert type={status.type}>{status.message}</Alert> : null}
         {!loading && !(data.tiendas || []).length ? <Alert>Aun no hay tiendas registradas.</Alert> : null}
         {!loading && !(data.users || []).length ? <Alert>No hay usuarios operantes o líderes de equipo para seleccionar.</Alert> : null}
 
@@ -176,6 +175,7 @@ export function IncidentPanel({ user }) {
           <div className="form-span">
             <Button type="submit" icon={Save} loading={saving}>Registrar incidente</Button>
           </div>
+          {status ? <Alert type={status.type}>{status.message}</Alert> : null}
         </form>
       </Panel>
 

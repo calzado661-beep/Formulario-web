@@ -231,6 +231,13 @@ export async function listWorkers() {
   return selectUsers();
 }
 
+// Historial completo de ingresos/salidas (no solo el ultimo), usado para
+// detectar reingresos en el panel de Usuarios.
+export async function listPersonnelMovements() {
+  const apiResult = await requestLocalApi("/api/personnel-movements");
+  return apiResult?.movements || [];
+}
+
 export async function listAssignableWorkers() {
   const users = await selectUsers();
   return users.filter((user) => isWorkerRole(user.rol) && isActiveValue(user.activo));
@@ -498,7 +505,7 @@ export async function getTasksForUser(user) {
   const role = normalizeRole(user?.rol);
   const tasks = (await listTasks()).filter((task) => isActiveValue(task.activo) && task.es_operativa === true);
 
-  if (!["trabajador", "operante", "lider de equipo", "jefe de grupo"].includes(role)) {
+  if (!["trabajador", "operante", "lider de equipo"].includes(role)) {
     return tasks;
   }
 

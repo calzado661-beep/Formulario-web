@@ -12,7 +12,7 @@ import {
   listWorkerActivityLogs,
   loadWorkerLiveProgress
 } from "../lib/repository";
-import { formatDateTimeLima, todayLimaISO } from "../lib/dates";
+import { formatDateTimeLima, nowLimaTimeHHMM, todayLimaISO } from "../lib/dates";
 import { downloadCsv } from "../lib/csv";
 import {
   calculatePoints,
@@ -129,6 +129,7 @@ function RegisterActivity({ user }) {
     return limit.toISOString().slice(0, 10);
   }, [maxRecordDate]);
   const [recordDate, setRecordDate] = useState(maxRecordDate);
+  const [recordTime, setRecordTime] = useState(nowLimaTimeHHMM());
 
   const taskMap = useMemo(() => {
     return Object.fromEntries(
@@ -362,6 +363,7 @@ function RegisterActivity({ user }) {
             tarea_id: shape.task.id,
             actividad_nombre: shape.title,
             fecha_registro: recordDate,
+            hora_registro: recordTime || null,
             cantidad: shape.cantidad,
             tipo_medicion: shape.type,
             cumplimiento: shape.cumplimiento,
@@ -397,6 +399,7 @@ function RegisterActivity({ user }) {
 
       setRecords([emptyRecord()]);
       setRecordDate(maxRecordDate);
+      setRecordTime(nowLimaTimeHHMM());
       setSuccessDialog({ saved, totalPoints });
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });
@@ -436,7 +439,6 @@ function RegisterActivity({ user }) {
     >
       {loading ? <LoadingBlock /> : null}
       {error ? <Alert type="error">{error}</Alert> : null}
-      {status ? <Alert type={status.type}>{status.message}</Alert> : null}
       {!loading && !tasks.length ? <Alert>No tienes tareas asignadas para registrar actividades.</Alert> : null}
 
       <div className="record-toolbar">
@@ -448,6 +450,13 @@ function RegisterActivity({ user }) {
           min={minRecordDate}
           max={maxRecordDate}
           hint="Puedes registrar actividad de hasta 3 dias atras."
+        />
+        <TextInput
+          label="Hora de registro"
+          type="time"
+          value={recordTime}
+          onChange={setRecordTime}
+          hint="Por defecto es la hora actual; puedes cambiarla libremente."
         />
         <Button variant="secondary" icon={Plus} onClick={addRecord} disabled={records.length >= taskKeys.length}>
           Agregar tarea
@@ -502,6 +511,7 @@ function RegisterActivity({ user }) {
         })}
       </div>
 
+      {status ? <Alert type={status.type}>{status.message}</Alert> : null}
       <div className="form-actions sticky-actions">
         <Button icon={Save} loading={saving} onClick={handleSave} disabled={!tasks.length}>Guardar registros</Button>
       </div>
@@ -764,6 +774,7 @@ function TodayLeaderTaskCard({ user, onUse }) {
   const [activities, setActivities] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const consumedStorageKey = `worker-leader-task-consumed:${user?.id || "unknown"}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -775,22 +786,30 @@ function TodayLeaderTaskCard({ user, onUse }) {
         const result = await loadWorkerLiveProgress({ signal: controller.signal });
         if (cancelled) return;
         const today = todayLimaISO();
-        // Solo etiquetado: es la unica tarea donde el jefe de equipo registra
+        // Solo etiquetado: es la unica tarea donde el líder de equipo registra
         // en nombre del operante y este debe confirmar el dato el mismo dia.
         const leaderRecordsToday = (result.activities || []).filter(
           (activity) => ["historial_jefe_equipo", "jefe_equipo"].includes(activity.origen)
             && String(activity.fecha_registro || "").slice(0, 10) === today
             && normalizeText(activity.tarea_nombre || activity.actividad_nombre) === "etiquetado"
         );
-        // Si el jefe de equipo hizo varios registros de etiquetado hoy, se
+        // Si el líder de equipo hizo varios registros de etiquetado hoy, se
         // acumulan en una sola tarjeta para que el operante registre una vez.
+        // La firma usa solo los IDs: corregir la cantidad del mismo registro
+        // no debe mostrar de nuevo una tarjeta que el operante ya utilizo.
         const signature = leaderRecordsToday
-          .map((activity) => `${activity.record_id ?? activity.id}:${activity.cantidad}`)
+          .map((activity) => String(activity.record_id ?? activity.id))
           .sort()
           .join("|");
         if (signature !== lastSignatureRef.current) {
           lastSignatureRef.current = signature;
-          setDismissed(false);
+          let consumedSignature = "";
+          try {
+            consumedSignature = window.localStorage.getItem(consumedStorageKey) || "";
+          } catch {
+            // La tarjeta sigue funcionando aunque el navegador bloquee localStorage.
+          }
+          setDismissed(Boolean(signature) && signature === consumedSignature);
         }
         setActivities(leaderRecordsToday);
         setLoaded(true);
@@ -806,7 +825,7 @@ function TodayLeaderTaskCard({ user, onUse }) {
       requestRef.current?.abort();
       requestRef.current = null;
     };
-  }, [user?.id]);
+  }, [user?.id, consumedStorageKey]);
 
   const summary = activities.length
     ? {
@@ -828,9 +847,7 @@ function TodayLeaderTaskCard({ user, onUse }) {
           </header>
           <dl>
             <div><dt>Cantidad</dt><dd>{liveProgressNumber(summary.cantidad)}</dd></div>
-            <div><dt>Marca</dt><dd>{summary.marca_nombre || "No aplica"}</dd></div>
             <div><dt>Lote</dt><dd>{summary.lote || "No aplica"}</dd></div>
-            <div><dt>Tienda</dt><dd>{summary.tienda_nombre || "No aplica"}</dd></div>
             <div><dt>Hangtag</dt><dd>{summary.tipo_etiquetado || "No aplica"}</dd></div>
           </dl>
           <small>
@@ -842,6 +859,11 @@ function TodayLeaderTaskCard({ user, onUse }) {
             type="button"
             variant="secondary"
             onClick={() => {
+              try {
+                window.localStorage.setItem(consumedStorageKey, lastSignatureRef.current);
+              } catch {
+                // Al menos se oculta durante la sesion actual.
+              }
               onUse(summary);
               setDismissed(true);
             }}
@@ -855,7 +877,7 @@ function TodayLeaderTaskCard({ user, onUse }) {
 }
 
 const WORKER_HISTORY_EXPORT_COLUMNS = [
-  "Fecha", "Hora inicio", "Hora fin", "Tarea", "Cantidad", "Tiempo (min)", "Turno",
+  "Fecha", "Hora", "Fecha real", "Hora inicio", "Hora fin", "Tarea", "Cantidad", "Tiempo (min)", "Turno",
   "Cumplimiento", "Puntos", "Tienda", "Guia", "Lote", "Marcas", "Detalle"
 ];
 
@@ -904,7 +926,9 @@ export function WorkerHistory({ user }) {
     const taskName = taskNameById[log.tarea_id] || log.actividad_nombre || "";
     const [tipoAct] = getActivityCaptureMode(taskName);
     return {
-      Fecha: formatDateTimeLima(log.created_at) || log.fecha_registro,
+      Fecha: log.fecha_registro || "",
+      Hora: log.hora_registro || "",
+      "Fecha real": formatDateTimeLima(log.created_at) || "",
       "Hora inicio": log.hora_inicio ? liveProgressTime(log.hora_inicio) : "",
       "Hora fin": log.hora_fin ? liveProgressTime(log.hora_fin) : "",
       Tarea: taskName,

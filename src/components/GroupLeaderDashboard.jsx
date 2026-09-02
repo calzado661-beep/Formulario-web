@@ -245,7 +245,7 @@ function RankingDashboard({ user }) {
       if (!person) continue;
       if (!includeInactive && !person.activo) continue;
       const personRole = normalizeRole(person.rol);
-      if (peopleScope === "operantes" && !["operante", "lider de equipo", "jefe de grupo"].includes(personRole)) continue;
+      if (peopleScope === "operantes" && !["operante", "lider de equipo"].includes(personRole)) continue;
       const cantidad = Number(record.cantidad || 0);
       const minutos = Number(record.tiempo_minutos || 0);
       if (cantidad <= 0 || minutos <= 0) continue;
@@ -540,7 +540,7 @@ var initialIncidentForm = {
   tipo_error: "CONTENIDO",
   observacion: ""
 };
-function IncidentDashboard({ user }) {
+export function IncidentDashboard({ user }) {
   const [form, setForm] = useState(initialIncidentForm);
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -629,7 +629,6 @@ function IncidentDashboard({ user }) {
     },
     loading ? /* @__PURE__ */ React.createElement(LoadingBlock, null) : null,
     error ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, error) : null,
-    status ? /* @__PURE__ */ React.createElement(Alert, { type: status.type }, status.message) : null,
     !loading && !workers.length && !["incidencia", "error"].includes(form.turno) ? /* @__PURE__ */ React.createElement(Alert, null, "No hay operantes activos.") : null,
     !loading && !stores.length ? /* @__PURE__ */ React.createElement(Alert, null, "No hay tiendas activas registradas.") : null,
     /* @__PURE__ */ React.createElement("form", { className: "form-grid", onSubmit: handleSubmit }, ["incidencia", "error"].includes(form.turno) ? /* @__PURE__ */ React.createElement(
@@ -708,8 +707,8 @@ function IncidentDashboard({ user }) {
         onChange: (observacion) => updateForm({ observacion }),
         placeholder: "Detalle opcional"
       }
-    ), /* @__PURE__ */ React.createElement("div", { className: "form-span form-actions" }, /* @__PURE__ */ React.createElement(Button, { type: "submit", icon: Save, loading: saving }, "Guardar incidencia")))
-  ), /* @__PURE__ */ React.createElement(Panel, { title: "Historial de incidencias", eyebrow: "Datos registrados" }, /* @__PURE__ */ React.createElement(DataTable, { rows, empty: "Todav\xEDa no hay incidencias registradas.", compact: true })));
+    ), /* @__PURE__ */ React.createElement("div", { className: "form-span form-actions" }, /* @__PURE__ */ React.createElement(Button, { type: "submit", icon: Save, loading: saving }, "Guardar incidencia")), status ? /* @__PURE__ */ React.createElement(Alert, { type: status.type }, status.message) : null)
+  ), /* @__PURE__ */ React.createElement(Panel, { title: "Historial de errores", eyebrow: "Datos registrados" }, /* @__PURE__ */ React.createElement(DataTable, { rows, empty: "Todav\xEDa no hay errores registrados.", compact: true })));
 }
 function GroupTimeDashboard({ user }) {
   const [form, setForm] = useState(createInitialForm);

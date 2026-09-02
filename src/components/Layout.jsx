@@ -92,11 +92,9 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
       ? "Panel Administrativo"
       : role === "lider de equipo"
         ? "Panel de Líder de Equipo"
-        : role === "jefe de grupo"
-          ? "Panel de Jefe de Grupo"
-          : role === "otros"
-            ? "Perfil de Usuario"
-          : "Panel de Trabajo";
+        : role === "otros"
+          ? "Perfil de Usuario"
+        : "Panel de Trabajo";
 
   return (
     <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${mobileSidebarOpen ? " mobile-sidebar-open" : ""}${isDashboardView ? " dashboard-view" : ""}`}>
@@ -147,7 +145,7 @@ export default function Layout({ user, adminSection, onAdminSectionChange, onLog
             <div className="sidebar-note">
               <Menu />
               <span className="sidebar-copy">
-                {role === "jefe de grupo"
+                {role === "lider de equipo"
                   ? "Registra trabajos por trabajador y deja identificado al encargado en cada registro."
                   : role === "otros"
                     ? "Usuario registrado como personal de otras funciones."
