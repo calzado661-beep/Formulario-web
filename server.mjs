@@ -641,6 +641,10 @@ async function handleUpdateUser(request, response, userId) {
       return;
     }
     const body = JSON.parse((await readBody(request)) || "{}");
+    if (Object.hasOwn(body, "created_at") || Object.hasOwn(body, "createdAt")) {
+      sendJson(response, 400, { error: "La fecha de creacion no se puede modificar." });
+      return;
+    }
     const employmentDates = validateEmploymentDates(body);
     const payload = userPayloadForDb(body);
     if (employmentDates?.ingreso) payload.activo = !employmentDates.salida;
@@ -3657,6 +3661,10 @@ async function handleUpdateActivityRecord(request, response, id) {
       return;
     }
     const body = JSON.parse((await readBody(request)) || "{}");
+    if (Object.hasOwn(body, "created_at") || Object.hasOwn(body, "createdAt")) {
+      sendJson(response, 400, { error: "La fecha de creacion no se puede modificar." });
+      return;
+    }
     const payload = {};
     if (body.fecha_registro !== undefined) {
       const fecha = String(body.fecha_registro || "").trim();
@@ -4449,6 +4457,9 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
     const session = requireSessionRole(request, response, ["lider de equipo"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
+    if (Object.hasOwn(body, "created_at") || Object.hasOwn(body, "createdAt")) {
+      throw invalidGroupRecord("La fecha de creacion no se puede modificar.", 400);
+    }
     const currentResult = await supabase
       .from("registros_tareas_jefe_equipo")
       .select(GROUP_RECORD_COLUMNS_CURRENT)

@@ -317,7 +317,8 @@ export async function createUser(payload, plainPassword) {
 }
 
 export async function updateUser(userId, changes, newPassword) {
-  const payload = newPassword ? { ...changes, password_hash: newPassword } : changes;
+  const { created_at: _createdAt, ...editableChanges } = changes || {};
+  const payload = newPassword ? { ...editableChanges, password_hash: newPassword } : editableChanges;
   const apiResult = await requestLocalApi(`/api/users/${encodeURIComponent(userId)}`, {
     method: "PATCH",
     body: JSON.stringify(payload)
@@ -1208,9 +1209,10 @@ export async function listAllActivityLogs() {
 }
 
 export async function updateActivityRecord(id, changes) {
+  const { created_at: _createdAt, createdAt: _createdAtAlias, ...editableChanges } = changes || {};
   const apiResult = await requestLocalApi(`/api/activity-records/${encodeURIComponent(id)}`, {
     method: "PATCH",
-    body: JSON.stringify(changes)
+    body: JSON.stringify(editableChanges)
   });
   if (apiResult?.record) return apiResult.record;
   throw new Error("El backend debe estar activo para editar un registro de tarea.");
@@ -1287,9 +1289,10 @@ export async function createGroupLeaderRecord(payload) {
 }
 
 export async function updateGroupLeaderRecord(recordId, payload) {
+  const { created_at: _createdAt, createdAt: _createdAtAlias, ...editablePayload } = payload || {};
   const apiResult = await requestLocalApi(`/api/group-leader/records/${encodeURIComponent(recordId)}`, {
     method: "PUT",
-    body: JSON.stringify(payload)
+    body: JSON.stringify(editablePayload)
   }, { requiredBackend: true });
   if (!apiResult?.record) throw new Error("No se pudo actualizar el registro por tiempo.");
   return normalizeGroupLeaderLog(apiResult.record);
