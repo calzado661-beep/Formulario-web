@@ -2131,6 +2131,20 @@ function formatRecordTime(createdAt) {
   return new Intl.DateTimeFormat("es-PE", { timeZone: "America/Lima", hour: "2-digit", minute: "2-digit" }).format(parsed);
 }
 
+function formatRecordCreatedAt(createdAt) {
+  if (!createdAt) return "—";
+  const parsed = new Date(createdAt);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return new Intl.DateTimeFormat("es-PE", {
+    timeZone: "America/Lima",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(parsed);
+}
+
 function selectedLabel(options, values, fallback) {
   if (!values.length) return fallback;
   const labels = values.map((value) => options.find((option) => option.value === value)?.label).filter(Boolean);
@@ -2566,6 +2580,7 @@ export default function FootwearDashboard() {
         brand: row.brandId ? brandById.get(Number(row.brandId)) || `Marca ${row.brandId}` : "—",
         observation: row.observation || "—",
         source: row.source === "jefe-equipo" ? "Líder de equipo" : "Operante",
+        createdAt: formatRecordCreatedAt(row.createdAt),
         raw: row
       };
     });
@@ -3268,7 +3283,8 @@ export default function FootwearDashboard() {
                             </button>
                           </span>
                         )
-                      }
+                      },
+                      { key: "createdAt", label: "Creado el" }
                     ]}
                     rows={taskDetailRows}
                   />

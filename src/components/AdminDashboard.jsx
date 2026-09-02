@@ -514,13 +514,20 @@ function UsersPanel() {
 
   const inactiveCount = users.filter((user) => !boolValue(user.activo)).length;
   const visibleUsers = showInactive ? users : users.filter((user) => boolValue(user.activo));
-  const userColumns = Array.from(new Set(visibleUsers.flatMap((user) => Object.keys(user))))
+  const availableUserColumns = Array.from(new Set(visibleUsers.flatMap((user) => Object.keys(user))))
     .filter((key) => !["id", "activo", "alias"].includes(key));
+  // La fecha de creacion siempre cierra la tabla para que sea facil ubicarla
+  // incluso cuando el backend devuelve los campos en un orden diferente.
+  const userColumns = [
+    ...availableUserColumns.filter((key) => key !== "created_at"),
+    ...availableUserColumns.includes("created_at") ? ["created_at"] : []
+  ];
   const rows = visibleUsers.map((user) => Object.fromEntries(
     userColumns.map((key) => {
       const label = userColumnLabel(key);
       if (key === "rol") return [label, normalizeRole(user[key])];
       if (key === "sueldo") return [label, Number(user[key] || 0).toLocaleString("es-PE", { style: "currency", currency: "PEN" })];
+      if (key === "created_at") return [label, formatDateTimeLima(user[key])];
       return [label, user[key]];
     })
   ));
