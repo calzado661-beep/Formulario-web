@@ -346,6 +346,7 @@ function UsersPanel() {
     email: "",
     password: "",
     fecha_cumpleanos: "",
+    fecha_ingreso: todayLimaISO(),
     sueldo: "0.00",
     rol: "operante",
     activo: true,
@@ -401,6 +402,10 @@ function UsersPanel() {
       setStatus({ type: "error", message: "Nombre, usuario y contrasena son obligatorios." });
       return;
     }
+    if (!createForm.fecha_ingreso) {
+      setStatus({ type: "error", message: "La fecha de ingreso es obligatoria." });
+      return;
+    }
     if (createForm.hijos !== "" && (!Number.isInteger(Number(createForm.hijos)) || Number(createForm.hijos) < 0)) {
       setStatus({ type: "error", message: "El numero de hijos debe ser un entero mayor o igual a cero." });
       return;
@@ -414,7 +419,7 @@ function UsersPanel() {
           rol: createForm.rol,
           activo: createForm.activo,
           fecha_cumpleanos: createForm.fecha_cumpleanos || null,
-          fecha_ingreso: todayLimaISO(),
+          fecha_ingreso: createForm.fecha_ingreso,
           sueldo: Number(createForm.sueldo),
           ...personalDataPayload(createForm)
         },
@@ -425,6 +430,7 @@ function UsersPanel() {
         email: "",
         password: "",
         fecha_cumpleanos: "",
+        fecha_ingreso: todayLimaISO(),
         sueldo: "0.00",
         rol: "operante",
         activo: true,
@@ -582,7 +588,15 @@ function UsersPanel() {
               value={createForm.password}
               onChange={(password) => setCreateForm({ ...createForm, password })}
             />
-            <TextInput label="Fecha de ingreso" type="date" value={todayLimaISO()} onChange={() => {}} disabled hint="Se registra automaticamente con la fecha de hoy" />
+            <TextInput
+              label="Fecha de ingreso *"
+              type="date"
+              max={todayLimaISO()}
+              required
+              value={createForm.fecha_ingreso}
+              onChange={(fecha_ingreso) => setCreateForm({ ...createForm, fecha_ingreso })}
+              hint="Obligatoria. Viene puesta en la fecha de hoy; cambiala si el ingreso real fue otro dia."
+            />
             <TextInput
               label="Fecha de nacimiento"
               type="date"
@@ -2418,12 +2432,18 @@ function AttendancePanel() {
     try {
       let updated = 0;
       for (const worker of data.workers || []) {
-        const estado = attendanceValues[worker.id] || "FALTA";
+        // No confundir "nadie toco esta casilla" (string vacio) con "se marco
+        // Falta a proposito": antes ambos caian a "FALTA" y, si el trabajador
+        // no tenia registro previo ese dia, la comparacion contra el estado
+        // actual (tambien "FALTA" por defecto) salia igual y el guardado de
+        // una Falta explicita se saltaba en silencio.
+        const rawEstado = attendanceValues[worker.id] || "";
         const observacion = (attendanceObservations[worker.id] || "").trim();
-        const estadoChanged = (currentMarks[worker.id] || "FALTA") !== estado;
+        if (!rawEstado) continue;
+        const estadoChanged = (currentMarks[worker.id] || "") !== rawEstado;
         const observacionChanged = (currentObservations[worker.id] || "") !== observacion;
         if (estadoChanged || observacionChanged) {
-          await markAttendance(worker.id, selectedDate, ATTENDANCE_PRESENT_STATES.has(estado), "", { estado, observacion });
+          await markAttendance(worker.id, selectedDate, ATTENDANCE_PRESENT_STATES.has(rawEstado), "", { estado: rawEstado, observacion });
           updated += 1;
         }
       }
