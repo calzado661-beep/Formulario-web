@@ -2339,6 +2339,15 @@ function AttendancePanel() {
   const [saving, setSaving] = useState(false);
   const [successDialog, setSuccessDialog] = useState(null);
   const todayRef = useRef(todayLimaISO());
+  // Trabajadores con una marca o una observacion tocadas en esta pantalla
+  // que todavia no se guardaron. Mientras esten aqui, una recarga (el boton
+  // Actualizar, o el reload automatico despues de guardar a otra persona) no
+  // les pisa el valor local con lo que hay en la base de datos.
+  const dirtyWorkersRef = useRef(new Set());
+
+  useEffect(() => {
+    dirtyWorkersRef.current = new Set();
+  }, [selectedDate]);
 
   // Si la pestana se queda abierta y pasa la medianoche (Lima), la marcacion
   // debe verse "en 0" para el nuevo dia sin tocar el historial ya guardado.
@@ -2372,14 +2381,24 @@ function AttendancePanel() {
   useEffect(() => {
     const currentMap = Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.estado || "FALTA").toUpperCase()]));
     const observationMap = Object.fromEntries((data.current || []).map((row) => [row.usuario_id, String(row.observacion || "")]));
-    const nextValues = {};
-    const nextObservations = {};
-    (data.workers || []).forEach((worker) => {
-      nextValues[worker.id] = currentMap[worker.id] || "";
-      nextObservations[worker.id] = observationMap[worker.id] || "";
+    setAttendanceValues((previous) => {
+      const nextValues = {};
+      (data.workers || []).forEach((worker) => {
+        nextValues[worker.id] = dirtyWorkersRef.current.has(worker.id)
+          ? (previous[worker.id] ?? "")
+          : (currentMap[worker.id] || "");
+      });
+      return nextValues;
     });
-    setAttendanceValues(nextValues);
-    setAttendanceObservations(nextObservations);
+    setAttendanceObservations((previous) => {
+      const nextObservations = {};
+      (data.workers || []).forEach((worker) => {
+        nextObservations[worker.id] = dirtyWorkersRef.current.has(worker.id)
+          ? (previous[worker.id] ?? "")
+          : (observationMap[worker.id] || "");
+      });
+      return nextObservations;
+    });
   }, [data.current, data.workers]);
 
   const currentMarks = useMemo(
@@ -2411,10 +2430,12 @@ function AttendancePanel() {
   const markedCount = statusFilteredWorkers.filter((worker) => Boolean(attendanceValues[worker.id])).length;
 
   function markWorker(worker, estado) {
+    dirtyWorkersRef.current.add(worker.id);
     setAttendanceValues((current) => ({ ...current, [worker.id]: estado }));
   }
 
   function setObservation(worker, value) {
+    dirtyWorkersRef.current.add(worker.id);
     setAttendanceObservations((current) => ({ ...current, [worker.id]: value }));
   }
 
@@ -2446,6 +2467,9 @@ function AttendancePanel() {
           await markAttendance(worker.id, selectedDate, ATTENDANCE_PRESENT_STATES.has(rawEstado), "", { estado: rawEstado, observacion });
           updated += 1;
         }
+        // Ya se guardo (o ya coincidia con lo guardado): de aca en adelante
+        // una recarga puede volver a sincronizar este trabajador sin riesgo.
+        dirtyWorkersRef.current.delete(worker.id);
       }
       setStatus({ type: "success", message: "Asistencia guardada correctamente." });
       setSuccessDialog({ updated });
