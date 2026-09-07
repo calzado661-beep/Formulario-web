@@ -3969,6 +3969,20 @@ async function handleUpdateAverageReference(request, response) {
   }
 }
 
+async function handleReadAverageReferences(request, response) {
+  try {
+    const session = requireSessionRole(request, response, ["lider de equipo", "administrador"]);
+    if (!session) return;
+    const result = await selectAverageReferencesByTask();
+    sendJson(response, 200, {
+      averageReferenceByTask: result.byTask,
+      averageReferenceMigrationRequired: result.migrationRequired
+    });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudieron cargar los promedios de referencia." });
+  }
+}
+
 async function handleGroupLeaderContext(request, response) {
   try {
     if (!requireSessionRole(request, response, ["lider de equipo"])) return;
@@ -5511,6 +5525,11 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (/^\/api\/group-leader\/average-reference\/?$/.test(apiPath) && request.method === "PUT") {
     await handleUpdateAverageReference(request, response);
+    return;
+  }
+
+  if (/^\/api\/average-references\/?$/.test(apiPath) && request.method === "GET") {
+    await handleReadAverageReferences(request, response);
     return;
   }
 
