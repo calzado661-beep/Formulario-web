@@ -4980,9 +4980,7 @@ async function loadIncidentData() {
   }));
 
   return {
-    workers: (usersResult.data || []).filter(
-      (user) => normalizeRole(user.rol) === "operante" && isActive(user.activo)
-    ),
+    workers: (usersResult.data || []).filter((user) => isActive(user.activo)),
     tasks: (tasksResult.data || []).filter((task) => isActive(task.activo)),
     stores,
     areas: areasResult.data || [],
@@ -5034,7 +5032,7 @@ async function handleCreateIncident(request, response) {
       return;
     }
     if (!isAreaIncident && (!Number.isInteger(workerId) || workerId <= 0)) {
-      sendJson(response, 400, { error: "Selecciona un operante activo." });
+      sendJson(response, 400, { error: "Selecciona un trabajador activo." });
       return;
     }
 
@@ -5049,8 +5047,8 @@ async function handleCreateIncident(request, response) {
     const task = taskResult.data;
     const store = storeResult.data;
     const area = areaResult.data;
-    if (!isAreaIncident && (workerResult.error || !worker || normalizeRole(worker.rol) !== "operante" || !isActive(worker.activo))) {
-      sendJson(response, 400, { error: "Selecciona un operante activo." });
+    if (!isAreaIncident && (workerResult.error || !worker || !isActive(worker.activo))) {
+      sendJson(response, 400, { error: "Selecciona un trabajador activo." });
       return;
     }
     if (taskResult.error || !task || !isActive(task.activo)) {

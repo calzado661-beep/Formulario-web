@@ -623,7 +623,7 @@ export function IncidentDashboard({ user }) {
     setStatus(null);
     const isAreaIncident = ["incidencia", "error"].includes(form.turno);
     if (!isAreaIncident && !workers.some((worker) => String(worker.id) === String(form.usuario_id))) {
-      setStatus({ type: "error", message: "Selecciona un operante." });
+      setStatus({ type: "error", message: "Selecciona un trabajador." });
       return;
     }
     if (isAreaIncident && !areas.some((area) => String(area.id) === String(form.area_id))) {
@@ -675,7 +675,7 @@ export function IncidentDashboard({ user }) {
     Tienda: incident.tienda_nombre || storeNames.get(Number(incident.tienda_id)) || incident.tienda_id,
     "Tipo de error": incident.tipo_error,
     Observaci\u00F3n: incident.observacion,
-    Turno: ["incidencia", "error"].includes(String(incident.turno || "").toLowerCase()) ? "error" : incident.turno
+    Turno: ["incidencia", "error"].includes(String(incident.turno || "").toLowerCase()) ? "incidencia" : incident.turno
   }));
   return /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(
     Panel,
@@ -686,7 +686,7 @@ export function IncidentDashboard({ user }) {
     },
     loading ? /* @__PURE__ */ React.createElement(LoadingBlock, null) : null,
     error ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, error) : null,
-    !loading && !workers.length && !["incidencia", "error"].includes(form.turno) ? /* @__PURE__ */ React.createElement(Alert, null, "No hay operantes activos.") : null,
+    !loading && !workers.length && !["incidencia", "error"].includes(form.turno) ? /* @__PURE__ */ React.createElement(Alert, null, "No hay trabajadores activos.") : null,
     !loading && !stores.length ? /* @__PURE__ */ React.createElement(Alert, null, "No hay tiendas activas registradas.") : null,
     /* @__PURE__ */ React.createElement("form", { className: "form-grid", onSubmit: handleSubmit }, ["incidencia", "error"].includes(form.turno) ? /* @__PURE__ */ React.createElement(
       SelectInput,
@@ -699,11 +699,11 @@ export function IncidentDashboard({ user }) {
     ) : /* @__PURE__ */ React.createElement(
       SelectInput,
       {
-        label: "Usuario",
+        label: "Trabajador",
         value: form.usuario_id,
         onChange: (usuario_id) => updateForm({ usuario_id }),
         options: [
-          { value: "", label: "Selecciona un operante" },
+          { value: "", label: "Selecciona un trabajador" },
           ...workers.map((worker) => ({
             value: String(worker.id),
             label: `${worker.id} - ${worker.nombre || worker.email}`
@@ -715,8 +715,8 @@ export function IncidentDashboard({ user }) {
       {
         label: "Turno",
         value: form.turno,
-        onChange: (turno) => updateForm({ turno, usuario_id: turno === "error" ? "" : form.usuario_id, area_id: turno === "error" ? form.area_id : "" }),
-        options: ["turno regular", "error", "turno extra"]
+        onChange: (turno) => updateForm({ turno, usuario_id: turno === "incidencia" ? "" : form.usuario_id, area_id: turno === "incidencia" ? form.area_id : "" }),
+        options: ["turno regular", "incidencia", "turno extra"]
       }
     ), /* @__PURE__ */ React.createElement(
       SelectInput,

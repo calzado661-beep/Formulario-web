@@ -243,6 +243,11 @@ export async function listAssignableWorkers() {
   return users.filter((user) => isWorkerRole(user.rol) && isActiveValue(user.activo));
 }
 
+export async function listActiveUsers() {
+  const users = await selectUsers();
+  return users.filter((user) => isActiveValue(user.activo));
+}
+
 export async function listOperantesAndTeamLeads() {
   const users = await selectUsers();
   return users.filter((user) => ["operante", "lider de equipo"].includes(normalizeRole(user.rol)));

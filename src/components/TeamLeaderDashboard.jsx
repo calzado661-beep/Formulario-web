@@ -3,9 +3,9 @@ import { RefreshCcw, Save } from "lucide-react";
 import {
   createIncidente,
   friendlyError,
+  listActiveUsers,
   listIncidentes,
   listErrorTasks,
-  listOperantesAndTeamLeads,
   listTiendas
 } from "../lib/repository";
 import { formatDateTimeLima } from "../lib/dates";
@@ -44,7 +44,7 @@ export function IncidentPanel({ user }) {
       const [tasks, tiendas, users, incidentes] = await Promise.all([
         listErrorTasks(),
         listTiendas(),
-        listOperantesAndTeamLeads(),
+        listActiveUsers(),
         listIncidentes()
       ]);
       return { tasks, tiendas, users, incidentes };
@@ -138,11 +138,11 @@ export function IncidentPanel({ user }) {
         {loading ? <LoadingBlock /> : null}
         {error ? <Alert type="error">{error}</Alert> : null}
         {!loading && !(data.tiendas || []).length ? <Alert>Aun no hay tiendas registradas.</Alert> : null}
-        {!loading && !(data.users || []).length ? <Alert>No hay usuarios operantes o líderes de equipo para seleccionar.</Alert> : null}
+        {!loading && !(data.users || []).length ? <Alert>No hay trabajadores activos para seleccionar.</Alert> : null}
 
         <form className="form-grid" onSubmit={handleSubmit}>
           <SelectInput
-            label="Nombre"
+            label="Trabajador"
             value={form.usuarioId}
             onChange={(usuarioId) => setForm({ ...form, usuarioId })}
             options={[
