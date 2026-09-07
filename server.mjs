@@ -5008,6 +5008,7 @@ async function handleCreateIncident(request, response) {
     const turno = String(body.turno || "").trim().toLowerCase();
     const guideNumber = String(body.numero_guia || "").trim();
     const errorType = String(body.tipo_error || "").trim().toUpperCase();
+    const incidentDate = String(body.fecha_error || currentLimaDate()).trim();
     const areaId = Number(body.area_id);
     const isAreaIncident = ["incidencia", "error"].includes(turno);
 
@@ -5017,6 +5018,14 @@ async function handleCreateIncident(request, response) {
     }
     if (!turno || !guideNumber || !errorType) {
       sendJson(response, 400, { error: "Turno, número de guía y tipo de error son obligatorios." });
+      return;
+    }
+    const parsedIncidentDate = new Date(`${incidentDate}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(incidentDate)
+      || Number.isNaN(parsedIncidentDate.getTime())
+      || parsedIncidentDate.toISOString().slice(0, 10) !== incidentDate
+      || incidentDate > currentLimaDate()) {
+      sendJson(response, 400, { error: "Selecciona una fecha del error valida que no este en el futuro." });
       return;
     }
     if (!["CONTENIDO", "LIBERADO"].includes(errorType)) {
@@ -5073,7 +5082,7 @@ async function handleCreateIncident(request, response) {
       tipo_error: errorType,
       usuario_id: isAreaIncident ? null : worker.id,
       area_id: isAreaIncident ? area.id : null,
-      fecha_error: currentLimaDate()
+      fecha_error: incidentDate
     };
     let result = await supabase.from("registro_errores").insert(payload).select("*").single();
     if (isPrimaryKeySequenceConflict(result.error)) {

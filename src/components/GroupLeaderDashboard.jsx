@@ -590,6 +590,7 @@ function HangtagStatTile({ label, value, unit }) {
 var initialIncidentForm = {
   usuario_id: "",
   area_id: "",
+  fecha_error: todayLimaISO(),
   turno: "turno regular",
   tarea_id: "",
   tienda_id: "",
@@ -646,11 +647,16 @@ export function IncidentDashboard({ user }) {
       setStatus({ type: "error", message: "Ingresa el tipo de error." });
       return;
     }
+    if (!form.fecha_error || form.fecha_error > todayLimaISO()) {
+      setStatus({ type: "error", message: "Selecciona una fecha válida que no esté en el futuro." });
+      return;
+    }
     setSaving(true);
     try {
       await createIncident({
         usuario_id: isAreaIncident ? null : Number(form.usuario_id),
         area_id: isAreaIncident ? Number(form.area_id) : null,
+        fecha_error: form.fecha_error,
         turno: form.turno,
         tarea_error_id: Number(form.tarea_id),
         tienda_id: Number(form.tienda_id),
@@ -658,7 +664,7 @@ export function IncidentDashboard({ user }) {
         tipo_error: form.tipo_error.trim(),
         observacion: form.observacion.trim() || null
       });
-      setForm(initialIncidentForm);
+      setForm({ ...initialIncidentForm, fecha_error: todayLimaISO() });
       setStatus({ type: "success", message: "Error registrado correctamente." });
       reload();
     } catch (err) {
@@ -688,7 +694,17 @@ export function IncidentDashboard({ user }) {
     error ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, error) : null,
     !loading && !workers.length && !["incidencia", "error"].includes(form.turno) ? /* @__PURE__ */ React.createElement(Alert, null, "No hay trabajadores activos.") : null,
     !loading && !stores.length ? /* @__PURE__ */ React.createElement(Alert, null, "No hay tiendas activas registradas.") : null,
-    /* @__PURE__ */ React.createElement("form", { className: "form-grid", onSubmit: handleSubmit }, ["incidencia", "error"].includes(form.turno) ? /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("form", { className: "form-grid", onSubmit: handleSubmit }, /* @__PURE__ */ React.createElement(
+      TextInput,
+      {
+        label: "Fecha del error",
+        type: "date",
+        value: form.fecha_error,
+        max: todayLimaISO(),
+        required: true,
+        onChange: (fecha_error) => updateForm({ fecha_error })
+      }
+    ), ["incidencia", "error"].includes(form.turno) ? /* @__PURE__ */ React.createElement(
       SelectInput,
       {
         label: "Área",
