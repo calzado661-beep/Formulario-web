@@ -1353,7 +1353,7 @@ export async function loadGroupLeaderContext() {
   }
 
   const [workers, tasks, brands, stores, records] = await Promise.all([
-    listAssignableWorkers(),
+    listOperantesAndTeamLeads().then((users) => users.filter((user) => isActiveValue(user.activo))),
     listTasks().then((tasks) => tasks.filter((task) => task.es_operativa === true && isGroupLeaderTimeTask(task))),
     listBrands(),
     listTiendas().then((stores) => stores.filter((store) => String(store.activo ?? true) !== "false")),

@@ -878,7 +878,7 @@ function GroupTimeDashboard({ user }) {
     const editing = revision !== void 0 && revision !== null;
     const worker = workers.find((item) => String(item.id) === String(draft.trabajador_id));
     const task = (editing ? recordTasks : tasks).find((item) => String(item.id) === String(draft.tarea_id));
-    if (!editing && !worker) return { error: "Selecciona un operante activo." };
+    if (!editing && !worker) return { error: "Selecciona un operante o líder de equipo activo." };
     if (!task || !isGroupLeaderTimeTask(task)) return { error: "Selecciona una tarea por tiempo valida." };
     if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.fecha_registro || "") || draft.fecha_registro > todayLimaISO()) {
       return { error: "Selecciona una fecha de inicio valida que no este en el futuro." };
@@ -1006,7 +1006,7 @@ function GroupTimeDashboard({ user }) {
       setRowSaving(false);
     }
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "group-dashboard stack" }, /* @__PURE__ */ React.createElement("section", { className: "group-hero" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "eyebrow" }, user.rol || "Líder de equipo"), /* @__PURE__ */ React.createElement("h2", null, "Control de tareas por tiempo"), /* @__PURE__ */ React.createElement("span", null, user.nombre || user.email)), /* @__PURE__ */ React.createElement("div", { className: "group-metrics", "aria-label": "Resumen de registros" }, /* @__PURE__ */ React.createElement(MetricTile, { icon: ClipboardCheck, label: "Mis registros", value: metrics.total }), /* @__PURE__ */ React.createElement(MetricTile, { icon: Timer, label: "Registros hoy", value: metrics.today }), /* @__PURE__ */ React.createElement(MetricTile, { icon: UserRound, label: "Operantes", value: metrics.workers }), /* @__PURE__ */ React.createElement(MetricTile, { icon: Hash, label: "Cantidad total", value: formatNumber(metrics.quantity) }))), status ? /* @__PURE__ */ React.createElement(Alert, { type: status.type }, status.message) : null, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "group-dashboard stack" }, /* @__PURE__ */ React.createElement("section", { className: "group-hero" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "eyebrow" }, user.rol || "Líder de equipo"), /* @__PURE__ */ React.createElement("h2", null, "Control de tareas por tiempo"), /* @__PURE__ */ React.createElement("span", null, user.nombre || user.email)), /* @__PURE__ */ React.createElement("div", { className: "group-metrics", "aria-label": "Resumen de registros" }, /* @__PURE__ */ React.createElement(MetricTile, { icon: ClipboardCheck, label: "Mis registros", value: metrics.total }), /* @__PURE__ */ React.createElement(MetricTile, { icon: Timer, label: "Registros hoy", value: metrics.today }), /* @__PURE__ */ React.createElement(MetricTile, { icon: UserRound, label: "Personas medidas", value: metrics.workers }), /* @__PURE__ */ React.createElement(MetricTile, { icon: Hash, label: "Cantidad total", value: formatNumber(metrics.quantity) }))), status ? /* @__PURE__ */ React.createElement(Alert, { type: status.type }, status.message) : null, /* @__PURE__ */ React.createElement(
     Panel,
     {
       title: "Iniciar registro de tarea",
@@ -1018,19 +1018,19 @@ function GroupTimeDashboard({ user }) {
     error ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, error) : null,
     data.historyMigrationRequired ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, "Falta aplicar la migracion SQL 027 en Supabase para guardar y editar hora inicio, hora fin y revision.") : null,
     /* @__PURE__ */ React.createElement(Alert, null, "Registra el inicio de la tarea. La cantidad y la fecha y hora de fin se completan despues en el historial; ahi el servidor recalcula la duracion."),
-    !loading && !workers.length ? /* @__PURE__ */ React.createElement(Alert, null, "No hay trabajadores operantes activos.") : null,
+    !loading && !workers.length ? /* @__PURE__ */ React.createElement(Alert, null, "No hay operantes ni líderes de equipo activos.") : null,
     !loading && !tasks.length ? /* @__PURE__ */ React.createElement(Alert, null, "No hay tareas registradas en la base de datos.") : null,
     /* @__PURE__ */ React.createElement("form", { className: "group-form form-grid", onSubmit: handleSubmit }, /* @__PURE__ */ React.createElement(
       SelectInput,
       {
-        label: "Operante",
+        label: "Operante o líder de equipo",
         value: form.trabajador_id,
         onChange: (trabajador_id) => updateForm({ trabajador_id }),
         options: [
-          { value: "", label: "Selecciona operante" },
+          { value: "", label: "Selecciona una persona" },
           ...workers.map((worker) => ({
             value: String(worker.id),
-            label: `${worker.nombre || worker.email} - ${worker.email || `ID ${worker.id}`}`
+            label: `${worker.nombre || worker.email} - ${worker.email || `ID ${worker.id}`} (${worker.rol || "sin rol"})`
           }))
         ]
       }
@@ -1145,7 +1145,7 @@ function GroupTimeDashboard({ user }) {
     )), /* @__PURE__ */ React.createElement(
       SelectInput,
       {
-        label: "Operante",
+        label: "Operante o líder",
         value: filters.workerId,
         onChange: (workerId) => updateFilters({ workerId }),
         options: [
@@ -1262,7 +1262,7 @@ function EditableGroupHistory({
             <tr>
               <th className="history-actions-heading">Acciones</th>
               <th>Fecha</th>
-              <th>Operante</th>
+              <th>Persona medida</th>
               <th>Tarea</th>
               <th>Hora inicio</th>
               <th>Hora fin</th>

@@ -205,6 +205,10 @@ function normalizeRole(role) {
   return value;
 }
 
+function isTimedTaskWorkerRole(role) {
+  return ["operante", "lider de equipo"].includes(normalizeRole(role));
+}
+
 function normalizeTaskName(value) {
   return normalizeRole(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -3845,7 +3849,7 @@ async function loadGroupLeaderData() {
   const users = usersResult.data || [];
   const recordTasks = (tasksResult.data || []).filter((task) => isGroupLeaderTimeTask(task));
   const tasks = recordTasks.filter((task) => isActive(task.activo));
-  const workers = users.filter((user) => normalizeRole(user.rol) === "operante" && isActive(user.activo));
+  const workers = users.filter((user) => isTimedTaskWorkerRole(user.rol) && isActive(user.activo));
   const leaders = users.filter((user) => ["lider de equipo"].includes(normalizeRole(user.rol)) && isActive(user.activo));
   const records = enrichGroupRecords(
     (recordsResult.data || []).map((record) => ({
@@ -4078,10 +4082,10 @@ async function handleCreateGroupLeaderRecordLegacy(request, response) {
     if (
       workerResult.error ||
       !workerResult.data ||
-      normalizeRole(workerResult.data.rol) !== "operante" ||
+      !isTimedTaskWorkerRole(workerResult.data.rol) ||
       !isActive(workerResult.data.activo)
     ) {
-      sendJson(response, 400, { error: "Selecciona un operante activo." });
+      sendJson(response, 400, { error: "Selecciona un operante o lider de equipo activo." });
       return;
     }
 
@@ -4370,7 +4374,7 @@ async function validateGroupRecordBase(body, { current = null, validateWorker = 
   const taskId = Number(current?.tarea_id ?? body.tarea_id);
   const workerId = Number(current?.trabajador_id ?? body.trabajador_id);
   if (!Number.isInteger(taskId) || taskId <= 0 || !Number.isInteger(workerId) || workerId <= 0) {
-    throw invalidGroupRecord("Operante y tarea son obligatorios.");
+    throw invalidGroupRecord("Trabajador y tarea son obligatorios.");
   }
   if (current && body.tarea_id !== undefined && Number(body.tarea_id) !== taskId) {
     throw invalidGroupRecord("La tarea de un registro historico no se puede reemplazar.");
@@ -4384,8 +4388,8 @@ async function validateGroupRecordBase(body, { current = null, validateWorker = 
   if (validateWorker) {
     const workerResult = await supabase.from("usuarios").select("id,rol,activo").eq("id", workerId).maybeSingle();
     if (workerResult.error) throw workerResult.error;
-    if (!workerResult.data || normalizeRole(workerResult.data.rol) !== "operante" || !isActive(workerResult.data.activo)) {
-      throw invalidGroupRecord("Selecciona un operante activo.");
+    if (!workerResult.data || !isTimedTaskWorkerRole(workerResult.data.rol) || !isActive(workerResult.data.activo)) {
+      throw invalidGroupRecord("Selecciona un operante o lider de equipo activo.");
     }
   }
   const metadata = await validateGroupRecordMetadata(body, task, current);
@@ -4631,7 +4635,7 @@ async function validateLiveActivityContext(body) {
   const taskId = Number(body.tarea_id);
   const workerId = Number(body.trabajador_id);
   if (!Number.isInteger(taskId) || taskId <= 0 || !Number.isInteger(workerId) || workerId <= 0) {
-    throw new Error("Operante y tarea son obligatorios.");
+    throw new Error("Trabajador y tarea son obligatorios.");
   }
   const [task, workerResult] = await Promise.all([
     taskWithScoringRules(taskId),
@@ -4640,8 +4644,8 @@ async function validateLiveActivityContext(body) {
   if (!task || !isActive(task.activo) || !isGroupLeaderTimeTask(task)) {
     throw new Error("Selecciona una tarea por tiempo valida.");
   }
-  if (workerResult.error || !workerResult.data || normalizeRole(workerResult.data.rol) !== "operante" || !isActive(workerResult.data.activo)) {
-    throw new Error("Selecciona un operante activo.");
+  if (workerResult.error || !workerResult.data || !isTimedTaskWorkerRole(workerResult.data.rol) || !isActive(workerResult.data.activo)) {
+    throw new Error("Selecciona un operante o lider de equipo activo.");
   }
   return { task, taskId, workerId };
 }

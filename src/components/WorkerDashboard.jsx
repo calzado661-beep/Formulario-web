@@ -23,7 +23,6 @@ import {
   getTaskRequiredFlags,
   getTaskTitle,
   isGroupLeaderTimeTask,
-  isFullShift,
   NO_TASK_OPTION,
   normalizeMeasurementType,
   normalizeText,
@@ -303,10 +302,6 @@ function RegisterActivity({ user }) {
       }
     }
 
-    if (records.some((record) => isFullShift(record.turno)) && records.length > 1) {
-      return "Si seleccionas turno completo, no puedes registrar otras actividades el mismo dia.";
-    }
-
     return "";
   }
 
@@ -325,21 +320,6 @@ function RegisterActivity({ user }) {
 
     setSaving(true);
     try {
-      const existingLogs = await listWorkerActivityLogs(user.id);
-      const logsToday = existingLogs.filter((log) => String(log.fecha_registro) === recordDate);
-      const hasFullShiftInBatch = records.some((record) => isFullShift(record.turno));
-
-      if (logsToday.length) {
-        if (hasFullShiftInBatch) {
-          setStatus({ type: "error", message: "No puedes registrar turno completo porque ya tienes actividades hoy." });
-          return;
-        }
-        if (logsToday.some((log) => isFullShift(log.turno))) {
-          setStatus({ type: "error", message: "Ya registraste turno completo hoy. No puedes anadir mas actividades." });
-          return;
-        }
-      }
-
       let saved = 0;
       let totalPoints = 0;
       const failures = [];
