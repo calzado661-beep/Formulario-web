@@ -8,7 +8,7 @@ import {
   listErrorTasks,
   listTiendas
 } from "../lib/repository";
-import { formatDateTimeLima } from "../lib/dates";
+import { formatDateTimeLima, todayLimaISO } from "../lib/dates";
 import { getTaskTitle } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
 import {
@@ -55,6 +55,7 @@ export function IncidentPanel({ user }) {
 
   const [form, setForm] = useState({
     usuarioId: "",
+    fecha_error: todayLimaISO(),
     turno: "turno regular",
     tareaId: "",
     tiendaId: "",
@@ -90,11 +91,16 @@ export function IncidentPanel({ user }) {
       setStatus({ type: "error", message: "Debes seleccionar una tienda." });
       return;
     }
+    if (!form.fecha_error || form.fecha_error > todayLimaISO()) {
+      setStatus({ type: "error", message: "Selecciona una fecha válida que no esté en el futuro." });
+      return;
+    }
 
     setSaving(true);
     try {
       await createIncidente({
         turno: form.turno,
+        fecha_error: form.fecha_error,
         usuario_id: selectedUser.id,
         area_id: null,
         tarea_error_id: selectedTask.id,
@@ -105,6 +111,7 @@ export function IncidentPanel({ user }) {
       });
       setForm({
         usuarioId: "",
+        fecha_error: todayLimaISO(),
         turno: "turno regular",
         tareaId: "",
         tiendaId: "",
@@ -141,6 +148,14 @@ export function IncidentPanel({ user }) {
         {!loading && !(data.users || []).length ? <Alert>No hay trabajadores activos para seleccionar.</Alert> : null}
 
         <form className="form-grid" onSubmit={handleSubmit}>
+          <TextInput
+            label="Fecha del error"
+            type="date"
+            value={form.fecha_error}
+            max={todayLimaISO()}
+            required
+            onChange={(fecha_error) => setForm({ ...form, fecha_error })}
+          />
           <SelectInput
             label="Trabajador"
             value={form.usuarioId}
