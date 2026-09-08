@@ -162,7 +162,7 @@ export function IncidentPanel({ user }) {
             onChange={(usuarioId) => setForm({ ...form, usuarioId })}
             options={[
               { value: "", label: "Selecciona un usuario" },
-              ...(data.users || []).map((item) => ({ value: String(item.id), label: `${item.id} - ${item.nombre || item.email}` }))
+              ...(data.users || []).map((item) => ({ value: String(item.id), label: item.nombre || item.email || "Trabajador sin nombre" }))
             ]}
           />
           <SelectInput label="Turno" value={form.turno} onChange={(turno) => setForm({ ...form, turno })} options={incidentTurns} />
@@ -172,7 +172,7 @@ export function IncidentPanel({ user }) {
             onChange={(tareaId) => setForm({ ...form, tareaId })}
             options={[
               { value: "", label: "Selecciona una tarea" },
-              ...(data.tasks || []).map((task) => ({ value: String(task.id), label: `${task.id} - ${getTaskTitle(task) || "Sin titulo"}` }))
+              ...(data.tasks || []).map((task) => ({ value: String(task.id), label: getTaskTitle(task) || "Tarea sin título" }))
             ]}
           />
           <SelectInput

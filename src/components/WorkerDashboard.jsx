@@ -135,7 +135,7 @@ function RegisterActivity({ user }) {
       tasks
         .slice()
         .sort((a, b) => Number(a.id || 0) - Number(b.id || 0))
-        .map((task) => [`${task.id} - ${getTaskTitle(task) || "Sin titulo"}`, task])
+        .map((task) => [getTaskTitle(task) || "Tarea sin título", task])
     );
   }, [tasks]);
 
@@ -823,7 +823,7 @@ function TodayLeaderTaskCard({ user, onUse }) {
         <article className="today-leader-task-card">
           <header>
             <Timer />
-            <strong>{summary.tarea_nombre || summary.actividad_nombre || `Tarea ${summary.tarea_id || ""}`}</strong>
+            <strong>{summary.tarea_nombre || summary.actividad_nombre || "Tarea sin nombre"}</strong>
           </header>
           <dl>
             <div><dt>Cantidad</dt><dd>{liveProgressNumber(summary.cantidad)}</dd></div>
@@ -874,7 +874,7 @@ export function WorkerHistory({ user }) {
     { logs: [], tasks: [], stores: [] }
   );
 
-  const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || `Tarea ${task.id}`]));
+  const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || "Tarea sin nombre"]));
   const storeNameById = Object.fromEntries((data.stores || []).map((store) => [store.id, store.nombre]));
   const allLogs = data.logs || [];
 
@@ -884,7 +884,7 @@ export function WorkerHistory({ user }) {
     const id = log.tarea_id;
     if (id === undefined || id === null || seenTaskIds.has(id)) return;
     seenTaskIds.add(id);
-    loggedTaskOptions.push({ value: String(id), label: taskNameById[id] || log.actividad_nombre || `Tarea ${id}` });
+    loggedTaskOptions.push({ value: String(id), label: taskNameById[id] || log.actividad_nombre || "Tarea sin nombre" });
   });
   loggedTaskOptions.sort((a, b) => a.label.localeCompare(b.label));
 

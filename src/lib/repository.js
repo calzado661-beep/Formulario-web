@@ -70,6 +70,7 @@ async function requestLocalApi(path, options = {}, config = {}) {
 
       const apiError = new Error(payload.error || payload.message || `Error ${response.status} al consultar el backend local.`);
       if (payload.code) apiError.code = payload.code;
+      apiError.status = response.status;
       throw apiError;
     } catch (error) {
       if (error instanceof TypeError) {
@@ -218,7 +219,7 @@ export async function selectUsers() {
   const apiResult = await requestLocalApi("/api/users");
   if (apiResult?.users) return apiResult.users;
 
-  const cols = "id,nombre,email,rol,activo,created_at,fecha_cumpleanos,sueldo";
+  const cols = "id,nombre,email,rol,activo,created_at,fecha_cumpleanos,sueldo,condicion_salud";
   const precise = await db().from("usuarios").select(cols).order("id", { ascending: true });
   if (!precise.error) return precise.data || [];
   return ensureOk(await db().from("usuarios").select("*").order("id", { ascending: true })) || [];
@@ -1285,12 +1286,26 @@ function normalizeGroupLeaderLog(row) {
 }
 
 export async function createGroupLeaderRecord(payload) {
-  const apiResult = await requestLocalApi("/api/group-leader/records", {
-    method: "POST",
-    body: JSON.stringify(payload)
-  }, { requiredBackend: true });
-  if (!apiResult?.record) throw new Error("No se pudo guardar el registro por tiempo.");
-  return normalizeGroupLeaderLog(apiResult.record);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  try {
+    const apiResult = await requestLocalApi("/api/group-leader/records", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    }, { requiredBackend: true });
+    if (!apiResult?.record) throw new Error("No se pudo guardar el registro por tiempo.");
+    return normalizeGroupLeaderLog(apiResult.record);
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      const timeoutError = new Error("La conexion tardo demasiado. Verifica Internet y actualiza el historial antes de volver a intentar.");
+      timeoutError.code = "SAVE_TIMEOUT";
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export async function updateGroupLeaderRecord(recordId, payload) {

@@ -286,7 +286,7 @@ function RankingDashboard({ user }) {
       const workersMap = grouped.get(taskKey);
       const workerKey = String(record.trabajador_id);
       const current = workersMap.get(workerKey) || {
-        nombre: person.nombre || person.email || `ID ${record.trabajador_id}`,
+        nombre: person.nombre || person.email || "Trabajador sin nombre",
         rol: personRole,
         activo: Boolean(person.activo),
         cantidad: 0,
@@ -313,7 +313,7 @@ function RankingDashboard({ user }) {
       if (!workersMap) return null;
       const ranked = [...workersMap.values()].map((entry) => ({ ...entry, rendimiento: entry.cantidad / entry.minutos * 60 })).sort((a, b) => b.rendimiento - a.rendimiento);
       if (!ranked.length) return null;
-      return { id: task.id, nombre: getTaskTitle(task) || `Tarea ${task.id}`, ranked };
+      return { id: task.id, nombre: getTaskTitle(task) || "Tarea sin nombre", ranked };
     }).filter(Boolean);
     return { rankingByTask, hangtagAverages };
   }, [records, tasks, peopleById, selectedYear, selectedMonth, selectedDay, peopleScope, includeInactive, taskId, taskFlagsById]);
@@ -405,7 +405,7 @@ function RankingDashboard({ user }) {
             onChange={setTaskId}
             options={[
               { value: "", label: "Todas" },
-              ...tasks.map((task) => ({ value: String(task.id), label: getTaskTitle(task) || `ID ${task.id}` }))
+              ...tasks.map((task) => ({ value: String(task.id), label: getTaskTitle(task) || "Tarea sin nombre" }))
             ]}
           />
           <SelectInput
@@ -677,7 +677,7 @@ export function IncidentDashboard({ user }) {
     "Usuario / Área": incident.usuario_id ? incident.usuario_nombre : incident.area_nombre,
     Tarea: incident.tarea_nombre,
     "N\xFAmero de gu\xEDa": incident.numero_guia,
-    Tienda: incident.tienda_nombre || storeNames.get(Number(incident.tienda_id)) || incident.tienda_id,
+    Tienda: incident.tienda_nombre || storeNames.get(Number(incident.tienda_id)) || "Tienda no disponible",
     "Tipo de error": incident.tipo_error,
     Observaci\u00F3n: incident.observacion,
     Turno: ["incidencia", "error"].includes(String(incident.turno || "").toLowerCase()) ? "incidencia" : incident.turno
@@ -721,7 +721,7 @@ export function IncidentDashboard({ user }) {
           { value: "", label: "Selecciona un trabajador" },
           ...workers.map((worker) => ({
             value: String(worker.id),
-            label: `${worker.id} - ${worker.nombre || worker.email}`
+            label: worker.nombre || worker.email || "Trabajador sin nombre"
           }))
         ]
       }
@@ -741,7 +741,7 @@ export function IncidentDashboard({ user }) {
         onChange: (tarea_id) => updateForm({ tarea_id }),
         options: [
           { value: "", label: "Selecciona una tarea" },
-          ...tasks.map((task) => ({ value: String(task.id), label: `${task.id} - ${getTaskTitle(task)}` }))
+          ...tasks.map((task) => ({ value: String(task.id), label: getTaskTitle(task) || "Tarea sin nombre" }))
         ]
       }
     ), /* @__PURE__ */ React.createElement(
@@ -951,13 +951,32 @@ function GroupTimeDashboard({ user }) {
       return;
     }
     setSaving(true);
+    let recordCreated = false;
     try {
       await createGroupLeaderRecord(payload);
+      recordCreated = true;
       setStatus({ type: "success", message: "Inicio guardado en el historial. Completa la cantidad y el cierre editando esa fila." });
       resetForm();
       await reload();
     } catch (err) {
-      setStatus({ type: "error", message: friendlyError(err) });
+      if (recordCreated) {
+        setStatus({ type: "success", message: "Registro guardado. No se pudo actualizar el historial; presiona Actualizar para verlo." });
+        return;
+      }
+      const message = String(err?.message || "");
+      let saveMessage = friendlyError(err);
+      if (err?.code === "SAVE_TIMEOUT") {
+        saveMessage = "No se confirmó el registro: la conexión tardó demasiado. Actualiza el historial antes de reintentar.";
+      } else if ([401, 403].includes(Number(err?.status))) {
+        saveMessage = "No se registró: tu sesión venció o no tiene permiso. Vuelve a iniciar sesión.";
+      } else if (Number(err?.status) === 409) {
+        saveMessage = "No se registró: existe un conflicto con los datos. Actualiza el historial e inténtalo otra vez.";
+      } else if (Number(err?.status) >= 500) {
+        saveMessage = "No se registró: el servidor o la base de datos tuvieron un problema. Inténtalo nuevamente.";
+      } else if (/conectar|network|fetch|internet/i.test(message)) {
+        saveMessage = "No se registró: no hay conexión con el servidor. Revisa Internet e inténtalo otra vez.";
+      }
+      setStatus({ type: "error", message: saveMessage });
     } finally {
       setSaving(false);
     }
@@ -1031,7 +1050,7 @@ function GroupTimeDashboard({ user }) {
           { value: "", label: "Selecciona una persona" },
           ...workers.map((worker) => ({
             value: String(worker.id),
-            label: `${worker.nombre || worker.email} - ${worker.email || `ID ${worker.id}`} (${worker.rol || "sin rol"})`
+            label: `${worker.nombre || worker.email || "Trabajador sin nombre"} (${worker.rol || "sin rol"})`
           }))
         ]
       }
@@ -1137,7 +1156,7 @@ function GroupTimeDashboard({ user }) {
           { value: "", label: "Todos" },
           ...workers.map((worker) => ({
             value: String(worker.id),
-            label: worker.nombre || worker.email || `ID ${worker.id}`
+            label: worker.nombre || worker.email || "Trabajador sin nombre"
           }))
         ]
       }
@@ -1151,7 +1170,7 @@ function GroupTimeDashboard({ user }) {
           { value: "", label: "Todas" },
           ...recordTasks.map((task) => ({
             value: String(task.id),
-            label: getTaskTitle(task) || `ID ${task.id}`
+            label: getTaskTitle(task) || "Tarea sin nombre"
           }))
         ]
       }

@@ -229,8 +229,8 @@ function isActive(value) {
   return !["false", "0", "no"].includes(String(value ?? true).trim().toLowerCase());
 }
 
-// Los dos unicos documentos que admite una amonestacion.
-const TIPOS_DOCUMENTO = ["CARTA AMONESTACION", "MEMORANDUM"];
+// Tipos admitidos para una amonestacion.
+const TIPOS_DOCUMENTO = ["CARTA AMONESTACION", "MEMORANDUM", "VERBAL"];
 
 function normalizeTipoDocumento(value) {
   const raw = String(value ?? "").trim().toUpperCase().replace(/\s+/g, " ");
@@ -548,7 +548,8 @@ const OPTIONAL_TEXT_USER_FIELDS = [
   "talla_zapatillas",
   "talla_polo",
   "nombres_completos",
-  "alergia"
+  "alergia",
+  "condicion_salud"
 ];
 
 function userPayloadForDb(body, { creating = false } = {}) {
@@ -1402,7 +1403,9 @@ async function handleReadFootwearDashboard(request, response) {
       selectAllDashboardRows("tiendas", { optional: true })
     ]);
 
-    const dashboardUsers = users.filter((user) => normalizeRole(user.rol) !== "administrador");
+    // Personal y asistencia abarcan todos los roles. Los graficos de
+    // produccion aplican aparte su filtro de operantes y lideres de equipo.
+    const dashboardUsers = users;
     const dashboardUserIds = new Set(dashboardUsers.map((user) => Number(user.id)));
     const visibleWorkerRecords = workerRecords.filter((row) => dashboardUserIds.has(Number(row.usuario_id || row.trabajador_id)));
     const visibleLeaderRecords = leaderRecords.filter((row) => dashboardUserIds.has(Number(row.usuario_id || row.trabajador_id)));
@@ -1450,9 +1453,7 @@ async function handleReadFootwearDashboard(request, response) {
       birthday: dashboardDate(user.fecha_cumpleanos)
     }));
 
-    // El indicador de cumpleanos del dashboard incluye a todos, administrador
-    // incluido, a diferencia de "workers" (que a proposito deja afuera al
-    // administrador para no contarlo en los totales de personal operativo).
+    // El indicador de cumpleanos del dashboard incluye a todos los usuarios.
     const birthdayPeople = users.map((user) => ({
       id: Number(user.id),
       name: String(user.nombre || `Usuario ${user.id}`),
@@ -2658,7 +2659,7 @@ async function handleCreateAmonestacion(request, response) {
       return;
     }
     if (!tipoDocumento) {
-      sendJson(response, 400, { error: "Selecciona el tipo de documento: carta de amonestacion o memorandum." });
+      sendJson(response, 400, { error: "Selecciona el tipo de documento: carta de amonestacion, memorandum o verbal." });
       return;
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
