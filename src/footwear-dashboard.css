@@ -1699,6 +1699,30 @@ h2.pbi-section-heading {
 
 .pbi-payroll-table .pbi-table-wrap {
   max-height: 360px;
+  overflow-x: hidden;
+}
+
+.pbi-payroll-table .pbi-data-table {
+  min-width: 100%;
+  table-layout: fixed;
+}
+
+.pbi-payroll-table .pbi-data-table th:nth-child(1),
+.pbi-payroll-table .pbi-data-table td:nth-child(1) {
+  width: 22%;
+}
+
+.pbi-payroll-table .pbi-data-table th:nth-child(2),
+.pbi-payroll-table .pbi-data-table td:nth-child(2) {
+  width: 29%;
+  padding-inline: 0.3rem;
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
+.pbi-payroll-table .pbi-data-table th:nth-child(3),
+.pbi-payroll-table .pbi-data-table td:nth-child(3) {
+  width: 49%;
 }
 
 .pbi-card--featured {
@@ -3010,7 +3034,7 @@ h2.pbi-section-heading {
 .pbi-attendance-track > i {
   display: block;
   height: 100%;
-  min-width: 1px;
+  min-width: 0;
 }
 
 .pbi-training-progress {

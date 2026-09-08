@@ -1724,7 +1724,7 @@ function MovementRecordsModal({ month, movementLabel, rows, workerById, onClose 
   const isExit = movementLabel === "Salidas";
   const detailRows = rows.map((row) => ({
     id: row.id,
-    worker: workerById.get(Number(row.workerId))?.name || `Usuario ${row.workerId}`,
+    worker: workerById.get(Number(row.workerId))?.name || "Trabajador no disponible",
     date: formatCalendarDate(row.date),
     reason: row.reason || "Sin especificar",
     rawDate: row.date
@@ -2570,14 +2570,14 @@ export default function FootwearDashboard() {
         rawId: row.rawId,
         date: formatCalendarDate(row.date),
         hora: formatRecordTime(row.createdAt),
-        worker: worker?.name || `Usuario ${row.workerId}`,
-        task: task?.shortName || `Tarea ${row.taskId}`,
+        worker: worker?.name || "Trabajador no disponible",
+        task: task?.shortName || "Tarea no disponible",
         shift: row.shift || "—",
         quantity: numberFormatter.format(row.quantity || 0),
         unit: String(task?.unit || "").trim() || productionUnit(task),
         guideNumber: row.guideNumber || "—",
         lote: row.lote || "—",
-        brand: row.brandId ? brandById.get(Number(row.brandId)) || `Marca ${row.brandId}` : "—",
+        brand: row.brandId ? brandById.get(Number(row.brandId)) || "Marca no disponible" : "—",
         observation: row.observation || "—",
         source: row.source === "jefe-equipo" ? "Líder de equipo" : "Operante",
         createdAt: formatRecordCreatedAt(row.createdAt),
@@ -2683,8 +2683,10 @@ export default function FootwearDashboard() {
   const filteredAttendance = aggregateAttendance((dashboardData?.attendances || []).filter((row) => matchesPeopleDate(row.date) && matchesPeopleWorker(row.workerId)));
   const trainingById = new Map((dashboardData?.trainings || []).map((course) => [course.id, course]));
   const normalizeTrainingStatus = (state) => ["finalizado", "completado"].includes(state) ? "completado" : state === "en_curso" ? "en_curso" : "pendiente";
+  // Capacitacion es un resumen anual fijo: no responde al selector global de
+  // mes, semana o dia. Siempre muestra todas las asignaciones del ano actual.
   const visibleAssignments = (dashboardData?.trainingAssignments || []).filter((row) => (
-    matchesGlobalPeriodDate(row.date)
+    Number(String(row.date || "").slice(0, 4)) === CURRENT_LIMA_YEAR
     && matchesGlobalWorker(row.workerId)
     && (!trainingCourseIds.length || trainingCourseIds.includes(Number(row.trainingId)))
     && (!trainingStatuses.length || trainingStatuses.includes(normalizeTrainingStatus(row.state)))
@@ -2751,7 +2753,11 @@ export default function FootwearDashboard() {
   const filteredWarnings = (dashboardData?.warnings || []).map((row) => {
     const worker = workerById.get(row.workerId);
     const alias = worker?.alias || worker?.name || "Sin trabajador";
-    const documentType = row.documentType === "MEMORANDUM" ? "Memorándum" : row.documentType === "CARTA AMONESTACION" ? "Carta de amonestación" : "Sin especificar";
+    const documentType = row.documentType === "MEMORANDUM"
+      ? "Memorándum"
+      : row.documentType === "CARTA AMONESTACION"
+        ? "Carta de amonestación"
+        : row.documentType === "VERBAL" ? "Verbal" : "Sin especificar";
     return { id: row.id, alias, workerName: worker?.name || alias, date: formatCalendarDate(row.date), documentType };
   }).sort((a, b) => b.id - a.id);
 
@@ -2897,20 +2903,14 @@ export default function FootwearDashboard() {
   }, { present: 0, absent: 0 });
   const operationalWorkers = activeWorkers.filter((worker) => ["operante", "lider de equipo"].includes(worker.role));
   const administrativeWorkers = activeWorkers.filter((worker) => !["operante", "lider de equipo"].includes(worker.role));
-  // WORKERS deja afuera al administrador a propósito (no debe inflar las
-  // métricas operativas), pero "Total Trabajadores" y "Total Administrativo"
-  // sí deben contarlo. birthdayPeople incluye a todos, así que cualquiera ahí
-  // que no esté en WORKERS es administrador.
-  const workerIds = new Set(WORKERS.map((worker) => Number(worker.id)));
-  const activeAdmins = (dashboardData?.birthdayPeople || [])
-    .filter((person) => !workerIds.has(Number(person.id)))
-    .filter((person) => globalIncludeInactiveWorkers || person.active);
+  // WORKERS incluye todos los roles para que las tarjetas y los graficos de
+  // asistencia compartan exactamente el mismo universo de personal.
   const personnelKpis = [
     {
       label: "Total Trabajadores",
-      value: activeWorkers.length + activeAdmins.length,
+      value: activeWorkers.length,
       detail: latestAttendanceDate ? `Estado al ${formatCalendarDate(latestAttendanceDate)}` : "Sin asistencia registrada",
-      attendance: attendanceForWorkers([...activeWorkers, ...activeAdmins])
+      attendance: attendanceForWorkers(activeWorkers)
     },
     {
       label: "Total Operantes",
@@ -2920,8 +2920,8 @@ export default function FootwearDashboard() {
     },
     {
       label: "Total Administrativo",
-      value: administrativeWorkers.length + activeAdmins.length,
-      attendance: attendanceForWorkers([...administrativeWorkers, ...activeAdmins])
+      value: administrativeWorkers.length,
+      attendance: attendanceForWorkers(administrativeWorkers)
     }
   ];
   const nextBirthdays = (() => {
@@ -3631,7 +3631,7 @@ export default function FootwearDashboard() {
               <div className="pbi-content-grid">
                 <Card
                   id="pbi-training-progress"
-                  title={`Avance de Capacitaciones · ${selectedMonthTitleLabel}`}
+                  title={`Avance de Capacitaciones · Todo ${CURRENT_LIMA_YEAR}`}
                   meta={trainingTotal ? `${Math.round((trainingCompleted / trainingTotal) * 100)}% completado · ${trainingTotal} asignaciones` : "Sin asignaciones"}
                   className="pbi-card--chart pbi-card--span-4"
                 >
@@ -3644,7 +3644,7 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-training-history"
-                  title={`Historial de Capacitaciones · ${selectedMonthTitleLabel}`}
+                  title={`Historial de Capacitaciones · Todo ${CURRENT_LIMA_YEAR}`}
                   meta={`${filteredTrainingHistory.length} asignaciones`}
                   className="pbi-card--table pbi-card--span-8"
                 >
@@ -3701,7 +3701,7 @@ export default function FootwearDashboard() {
         {deletingRecord ? (
           <ActivityRecordDeleteModal
             record={deletingRecord}
-            workerName={workerById.get(Number(deletingRecord.workerId))?.name || `Usuario ${deletingRecord.workerId}`}
+            workerName={workerById.get(Number(deletingRecord.workerId))?.name || "Trabajador no disponible"}
             onClose={() => setDeletingRecord(null)}
             onConfirm={handleDeleteActivityRecord}
           />

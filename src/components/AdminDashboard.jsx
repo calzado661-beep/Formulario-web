@@ -245,7 +245,8 @@ const personalDataFieldKeys = [
   "hijos",
   "talla_zapatillas",
   "talla_polo",
-  "alergia"
+  "alergia",
+  "condicion_salud"
 ];
 
 function emptyPersonalDataFields() {
@@ -280,6 +281,9 @@ function PersonalDataFields({ form, setForm }) {
       <SelectInput label="Talla de polo" value={form.talla_polo} onChange={(talla_polo) => setForm({ ...form, talla_polo })} options={withBlank(tallaPoloOptions)} />
       <div className="form-span">
         <TextArea label="Alergia" value={form.alergia} onChange={(alergia) => setForm({ ...form, alergia })} rows={2} placeholder="Ej. Ninguna, o detalla la alergia" />
+      </div>
+      <div className="form-span">
+        <TextArea label="Condición de salud" value={form.condicion_salud} onChange={(condicion_salud) => setForm({ ...form, condicion_salud })} rows={2} placeholder="Ej. Ninguna, tratamiento o consideración médica" />
       </div>
     </>
   );
@@ -318,6 +322,7 @@ const userColumnLabels = {
   talla_zapatillas: "Talla de zapatillas",
   talla_polo: "Talla de polo",
   alergia: "Alergia",
+  condicion_salud: "Condición de salud",
   fecha_ingreso: "Fecha de ingreso",
   fecha_salida: "Fecha de salida",
   motivo_salida: "Motivo de salida",
@@ -1215,7 +1220,7 @@ function TrainingsPanel() {
               onChange={setCourseId}
               options={[
                 { value: "", label: coursesLoading ? "Cargando..." : "Selecciona una capacitacion" },
-                ...courses.map((course) => ({ value: course.id_curso, label: `${course.id_curso} - ${course.nombre_curso}` }))
+                ...courses.map((course) => ({ value: course.id_curso, label: course.nombre_curso || "Capacitación sin nombre" }))
               ]}
             />
             {statusLoading ? <LoadingBlock /> : null}
@@ -1679,7 +1684,7 @@ function BulkTrainingPanel({ users }) {
           onChange={setCourseId}
           options={[
             { value: "", label: coursesLoading ? "Cargando..." : "Selecciona una capacitacion" },
-            ...courses.map((course) => ({ value: course.id_curso, label: `${course.id_curso} - ${course.nombre_curso}` }))
+            ...courses.map((course) => ({ value: course.id_curso, label: course.nombre_curso || "Capacitación sin nombre" }))
           ]}
         />
         <SelectInput label="Nuevo estado" value={estado} onChange={setEstado} options={trainingStatusOptions} />
@@ -2147,7 +2152,7 @@ function TaskScoringSection() {
               onChange={setSelectedTaskId}
               options={[
                 { value: "", label: "Selecciona una tarea" },
-                ...tasks.map((task) => ({ value: String(task.id), label: `${task.id} - ${getTaskTitle(task) || "Sin titulo"}` }))
+                ...tasks.map((task) => ({ value: String(task.id), label: getTaskTitle(task) || "Tarea sin título" }))
               ]}
             />
             {tab === "Editar tarea" && selectedTask ? (
@@ -2527,7 +2532,7 @@ function AttendancePanel() {
   const attendanceRows = filteredAttendances.map((item) => ({
     id: item.id,
     Fecha: item.fecha,
-    Trabajador: workerNameById[item.usuario_id] || `Usuario ${item.usuario_id}`,
+    Trabajador: workerNameById[item.usuario_id] || "Trabajador no disponible",
     Email: workerEmailById[item.usuario_id] || "",
     Estado: attendanceStateLabel(String(item.estado || "FALTA").toUpperCase()),
     Sigla: item.sigla || "",
@@ -2712,7 +2717,7 @@ function AttendancePanel() {
               { value: "todos", label: `Todos (${historyUsersForStatus.length})` },
               ...historyUsersForStatus.map((worker) => ({
                 value: String(worker.id),
-                label: worker.nombre || worker.email || `Usuario ${worker.id}`
+                label: worker.nombre || worker.email || "Trabajador sin nombre"
               }))
             ]}
           />
@@ -3457,7 +3462,7 @@ function ActivityNotificationsPanel() {
             value={previewConfigId}
             onChange={setPreviewConfigId}
             options={configs.length
-              ? configs.map((config) => ({ value: String(config.id), label: config.nombre || `Programacion ${config.id}` }))
+              ? configs.map((config) => ({ value: String(config.id), label: config.nombre || "Programación sin nombre" }))
               : [{ value: "", label: "Sin programaciones" }]}
           />
           <label className="field">
@@ -4244,7 +4249,7 @@ function StoresSection() {
               onChange={setSelectedId}
               options={[
                 { value: "", label: "Selecciona una tienda" },
-                ...stores.map((store) => ({ value: String(store.id), label: `${store.id} - ${store.nombre}` }))
+                ...stores.map((store) => ({ value: String(store.id), label: store.nombre || "Tienda sin nombre" }))
               ]}
             />
           ) : null}
@@ -4363,7 +4368,7 @@ function BrandsSection() {
               onChange={setSelectedId}
               options={[
                 { value: "", label: "Selecciona una marca" },
-                ...brands.map((brand) => ({ value: String(brand.id), label: `${brand.id} - ${brand.nombre}` }))
+                ...brands.map((brand) => ({ value: String(brand.id), label: brand.nombre || "Marca sin nombre" }))
               ]}
             />
           ) : null}
@@ -5050,7 +5055,7 @@ function GuiasPanel() {
   );
 }
 
-const TIPOS_DOCUMENTO = ["CARTA AMONESTACION", "MEMORANDUM"];
+const TIPOS_DOCUMENTO = ["CARTA AMONESTACION", "MEMORANDUM", "VERBAL"];
 
 function emptyWarningForm() {
   return { usuario_id: "", descripcion: "", tipo_documento: "", fecha: todayLimaISO() };
@@ -5316,9 +5321,9 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
   const userIds = new Set(users.map((user) => Number(user.id)));
   const workerNameById = Object.fromEntries(users.map((user) => [user.id, user.nombre || user.email]));
   const workerEmailById = Object.fromEntries(users.map((user) => [user.id, user.email]));
-  const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || `Tarea ${task.id}`]));
+  const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || "Tarea sin nombre"]));
 
-  const userColumns = ["Nombre", "Nombres completos", "Usuario", "Rol", "Activo", "DNI", "Telefono", "Telefono emergencia", "Direccion", "Distrito", "Fecha nacimiento", "Sueldo", "Alergia"];
+  const userColumns = ["Nombre", "Nombres completos", "Usuario", "Rol", "Activo", "DNI", "Telefono", "Telefono emergencia", "Direccion", "Distrito", "Fecha nacimiento", "Sueldo", "Alergia", "Condición de salud"];
   const userRows = users.map((user) => ({
     Nombre: user.nombre,
     "Nombres completos": user.nombres_completos || "",
@@ -5332,7 +5337,8 @@ function DocumentsExporter({ data, exporting, onExportAll }) {
     Distrito: user.distrito || "",
     "Fecha nacimiento": user.fecha_cumpleanos || "",
     Sueldo: Number(user.sueldo || 0).toFixed(2),
-    Alergia: user.alergia || ""
+    Alergia: user.alergia || "",
+    "Condición de salud": user.condicion_salud || ""
   }));
 
   const attendanceColumns = ["Fecha", "Trabajador", "Email", "Estado", "Sigla"];
