@@ -2,18 +2,21 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   BadgeCheck,
   ClipboardCheck,
+  Pencil,
   FileSpreadsheet,
   Hash,
   RefreshCcw,
   Save,
   Search,
   Timer,
+  Trash2,
   UserRound
 } from "lucide-react";
 import {
   cancelGroupLeaderActivity,
   createGroupLeaderRecord,
   createIncident,
+  deleteIncident,
   deleteGroupLeaderRecord,
   friendlyError,
   listLotes,
@@ -21,7 +24,8 @@ import {
   loadGroupLeaderContext,
   updateGroupLeaderActivity,
   updateGroupLeaderAverageReference,
-  updateGroupLeaderRecord
+  updateGroupLeaderRecord,
+  updateIncident
 } from "../lib/repository";
 import { formatDateLima, formatDateTimeLima, limaDateTimeToISO, todayLimaISO } from "../lib/dates";
 import { downloadCsv } from "../lib/csv";
@@ -36,6 +40,7 @@ import {
   normalizeText
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
+import { useSessionState } from "../lib/sessionState";
 import {
   Alert,
   Button,
@@ -52,7 +57,7 @@ import {
   TextInput,
   usePagination
 } from "./ui";
-import WorkerDashboard, { HANGTAG_OPTIONS } from "./WorkerDashboard";
+import WorkerDashboard, { HANGTAG_OPTIONS, WorkerHistory } from "./WorkerDashboard";
 
 function createInitialForm() {
   return {
@@ -169,16 +174,56 @@ function TaskAverageField({ label, value, onSave }) {
   );
 }
 function GroupLeaderDashboard({ user }) {
-  const [workspace, setWorkspace] = useState("Registro de tiempos de operarios");
-  const tabs = ["Registro de tiempos de operarios", "Registro operario", "Registrar errores", "Ranking"];
-  return /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(
-    Tabs,
-    {
-      tabs,
-      active: workspace,
-      onChange: setWorkspace
+  const [workspace, setWorkspace] = useSessionState(`leader-workspace:${user?.id || "unknown"}`, "Registro de tiempos de operarios");
+  const isOtherRole = normalizeRole(user?.rol) === "otros";
+  const tabs = [
+    "Registro de tiempos de operarios",
+    "Registro operario",
+    ...(isOtherRole ? ["Registros de todos los operantes"] : []),
+    "Registrar errores",
+    "Ranking"
+  ];
+  const [visitedWorkspaces, setVisitedWorkspaces] = useState(() => new Set([workspace]));
+
+  useEffect(() => {
+    if (!tabs.includes(workspace)) {
+      setWorkspace(tabs[0]);
+      return;
     }
-  ), workspace === "Registro operario" ? /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(Panel, { title: "Registro operario", eyebrow: "Registro propio" }, /* @__PURE__ */ React.createElement(Alert, null, "Los registros de este apartado quedar\xE1n asociados a tu propio usuario, no al operante.")), /* @__PURE__ */ React.createElement(WorkerDashboard, { user, embedded: true })) : workspace === "Registro de tiempos de operarios" ? /* @__PURE__ */ React.createElement(GroupTimeDashboard, { user }) : workspace === "Registrar errores" ? /* @__PURE__ */ React.createElement(IncidentDashboard, { user }) : /* @__PURE__ */ React.createElement(RankingDashboard, { user }));
+    setVisitedWorkspaces((current) => {
+      if (current.has(workspace)) return current;
+      const next = new Set(current);
+      next.add(workspace);
+      return next;
+    });
+  }, [workspace, isOtherRole, setWorkspace]);
+
+  function keptWorkspace(name, content) {
+    if (!visitedWorkspaces.has(name)) return null;
+    return (
+      <div style={{ display: workspace === name ? "block" : "none" }} aria-hidden={workspace !== name}>
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <div className="stack">
+      <Tabs tabs={tabs} active={workspace} onChange={setWorkspace} />
+      {keptWorkspace("Registro de tiempos de operarios", <GroupTimeDashboard user={user} />)}
+      {keptWorkspace("Registro operario", (
+        <div className="stack">
+          <Panel title="Registro operario" eyebrow="Registro propio">
+            <Alert>Los registros de este apartado quedarÃ¡n asociados a tu propio usuario, no al operante.</Alert>
+          </Panel>
+          <WorkerDashboard user={user} embedded />
+        </div>
+      ))}
+      {isOtherRole ? keptWorkspace("Registros de todos los operantes", <WorkerHistory user={user} allWorkers />) : null}
+      {keptWorkspace("Registrar errores", <IncidentDashboard user={user} />)}
+      {keptWorkspace("Ranking", <RankingDashboard user={user} />)}
+    </div>
+  );
 }
 // Metrica activa del grafico de ranking: cada una sabe leer su valor de una
 // entrada ya agregada y formatearlo para la barra.
@@ -595,13 +640,16 @@ var initialIncidentForm = {
   tarea_id: "",
   tienda_id: "",
   numero_guia: "",
+  numero_lote: "",
   tipo_error: "CONTENIDO",
   observacion: ""
 };
 export function IncidentDashboard({ user }) {
-  const [form, setForm] = useState(initialIncidentForm);
+  const incidentDraftKey = `incident-draft:${user?.id || "admin"}`;
+  const [form, setForm] = useSessionState(`${incidentDraftKey}:form`, initialIncidentForm);
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useSessionState(`${incidentDraftKey}:editing-id`, null);
   const { data, loading, error, reload } = useAsyncData(
     loadIncidentContext,
     [user?.id],
@@ -618,6 +666,42 @@ export function IncidentDashboard({ user }) {
   );
   function updateForm(changes) {
     setForm((current) => ({ ...current, ...changes }));
+  }
+  function editIncident(incident) {
+    const areaIncident = ["incidencia", "error"].includes(String(incident.turno || "").toLowerCase());
+    setEditingId(Number(incident.id_error));
+    setForm({
+      usuario_id: areaIncident ? "" : String(incident.usuario_id || ""),
+      area_id: areaIncident ? String(incident.area_id || "") : "",
+      fecha_error: String(incident.fecha_error || "").slice(0, 10),
+      turno: areaIncident ? "incidencia" : incident.turno,
+      tarea_id: String(incident.tarea_error_id || ""),
+      tienda_id: String(incident.tienda_id || ""),
+      numero_guia: incident.numero_guia || "",
+      numero_lote: incident.numero_lote || "",
+      tipo_error: incident.tipo_error || "CONTENIDO",
+      observacion: incident.observacion || ""
+    });
+    setStatus({ type: "info", message: `Editando el error #${incident.id_error}.` });
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setForm({ ...initialIncidentForm, fecha_error: todayLimaISO() });
+    setStatus(null);
+  }
+  async function removeIncident() {
+    if (!editingId || !window.confirm("¿Eliminar este registro de error? Esta acción no se puede deshacer.")) return;
+    setSaving(true);
+    try {
+      await deleteIncident(editingId);
+      cancelEdit();
+      setStatus({ type: "success", message: "Error eliminado correctamente." });
+      await reload();
+    } catch (err) {
+      setStatus({ type: "error", message: friendlyError(err) });
+    } finally {
+      setSaving(false);
+    }
   }
   async function handleSubmit(event) {
     event.preventDefault();
@@ -639,10 +723,6 @@ export function IncidentDashboard({ user }) {
       setStatus({ type: "error", message: "Selecciona una tienda." });
       return;
     }
-    if (!form.numero_guia.trim()) {
-      setStatus({ type: "error", message: "Ingresa el n\xFAmero de gu\xEDa." });
-      return;
-    }
     if (!form.tipo_error.trim()) {
       setStatus({ type: "error", message: "Ingresa el tipo de error." });
       return;
@@ -653,7 +733,7 @@ export function IncidentDashboard({ user }) {
     }
     setSaving(true);
     try {
-      await createIncident({
+      const payload = {
         usuario_id: isAreaIncident ? null : Number(form.usuario_id),
         area_id: isAreaIncident ? Number(form.area_id) : null,
         fecha_error: form.fecha_error,
@@ -661,12 +741,16 @@ export function IncidentDashboard({ user }) {
         tarea_error_id: Number(form.tarea_id),
         tienda_id: Number(form.tienda_id),
         numero_guia: form.numero_guia.trim(),
+        numero_lote: form.numero_lote.trim(),
         tipo_error: form.tipo_error.trim(),
         observacion: form.observacion.trim() || null
-      });
+      };
+      if (editingId) await updateIncident(editingId, payload);
+      else await createIncident(payload);
       setForm({ ...initialIncidentForm, fecha_error: todayLimaISO() });
-      setStatus({ type: "success", message: "Error registrado correctamente." });
-      reload();
+      setStatus({ type: "success", message: editingId ? "Error actualizado correctamente." : "Error registrado correctamente." });
+      setEditingId(null);
+      await reload();
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });
     } finally {
@@ -674,19 +758,32 @@ export function IncidentDashboard({ user }) {
     }
   }
   const rows = incidents.map((incident) => ({
+    id: incident.id_error,
+    Acción: /* @__PURE__ */ React.createElement(Button, {
+      type: "button",
+      variant: "secondary",
+      size: "sm",
+      icon: Pencil,
+      onClick: (event) => {
+        event.stopPropagation();
+        editIncident(incident);
+      }
+    }, "Editar"),
     Fecha: formatDateLima(incident.fecha_error),
     "Usuario / Área": incident.usuario_id ? incident.usuario_nombre : incident.area_nombre,
     Tarea: incident.tarea_nombre,
     "N\xFAmero de gu\xEDa": incident.numero_guia,
+    "Número de lote": incident.numero_lote,
     Tienda: incident.tienda_nombre || storeNames.get(Number(incident.tienda_id)) || "Tienda no disponible",
     "Tipo de error": incident.tipo_error,
     Observaci\u00F3n: incident.observacion,
-    Turno: ["incidencia", "error"].includes(String(incident.turno || "").toLowerCase()) ? "incidencia" : incident.turno
+    Turno: ["incidencia", "error"].includes(String(incident.turno || "").toLowerCase()) ? "incidencia" : incident.turno,
+    _incident: incident
   }));
   return /* @__PURE__ */ React.createElement("div", { className: "stack" }, /* @__PURE__ */ React.createElement(
     Panel,
     {
-      title: "Registrar error",
+      title: editingId ? `Editar error #${editingId}` : "Registrar error",
       eyebrow: "Líder de equipo",
       actions: /* @__PURE__ */ React.createElement(Button, { variant: "secondary", icon: RefreshCcw, onClick: reload }, "Actualizar")
     },
@@ -773,6 +870,14 @@ export function IncidentDashboard({ user }) {
         options: ["CONTENIDO", "LIBERADO"]
       }
     ), /* @__PURE__ */ React.createElement(
+      TextInput,
+      {
+        label: "Número de lote (opcional)",
+        value: form.numero_lote,
+        onChange: (numero_lote) => updateForm({ numero_lote }),
+        placeholder: "Ej. LOTE-001"
+      }
+    ), /* @__PURE__ */ React.createElement(
       TextArea,
       {
         label: "Observaci\xF3n",
@@ -780,12 +885,62 @@ export function IncidentDashboard({ user }) {
         onChange: (observacion) => updateForm({ observacion }),
         placeholder: "Detalle opcional"
       }
-    ), /* @__PURE__ */ React.createElement("div", { className: "form-span form-actions" }, /* @__PURE__ */ React.createElement(Button, { type: "submit", icon: Save, loading: saving }, "Guardar error")), status ? /* @__PURE__ */ React.createElement(Alert, { type: status.type }, status.message) : null)
-  ), /* @__PURE__ */ React.createElement(Panel, { title: "Historial de errores", eyebrow: "Datos registrados" }, /* @__PURE__ */ React.createElement(DataTable, { rows, empty: "Todav\xEDa no hay errores registrados.", compact: true })));
+    ), /* @__PURE__ */ React.createElement("div", { className: "form-span form-actions" }, editingId ? /* @__PURE__ */ React.createElement(Button, { type: "button", variant: "danger", icon: Trash2, loading: saving, onClick: removeIncident }, "Eliminar error") : null, editingId ? /* @__PURE__ */ React.createElement(Button, { type: "button", variant: "secondary", disabled: saving, onClick: cancelEdit }, "Cancelar") : null, /* @__PURE__ */ React.createElement(Button, { type: "submit", icon: Save, loading: saving }, editingId ? "Guardar cambios" : "Guardar error")), status ? /* @__PURE__ */ React.createElement(Alert, { type: status.type }, status.message) : null)
+  ), /* @__PURE__ */ React.createElement(Panel, { title: "Historial de errores", eyebrow: "Usa Editar para corregir fecha o cualquier otro dato" }, /* @__PURE__ */ React.createElement(DataTable, { rows, columns: ["Acción", "Fecha", "Usuario / Área", "Tarea", "Número de guía", "Número de lote", "Tienda", "Tipo de error", "Observación", "Turno"], onRowClick: (row) => editIncident(row._incident), empty: "Todav\xEDa no hay errores registrados.", compact: true })));
+}
+
+export function TimeRecordsHistory() {
+  const [taskId, setTaskId] = useState("");
+  const [workerId, setWorkerId] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [lot, setLot] = useState("");
+  const { data, loading, error, reload } = useAsyncData(async () => {
+    const [context, lotes] = await Promise.all([loadGroupLeaderContext(), listLotes().catch(() => [])]);
+    return { ...context, lotes };
+  }, [], { records: [], recordTasks: [], allUsers: [], stores: [], lotes: [] });
+  const rows = (data.records || []).filter((record) => {
+    const date = String(record.fecha_registro || "").slice(0, 10);
+    if (taskId && String(record.tarea_id) !== taskId) return false;
+    if (workerId && String(record.trabajador_id) !== workerId) return false;
+    if (dateFrom && date < dateFrom) return false;
+    if (dateTo && date > dateTo) return false;
+    return !lot || String(record.lote || "") === lot;
+  }).map((record) => ({
+    Fecha: record.fecha_registro,
+    Operante: record.trabajador_nombre,
+    Tarea: record.tarea_nombre,
+    Lote: record.lote,
+    Cantidad: record.cantidad,
+    "Hora inicio": record.hora_inicio ? formatDateTimeLima(record.hora_inicio) : "",
+    "Hora fin": record.hora_fin ? formatDateTimeLima(record.hora_fin) : "Sin cerrar",
+    "Tiempo (min)": record.tiempo_minutos,
+    Tienda: record.tienda_nombre,
+    Encargado: record.encargado_nombre
+  }));
+  return <Panel title="Registros de tiempo" eyebrow="Todos los líderes y operantes" actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}>
+    {loading ? <LoadingBlock /> : null}
+    {error ? <Alert type="error">{error}</Alert> : null}
+    <div className="toolbar">
+      <SelectInput label="Operante" value={workerId} onChange={setWorkerId} options={[{ value: "", label: "Todos" }, ...(data.allUsers || []).map((item) => ({ value: String(item.id), label: item.nombre || item.email }))]} />
+      <SelectInput label="Tarea" value={taskId} onChange={setTaskId} options={[{ value: "", label: "Todas" }, ...(data.recordTasks || []).map((task) => ({ value: String(task.id), label: getTaskTitle(task) }))]} />
+      <SelectInput label="Lote" value={lot} onChange={setLot} options={[
+        { value: "", label: "Todos los lotes" },
+        ...(data.lotes || []).map((item) => ({
+          value: String(item.codigo_lote || item.lote || ""),
+          label: item.marca_nombre ? `${item.codigo_lote} - ${item.marca_nombre}` : String(item.codigo_lote || item.lote || "")
+        })).filter((option) => option.value)
+      ]} />
+      <TextInput label="Fecha desde" type="date" value={dateFrom} onChange={setDateFrom} />
+      <TextInput label="Fecha hasta" type="date" value={dateTo} onChange={setDateTo} />
+    </div>
+    <DataTable rows={rows} empty="No hay registros para los filtros seleccionados." />
+  </Panel>;
 }
 function GroupTimeDashboard({ user }) {
-  const [form, setForm] = useState(createInitialForm);
-  const [filters, setFilters] = useState(initialFilters);
+  const timeDraftKey = `leader-time:${user?.id || "unknown"}`;
+  const [form, setForm] = useSessionState(`${timeDraftKey}:form`, createInitialForm);
+  const [filters, setFilters] = useSessionState(`${timeDraftKey}:filters`, initialFilters);
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -1035,7 +1190,13 @@ function GroupTimeDashboard({ user }) {
       setStatus({ type: "success", message: `Registro #${record.id} actualizado; el tiempo fue recalculado.` });
       await reload();
     } catch (err) {
-      setStatus({ type: "error", message: friendlyError(err) });
+      const message = friendlyError(err);
+      setStatus({
+        type: "error",
+        message: Number(err?.status) === 409 || /horario|simultane|solap|intervalo/i.test(message)
+          ? `Aviso de choque de horarios: ${message}`
+          : message
+      });
       if (/actualiz|version|otro cambio|409/i.test(String(err?.message || ""))) await reload();
     } finally {
       setRowSaving(false);

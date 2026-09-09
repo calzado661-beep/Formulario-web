@@ -1,6 +1,7 @@
 import { requireSupabase } from "./supabaseClient";
 import { applyScoringRules, isGroupLeaderTimeTask, isWorkerRole, normalizeRole, normalizeScoringRule } from "./scoring";
 import { nowLimaISODateTime, nowLimaTimeHHMM } from "./dates";
+import { clearSessionStatePrefix, readSessionState, writeSessionState } from "./sessionState";
 
 let taskTableName;
 let attendanceTableName;
@@ -65,7 +66,16 @@ async function requestLocalApi(path, options = {}, config = {}) {
         sawNotFound = true;
         continue;
       }
-      if (response.ok) return payload;
+      if (response.ok) {
+        const method = String(options.method || "GET").toUpperCase();
+        if (method !== "GET" && (path.startsWith("/api/activity-logs") || path.startsWith("/api/activity-records"))) {
+          clearOperationalRecordsCache("normal");
+        }
+        if (method !== "GET" && path.startsWith("/api/group-leader/")) {
+          clearOperationalRecordsCache("time");
+        }
+        return payload;
+      }
       if (config.nullOnAuthFailure && [400, 401, 403].includes(response.status)) return null;
 
       const apiError = new Error(payload.error || payload.message || `Error ${response.status} al consultar el backend local.`);
@@ -1269,6 +1279,78 @@ export async function createIncident(payload) {
   return apiResult.incident;
 }
 
+export async function listAllWorkerTaskRecords() {
+  const apiResult = await requestLocalApi("/api/activity-logs?source=registros_tareas", {}, { requiredBackend: true });
+  if (!Array.isArray(apiResult?.logs)) throw new Error("No se pudo cargar la tabla registros_tareas.");
+  return apiResult.logs.map(normalizeActivityLog);
+}
+
+export async function listOperationalRecords({
+  source = "normal",
+  page = 1,
+  pageSize = 25,
+  workerId = "",
+  taskId = "",
+  lot = "",
+  from = "",
+  to = "",
+  order = "desc",
+  search = "",
+  includeCatalogs = false,
+  forceRefresh = false
+} = {}) {
+  const params = new URLSearchParams({
+    source,
+    page: String(page),
+    pageSize: String(pageSize)
+  });
+  if (workerId) params.set("workerId", String(workerId));
+  if (taskId) params.set("taskId", String(taskId));
+  if (lot) params.set("lot", String(lot));
+  if (from) params.set("from", String(from));
+  if (to) params.set("to", String(to));
+  if (order === "asc") params.set("order", "asc");
+  if (search) params.set("search", String(search));
+  if (includeCatalogs) params.set("includeCatalogs", "true");
+  const cacheKey = `operational-records:${params.toString()}`;
+  if (!forceRefresh) {
+    const cached = readSessionState(cacheKey, null);
+    if (cached && Array.isArray(cached.records)) return cached;
+  }
+  const apiResult = await requestLocalApi(`/api/operational-records?${params.toString()}`, {}, { requiredBackend: true });
+  if (!Array.isArray(apiResult?.records)) throw new Error("No se pudieron cargar los registros operativos.");
+  const result = {
+    records: apiResult.records.map(normalizeActivityLog),
+    total: Number(apiResult.total || 0),
+    page: Number(apiResult.page || page),
+    pageSize: Number(apiResult.pageSize || pageSize),
+    catalogs: apiResult.catalogs || null
+  };
+  writeSessionState(cacheKey, result);
+  return result;
+}
+
+export function clearOperationalRecordsCache(source = "") {
+  clearSessionStatePrefix(source ? `operational-records:source=${source}` : "operational-records:");
+}
+
+export async function updateIncident(incidentId, payload) {
+  const apiResult = await requestLocalApi(`/api/incidents/${encodeURIComponent(incidentId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  }, { requiredBackend: true });
+  if (!apiResult?.incident) throw new Error("No se pudo actualizar el error.");
+  return apiResult.incident;
+}
+
+export async function deleteIncident(incidentId) {
+  const apiResult = await requestLocalApi(`/api/incidents/${encodeURIComponent(incidentId)}`, {
+    method: "DELETE"
+  }, { requiredBackend: true });
+  if (!apiResult?.deleted) throw new Error("No se pudo eliminar el error.");
+  return Number(apiResult.deleted);
+}
+
 function normalizeGroupLeaderLog(row) {
   return {
     ...row,
@@ -1359,6 +1441,7 @@ export async function loadGroupLeaderContext() {
     return {
       workers: apiContext.workers || [],
       tasks: apiContext.tasks || [],
+      recordTasks: apiContext.recordTasks || apiContext.tasks || [],
       brands: apiContext.brands || [],
       stores: apiContext.stores || [],
       leaders: apiContext.leaders || [],

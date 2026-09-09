@@ -12,6 +12,7 @@ import {
   createTienda,
   createTrainingCourse,
   createUser,
+  clearOperationalRecordsCache,
   deleteActivityReportSettings,
   deleteAmonestacion,
   deleteAttendanceReportSettings,
@@ -39,6 +40,7 @@ import {
   listGuiaItemsForExport,
   listLogAsistencias,
   listLotes,
+  listOperationalRecords,
   listPenalizaciones,
   listPersonnelMovements,
   listTasks,
@@ -78,6 +80,7 @@ import {
   validateQuantityRanges
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
+import { readSessionState, useSessionState, writeSessionState } from "../lib/sessionState";
 import FootwearDashboard from "./FootwearDashboard";
 import { IncidentDashboard } from "./GroupLeaderDashboard";
 import {
@@ -91,6 +94,7 @@ import {
   Panel,
   SelectInput,
   SwitchInput,
+  TablePager,
   Tabs,
   TextArea,
   TextInput
@@ -205,9 +209,156 @@ export default function AdminDashboard({ section }) {
   if (section === "Lotes") return <><LotesPanel /><AdminHelpButton section="Lotes" /></>;
   if (section === "Guias") return <><GuiasPanel /><AdminHelpButton section="Guias" /></>;
   if (section === "Errores") return <><IncidentDashboard /><AdminHelpButton section="Errores" /></>;
+  if (section === "Registros") return <AdminOperationalRecords />;
   if (section === "Amonestaciones") return <><WarningsPanel /><AdminHelpButton section="Amonestaciones" /></>;
   if (section === "Documentos") return <><DocumentsPanel /><AdminHelpButton section="Documentos" /></>;
   return <FootwearDashboard />;
+}
+
+function AdminOperationalRecords() {
+  const { data, loading, error, reload } = useAsyncData(
+    async () => {
+      const cached = readSessionState("admin-operational-catalogs", null);
+      if (cached?.users && cached?.tasks && cached?.lotes) return cached;
+      const [users, tasks, lotes] = await Promise.all([selectUsers(), listTasks(), listLotes().catch(() => [])]);
+      const catalogs = { users, tasks, lotes };
+      writeSessionState("admin-operational-catalogs", catalogs);
+      return catalogs;
+    },
+    [],
+    { users: [], tasks: [], lotes: [] }
+  );
+
+  if (loading) return <LoadingBlock label="Cargando filtros de registros..." />;
+  if (error) return <Alert type="error" action={<Button variant="secondary" onClick={reload}>Reintentar</Button>}>{friendlyError(error)}</Alert>;
+
+  return (
+    <div className="stack">
+      <AdminOperationalRecordsTable source="normal" title="Registros operativos" catalogs={data} />
+      <AdminOperationalRecordsTable source="time" title="Registros operativos con tiempo" catalogs={data} />
+    </div>
+  );
+}
+
+function AdminOperationalRecordsTable({ source, title, catalogs }) {
+  const pageSize = 25;
+  const stateKey = `admin-operational:${source}`;
+  const currentDate = todayLimaISO();
+  const currentYear = currentDate.slice(0, 4);
+  const currentMonth = currentDate.slice(5, 7);
+  const [page, setPage] = useSessionState(`${stateKey}:page`, 1);
+  const [workerId, setWorkerId] = useSessionState(`${stateKey}:worker`, "");
+  const [taskId, setTaskId] = useSessionState(`${stateKey}:task`, "");
+  const [lot, setLot] = useSessionState(`${stateKey}:lot`, "");
+  const [year, setYear] = useSessionState(`${stateKey}:year`, currentYear);
+  const [month, setMonth] = useSessionState(`${stateKey}:month`, currentMonth);
+  const [day, setDay] = useSessionState(`${stateKey}:day`, "");
+  const filtersMounted = useRef(false);
+  const daysInMonth = month ? new Date(Number(year), Number(month), 0).getDate() : 0;
+  const selectedDay = day ? String(day).padStart(2, "0") : "";
+  const from = month
+    ? `${year}-${month}-${selectedDay || "01"}`
+    : `${year}-01-01`;
+  const to = month
+    ? `${year}-${month}-${selectedDay || String(daysInMonth).padStart(2, "0")}`
+    : `${year}-12-31`;
+
+  useEffect(() => {
+    if (!filtersMounted.current) {
+      filtersMounted.current = true;
+      return;
+    }
+    setPage(1);
+  }, [workerId, taskId, lot, year, month, day]);
+
+  useEffect(() => {
+    if (day && Number(day) > daysInMonth) setDay("");
+  }, [day, daysInMonth, setDay]);
+
+  const { data, loading, error, reload } = useAsyncData(
+    () => listOperationalRecords({ source, page, pageSize, workerId, taskId, lot, from, to }),
+    [source, page, workerId, taskId, lot, from, to],
+    { records: [], total: 0, page: 1, pageSize }
+  );
+
+  const workerOptions = [
+    { value: "", label: "Todos" },
+    ...(catalogs.users || [])
+      .filter((item) => normalizeRole(item.rol) === "operante")
+      .map((item) => ({ value: String(item.id), label: item.nombre || item.email }))
+  ];
+  const taskOptions = [
+    { value: "", label: "Todas" },
+    ...(catalogs.tasks || []).map((item) => ({ value: String(item.id), label: getTaskTitle(item) || "Tarea sin nombre" }))
+  ];
+  const lotOptions = [
+    { value: "", label: "Todos" },
+    ...(catalogs.lotes || []).map((item) => ({ value: String(item.codigo_lote || item.codigo || item.lote || ""), label: String(item.codigo_lote || item.codigo || item.lote || "") })).filter((item) => item.value)
+  ];
+  const yearOptions = Array.from({ length: 21 }, (_, index) => {
+    const value = String(Number(currentYear) - index);
+    return { value, label: value };
+  });
+  const monthOptions = [
+    { value: "", label: "Todos los meses" },
+    ...[
+      "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+      "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+    ].map((label, index) => ({ value: String(index + 1).padStart(2, "0"), label }))
+  ];
+  const dayOptions = [
+    { value: "", label: "Todos los días" },
+    ...Array.from({ length: daysInMonth }, (_, index) => ({ value: String(index + 1).padStart(2, "0"), label: String(index + 1) }))
+  ];
+  const rows = (data.records || []).map((record) => source === "time" ? {
+    Fecha: record.fecha_registro || "",
+    Operante: record.trabajador_nombre || "",
+    Tarea: record.tarea_nombre || "",
+    "Hora inicio": formatDateTimeLima(record.hora_inicio) || "",
+    "Hora fin": formatDateTimeLima(record.hora_fin) || "",
+    "Tiempo (min)": record.tiempo_minutos ?? "",
+    Cantidad: record.cantidad ?? "",
+    Lote: record.lote || "",
+    Tienda: record.tienda_nombre || "",
+    Encargado: record.encargado_nombre || "",
+    Detalle: record.detalle || record.observacion || ""
+  } : {
+    Fecha: record.fecha_registro || "",
+    Hora: record.hora_registro || "",
+    Operante: record.trabajador_nombre || "",
+    Tarea: record.tarea_nombre || record.actividad_nombre || "",
+    Cantidad: record.cantidad ?? "",
+    Lote: record.lote || "",
+    Guia: record.numero_guia || "",
+    Tienda: record.tienda_nombre || "",
+    Puntos: record.puntaje ?? "",
+    Detalle: record.detalle || record.observacion || ""
+  });
+  const totalPages = Math.max(1, Math.ceil(Number(data.total || 0) / pageSize));
+
+  return (
+    <Panel
+      title={title}
+      eyebrow={source === "time" ? "registros_tareas_jefe_equipo" : "registros_tareas"}
+      actions={<Button variant="secondary" icon={RefreshCcw} onClick={() => { clearOperationalRecordsCache(source); reload(); }}>Actualizar</Button>}
+    >
+      <div className="toolbar">
+        <SelectInput label="Operante" value={workerId} onChange={setWorkerId} options={workerOptions} />
+        <SelectInput label="Tarea" value={taskId} onChange={setTaskId} options={taskOptions} />
+        <SelectInput label="Lote" value={lot} onChange={setLot} options={lotOptions} />
+        <SelectInput label="Año" value={year} onChange={setYear} options={yearOptions} />
+        <SelectInput label="Mes" value={month} onChange={(value) => { setMonth(value); setDay(""); }} options={monthOptions} />
+        <SelectInput label="Día" value={day} onChange={setDay} options={dayOptions} disabled={!month} />
+      </div>
+      {error ? <Alert type="error">{friendlyError(error)}</Alert> : null}
+      {loading ? <LoadingBlock label="Cargando registros..." /> : (
+        <>
+          <DataTable rows={rows} pageSize={0} empty="No hay registros para estos filtros." />
+          <TablePager page={page - 1} totalPages={totalPages} totalRows={Number(data.total || 0)} onChange={(nextPage) => setPage(nextPage + 1)} />
+        </>
+      )}
+    </Panel>
+  );
 }
 
 function boolValue(value) {

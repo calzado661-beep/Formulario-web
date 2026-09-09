@@ -7,6 +7,7 @@ import WorkerDashboard from "./components/WorkerDashboard";
 import { Alert } from "./components/ui";
 import { clearApiSession } from "./lib/repository";
 import { normalizeRole } from "./lib/scoring";
+import { clearApplicationSessionState } from "./lib/sessionState";
 
 const SESSION_KEY = "formulario_usuario_v2";
 
@@ -38,15 +39,13 @@ export default function App() {
       onAdminSectionChange={setAdminSection}
       onLogout={() => {
         clearApiSession();
+        clearApplicationSessionState();
         setUser(null);
       }}
     >
       {role === "administrador" ? <AdminDashboard section={adminSection} /> : null}
       {role === "operante" ? <WorkerDashboard user={user} /> : null}
-      {role === "lider de equipo" ? <GroupLeaderDashboard user={user} /> : null}
-      {role === "otros" ? (
-        <Alert>Este usuario pertenece al rol Otros y no tiene modulos operativos asignados.</Alert>
-      ) : null}
+      {["lider de equipo", "otros"].includes(role) ? <GroupLeaderDashboard user={user} /> : null}
       {!["administrador", "operante", "lider de equipo", "otros"].includes(role) ? (
         <Alert type="error">Rol no reconocido. Usa administrador, operante, líder de equipo u otros.</Alert>
       ) : null}

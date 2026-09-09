@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { isValidElement, useEffect, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -286,6 +286,7 @@ export function DataTable({
 
 function formatCell(value) {
   if (value === null || value === undefined || value === "") return <span className="muted">-</span>;
+  if (isValidElement(value)) return value;
   if (typeof value === "boolean") return value ? "Si" : "No";
   if (Array.isArray(value)) return value.join(", ");
   if (typeof value === "object") return JSON.stringify(value);
