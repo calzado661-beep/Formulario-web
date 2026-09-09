@@ -281,7 +281,9 @@ function RegisterActivity({ user }) {
       seen.add(record.taskKey);
 
       const shape = recordPayloadShape(record);
-      if (shape.usesStore && shape.required.tienda && !record.tiendaId) {
+      // Cuando la cantidad se distribuye por guias, cada fila trae su propia
+      // tienda. La tienda general solo es obligatoria si no hay distribucion.
+      if (shape.usesStore && shape.required.tienda && !record.tiendaId && !shape.guias.length) {
         return `Selecciona una tienda para ${shape.title}.`;
       }
       if (shape.usesStore && record.tiendaId && !stores.some((store) => String(store.id) === String(record.tiendaId))) {

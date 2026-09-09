@@ -3677,7 +3677,10 @@ async function handleCreateActivityLog(request, response) {
       sendJson(response, 400, { error: "Usuario y tarea son obligatorios." });
       return;
     }
-    if (requiresStore && !payload.tienda_id) {
+    // Una tarea puede usar una tienda general o una tienda distinta por guia.
+    // En el segundo caso normalizedGuideItems ya exige tienda_id en cada fila
+    // y, al insertar, el resto de los campos del registro se conserva.
+    if (requiresStore && !payload.tienda_id && !guideItems.length) {
       sendJson(response, 400, { error: `La tienda es obligatoria para ${taskTitle(taskResult.data)}.` });
       return;
     }
