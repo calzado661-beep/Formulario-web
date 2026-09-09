@@ -95,15 +95,16 @@ function emptyRecord() {
   };
 }
 
-export default function WorkerDashboard({ user, embedded = false }) {
+export default function WorkerDashboard({ user, embedded = false, showAllWorkers = false }) {
   const [tab, setTab] = useSessionState(`worker-tab:${user?.id || "unknown"}:${embedded ? "embedded" : "main"}`, "Registrar actividad");
-  const tabs = ["Registrar actividad", "Historial"];
+  const tabs = ["Registrar actividad", "Historial", ...(showAllWorkers ? ["Registros de todos los operantes"] : [])];
 
   return (
     <div className={embedded ? "stack embedded-worker" : "stack"}>
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
       {tab === "Registrar actividad" ? <RegisterActivity user={user} /> : null}
       {tab === "Historial" ? <WorkerHistory user={user} /> : null}
+      {showAllWorkers && tab === "Registros de todos los operantes" ? <WorkerHistory user={user} allWorkers /> : null}
     </div>
   );
 }
@@ -766,14 +767,16 @@ function liveProgressTime(value) {
 // en curso ahora mismo, para que sea lo primero que se ve al entrar.
 function TodayLeaderTaskCard({ user, onUse }) {
   const requestRef = useRef(null);
-  const lastSignatureRef = useRef("");
+  const consumedIdsRef = useRef(new Set());
   const [activities, setActivities] = useState([]);
   const [loaded, setLoaded] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
   const consumedStorageKey = `worker-leader-task-consumed:${user?.id || "unknown"}`;
 
   useEffect(() => {
     let cancelled = false;
+    consumedIdsRef.current = new Set();
+    setActivities([]);
+    setLoaded(false);
     async function refresh() {
       requestRef.current?.abort();
       const controller = new AbortController();
@@ -789,25 +792,17 @@ function TodayLeaderTaskCard({ user, onUse }) {
             && String(activity.fecha_registro || "").slice(0, 10) === today
             && normalizeText(activity.tarea_nombre || activity.actividad_nombre) === "etiquetado"
         );
-        // Si el líder de equipo hizo varios registros de etiquetado hoy, se
-        // acumulan en una sola tarjeta para que el operante registre una vez.
-        // La firma usa solo los IDs: corregir la cantidad del mismo registro
-        // no debe mostrar de nuevo una tarjeta que el operante ya utilizo.
-        const signature = leaderRecordsToday
-          .map((activity) => String(activity.record_id ?? activity.id))
-          .sort()
-          .join("|");
-        if (signature !== lastSignatureRef.current) {
-          lastSignatureRef.current = signature;
-          let consumedSignature = "";
-          try {
-            consumedSignature = window.localStorage.getItem(consumedStorageKey) || "";
-          } catch {
-            // La tarjeta sigue funcionando aunque el navegador bloquee localStorage.
-          }
-          setDismissed(Boolean(signature) && signature === consumedSignature);
+        // Conserva los IDs ya usados, incluyendo la firma del formato anterior.
+        // Los registros nuevos solo aportan su propia cantidad a la tarjeta.
+        try {
+          const storedIds = window.localStorage.getItem(consumedStorageKey) || "";
+          storedIds.split("|").filter(Boolean).forEach((id) => consumedIdsRef.current.add(id));
+        } catch {
+          // Conserva los IDs en memoria si el navegador bloquea localStorage.
         }
-        setActivities(leaderRecordsToday);
+        setActivities(leaderRecordsToday.filter(
+          (activity) => !consumedIdsRef.current.has(String(activity.record_id ?? activity.id))
+        ));
         setLoaded(true);
       } catch (err) {
         if (err?.name !== "AbortError" && !cancelled) setLoaded(true);
@@ -831,7 +826,7 @@ function TodayLeaderTaskCard({ user, onUse }) {
       }
     : null;
 
-  if (!loaded || !summary || dismissed) return null;
+  if (!loaded || !summary) return null;
 
   return (
     <Panel title="Tu líder de equipo te registro esto hoy" eyebrow="Datos para completar" className="today-leader-task-panel">
@@ -855,13 +850,16 @@ function TodayLeaderTaskCard({ user, onUse }) {
             type="button"
             variant="secondary"
             onClick={() => {
+              onUse(summary);
+              activities.forEach((activity) => {
+                consumedIdsRef.current.add(String(activity.record_id ?? activity.id));
+              });
               try {
-                window.localStorage.setItem(consumedStorageKey, lastSignatureRef.current);
+                window.localStorage.setItem(consumedStorageKey, [...consumedIdsRef.current].sort().join("|"));
               } catch {
                 // Al menos se oculta durante la sesion actual.
               }
-              onUse(summary);
-              setDismissed(true);
+              setActivities([]);
             }}
           >
             Usar estos datos

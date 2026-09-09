@@ -57,7 +57,7 @@ import {
   TextInput,
   usePagination
 } from "./ui";
-import WorkerDashboard, { HANGTAG_OPTIONS, WorkerHistory } from "./WorkerDashboard";
+import WorkerDashboard, { HANGTAG_OPTIONS } from "./WorkerDashboard";
 
 function createInitialForm() {
   return {
@@ -179,7 +179,6 @@ function GroupLeaderDashboard({ user }) {
   const tabs = [
     "Registro de tiempos de operarios",
     "Registro operario",
-    ...(isOtherRole ? ["Registros de todos los operantes"] : []),
     "Registrar errores",
     "Ranking"
   ];
@@ -187,7 +186,7 @@ function GroupLeaderDashboard({ user }) {
 
   useEffect(() => {
     if (!tabs.includes(workspace)) {
-      setWorkspace(tabs[0]);
+      setWorkspace(isOtherRole && workspace === "Registros de todos los operantes" ? "Registro operario" : tabs[0]);
       return;
     }
     setVisitedWorkspaces((current) => {
@@ -216,10 +215,9 @@ function GroupLeaderDashboard({ user }) {
           <Panel title="Registro operario" eyebrow="Registro propio">
             <Alert>Los registros de este apartado quedarÃ¡n asociados a tu propio usuario, no al operante.</Alert>
           </Panel>
-          <WorkerDashboard user={user} embedded />
+          <WorkerDashboard user={user} embedded showAllWorkers={isOtherRole} />
         </div>
       ))}
-      {isOtherRole ? keptWorkspace("Registros de todos los operantes", <WorkerHistory user={user} allWorkers />) : null}
       {keptWorkspace("Registrar errores", <IncidentDashboard user={user} />)}
       {keptWorkspace("Ranking", <RankingDashboard user={user} />)}
     </div>
