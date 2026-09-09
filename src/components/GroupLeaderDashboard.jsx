@@ -128,7 +128,7 @@ function compareToReferenceAverage(record, averageReferenceByTask) {
     ? { label: `${Math.round(diffPct)}% sobre el promedio`, tone: "good" }
     : { label: `${Math.round(Math.abs(diffPct))}% bajo el promedio`, tone: "bad" };
 }
-function TaskAverageField({ label, value, onSave }) {
+export function TaskAverageField({ label, value, onSave }) {
   const initialDraft = value != null ? String(value) : "";
   const [draft, setDraft] = useState(initialDraft);
   const [saving, setSaving] = useState(false);
@@ -966,23 +966,9 @@ function GroupTimeDashboard({ user }) {
     [recordTasks]
   );
   const averageReferenceByTask = data.averageReferenceByTask || {};
-  async function saveAverageReference(taskId, hangtagKey, value) {
-    await updateGroupLeaderAverageReference(taskId, value, hangtagKey);
-    await reload();
-  }
   // Las tareas con hangtag (hoy, Etiquetado) muestran dos campos -con y sin
   // hangtag- porque rinden a ritmos distintos y no son comparables entre si;
   // el resto de tareas de líder de equipo muestra un solo campo.
-  const averageFields = useMemo(() => tasks.flatMap((task) => {
-    const title = getTaskTitle(task) || "Tarea sin nombre";
-    if (getTaskFieldFlags(task).hangtag) {
-      return [
-        { key: `${task.id}-con`, taskId: task.id, hangtagKey: "CON_HANGTAG", label: `${title} - Con hangtag` },
-        { key: `${task.id}-sin`, taskId: task.id, hangtagKey: "SIN_HANGTAG", label: `${title} - Sin hangtag` }
-      ];
-    }
-    return [{ key: String(task.id), taskId: task.id, hangtagKey: "", label: title }];
-  }), [tasks]);
   const selectedTask = useMemo(
     () => tasks.find((task) => String(task.id) === String(form.tarea_id)),
     [tasks, form.tarea_id]
@@ -1305,22 +1291,6 @@ function GroupTimeDashboard({ user }) {
         "Exportar a Excel"
       ), /* @__PURE__ */ React.createElement(Button, { variant: "secondary", icon: RefreshCcw, onClick: reload }, "Actualizar"))
     },
-    /* @__PURE__ */ React.createElement(
-      "div",
-      { className: "group-average-reference" },
-      /* @__PURE__ */ React.createElement("p", { className: "group-average-reference-hint" }, "Promedio de referencia por tarea: cada registro del historial se compara contra el promedio de SU tarea para marcarlo por encima o por debajo."),
-      data.averageReferenceMigrationRequired ? /* @__PURE__ */ React.createElement(Alert, { type: "error" }, "Falta aplicar la migracion sql/031_promedio_referencia_jefe_equipo.sql en Supabase para guardar estos valores.") : null,
-      /* @__PURE__ */ React.createElement(
-        "div",
-        { className: "group-average-reference-grid" },
-        ...averageFields.map((field) => /* @__PURE__ */ React.createElement(TaskAverageField, {
-          key: field.key,
-          label: field.label,
-          value: averageReferenceByTask[field.taskId]?.[field.hangtagKey],
-          onSave: (value) => saveAverageReference(field.taskId, field.hangtagKey, value)
-        }))
-      )
-    ),
     /* @__PURE__ */ React.createElement(Alert, null, "Las filas marcadas como Sin cerrar esperan su cantidad y su fecha y hora de fin: usa Completar para cargarlas. Al guardar, el tiempo se recalcula. Los registros de otros jefes son de solo lectura."),
     /* @__PURE__ */ React.createElement("div", { className: "history-toolbar" }, /* @__PURE__ */ React.createElement("div", { className: "scope-switch", "aria-label": "Alcance de registros" }, /* @__PURE__ */ React.createElement(
       "button",

@@ -1481,6 +1481,14 @@ export async function updateGroupLeaderAverageReference(taskId, value, hangtagKe
   return apiResult.promedio_referencia;
 }
 
+export async function loadAverageReferences() {
+  const apiResult = await requestLocalApi("/api/average-references", {}, { requiredBackend: true });
+  return {
+    averageReferenceByTask: apiResult?.averageReferenceByTask || {},
+    averageReferenceMigrationRequired: Boolean(apiResult?.averageReferenceMigrationRequired)
+  };
+}
+
 export async function listGroupLeaderRecords(encargadoId = null) {
   const apiContext = await requestLocalApi("/api/group-leader/context");
   if (apiContext?.records) {

@@ -32,6 +32,7 @@ import {
   importGuias,
   importGuiaItems,
   listAllActivityLogs,
+  loadAverageReferences,
   listAmonestaciones,
   listAttendances,
   listBrands,
@@ -64,7 +65,8 @@ import {
   updateLote,
   updateTienda,
   updateTrainingCourse,
-  updateUser
+  updateUser,
+  updateGroupLeaderAverageReference
 } from "../lib/repository";
 import { birthdayMaxISO, formatDateLima, formatDateTimeLima, todayLimaISO } from "../lib/dates";
 import {
@@ -77,12 +79,13 @@ import {
   quantityRangesFromRules,
   getTaskFieldFlags,
   getTaskRequiredFlags,
+  isGroupLeaderTimeTask,
   validateQuantityRanges
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
 import { readSessionState, useSessionState, writeSessionState } from "../lib/sessionState";
 import FootwearDashboard from "./FootwearDashboard";
-import { IncidentDashboard } from "./GroupLeaderDashboard";
+import { IncidentDashboard, TaskAverageField } from "./GroupLeaderDashboard";
 import {
   Alert,
   Button,
@@ -2051,13 +2054,79 @@ async function loadTaskBundle() {
   return { tasks, rulesByTaskId };
 }
 
+async function loadAverageReferenceBundle() {
+  const [tasks, references] = await Promise.all([listTasks(), loadAverageReferences()]);
+  return {
+    tasks: tasks.filter((task) => isGroupLeaderTimeTask(task)),
+    ...references
+  };
+}
+
+function AverageReferenceSection() {
+  const { data, loading, error, reload } = useAsyncData(
+    loadAverageReferenceBundle,
+    [],
+    { tasks: [], averageReferenceByTask: {}, averageReferenceMigrationRequired: false }
+  );
+  const tasks = data?.tasks || [];
+  const averageReferenceByTask = data?.averageReferenceByTask || {};
+  const averageFields = useMemo(() => tasks.flatMap((task) => {
+    const title = getTaskTitle(task) || `Tarea ${task.id}`;
+    if (getTaskFieldFlags(task).hangtag) {
+      return [
+        { key: `${task.id}-con`, taskId: task.id, hangtagKey: "CON_HANGTAG", label: `${title} - Con hangtag` },
+        { key: `${task.id}-sin`, taskId: task.id, hangtagKey: "SIN_HANGTAG", label: `${title} - Sin hangtag` }
+      ];
+    }
+    return [{ key: String(task.id), taskId: task.id, hangtagKey: "", label: title }];
+  }), [tasks]);
+
+  async function saveAverageReference(taskId, hangtagKey, value) {
+    await updateGroupLeaderAverageReference(taskId, value, hangtagKey);
+    await reload();
+  }
+
+  return (
+    <div className="stack">
+      <Panel
+        title="Promedios de referencia"
+        eyebrow="Tareas y puntajes"
+        actions={<Button variant="secondary" icon={RefreshCcw} onClick={reload}>Actualizar</Button>}
+      >
+        {loading ? <LoadingBlock /> : null}
+        {error ? <Alert type="error">{error}</Alert> : null}
+        <div className="group-average-reference">
+          <p className="group-average-reference-hint">
+            Promedio de referencia por tarea: cada registro del historial se compara contra el promedio de su tarea para marcarlo por encima o por debajo.
+          </p>
+          {data.averageReferenceMigrationRequired ? (
+            <Alert type="error">Falta aplicar la migracion sql/031_promedio_referencia_jefe_equipo.sql en Supabase para guardar estos valores.</Alert>
+          ) : null}
+          <div className="group-average-reference-grid">
+            {averageFields.map((field) => (
+              <TaskAverageField
+                key={field.key}
+                label={field.label}
+                value={averageReferenceByTask[field.taskId]?.[field.hangtagKey]}
+                onSave={(value) => saveAverageReference(field.taskId, field.hangtagKey, value)}
+              />
+            ))}
+          </div>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
 function TasksPanel() {
   const [section, setSection] = useState("Puntos a favor");
 
   return (
     <div className="stack">
-      <Tabs tabs={["Puntos a favor", "Puntos en contra"]} active={section} onChange={setSection} />
-      {section === "Puntos a favor" ? <TaskScoringSection /> : <PenaltiesSection />}
+      <Tabs tabs={["Puntos a favor", "Puntos en contra", "Promedios de referencia"]} active={section} onChange={setSection} />
+      {section === "Puntos a favor" ? <TaskScoringSection /> : null}
+      {section === "Puntos en contra" ? <PenaltiesSection /> : null}
+      {section === "Promedios de referencia" ? <AverageReferenceSection /> : null}
     </div>
   );
 }
