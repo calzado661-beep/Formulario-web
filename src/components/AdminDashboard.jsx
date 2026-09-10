@@ -85,7 +85,7 @@ import {
 import { useAsyncData } from "../lib/hooks";
 import { readSessionState, useSessionState, writeSessionState } from "../lib/sessionState";
 import FootwearDashboard from "./FootwearDashboard";
-import { IncidentDashboard, TaskAverageField } from "./GroupLeaderDashboard";
+import { GroupTimeDashboard, IncidentDashboard, TaskAverageField } from "./GroupLeaderDashboard";
 import {
   Alert,
   Button,
@@ -143,7 +143,7 @@ const ADMIN_SECTION_HELP = {
   },
   Lotes: {
     title: "Lotes",
-    text: "Catálogo de lotes de mercadería: código, marca, cantidad, proveedor, líder de equipo responsable y estado (pendiente/completado). Muestra los días que lleva cada lote hasta completarse."
+    text: "Catálogo de lotes de mercadería: código, marca, cantidad, proveedor, líder responsable, fecha de trabajo y estado. Los días se calculan desde la fecha de trabajo hasta que el lote se completa."
   },
   Guias: {
     title: "Guías",
@@ -201,7 +201,7 @@ function AdminHelpButton({ section }) {
   );
 }
 
-export default function AdminDashboard({ section }) {
+export default function AdminDashboard({ section, user }) {
   if (section === "Dashboard") return <FootwearDashboard />;
   if (section === "Usuarios") return <><UsersPanel /><AdminHelpButton section="Usuarios" /></>;
   if (section === "Capacitaciones") return <><TrainingsPanel /><AdminHelpButton section="Capacitaciones" /></>;
@@ -212,7 +212,7 @@ export default function AdminDashboard({ section }) {
   if (section === "Lotes") return <><LotesPanel /><AdminHelpButton section="Lotes" /></>;
   if (section === "Guias") return <><GuiasPanel /><AdminHelpButton section="Guias" /></>;
   if (section === "Errores") return <><IncidentDashboard /><AdminHelpButton section="Errores" /></>;
-  if (section === "Registros") return <AdminOperationalRecords />;
+  if (section === "Registros") return <div className="admin-history-only"><GroupTimeDashboard user={user} /></div>;
   if (section === "Amonestaciones") return <><WarningsPanel /><AdminHelpButton section="Amonestaciones" /></>;
   if (section === "Documentos") return <><DocumentsPanel /><AdminHelpButton section="Documentos" /></>;
   return <FootwearDashboard />;
@@ -222,14 +222,14 @@ function AdminOperationalRecords() {
   const { data, loading, error, reload } = useAsyncData(
     async () => {
       const cached = readSessionState("admin-operational-catalogs", null);
-      if (cached?.users && cached?.tasks && cached?.lotes) return cached;
-      const [users, tasks, lotes] = await Promise.all([selectUsers(), listTasks(), listLotes().catch(() => [])]);
-      const catalogs = { users, tasks, lotes };
+      if (cached?.users && cached?.managers && cached?.tasks && cached?.lotes) return cached;
+      const result = await listOperationalRecords({ source: "time", page: 1, pageSize: 10, includeCatalogs: true, forceRefresh: true });
+      const catalogs = result.catalogs || { users: [], managers: [], tasks: [], lotes: [] };
       writeSessionState("admin-operational-catalogs", catalogs);
       return catalogs;
     },
     [],
-    { users: [], tasks: [], lotes: [] }
+    { users: [], managers: [], tasks: [], lotes: [] }
   );
 
   if (loading) return <LoadingBlock label="Cargando filtros de registros..." />;
@@ -237,8 +237,7 @@ function AdminOperationalRecords() {
 
   return (
     <div className="stack">
-      <AdminOperationalRecordsTable source="normal" title="Registros operativos" catalogs={data} />
-      <AdminOperationalRecordsTable source="time" title="Registros operativos con tiempo" catalogs={data} />
+      <AdminOperationalRecordsTable source="time" title="Registros operativos de líderes de equipo" catalogs={data} />
     </div>
   );
 }
@@ -251,6 +250,8 @@ function AdminOperationalRecordsTable({ source, title, catalogs }) {
   const currentMonth = currentDate.slice(5, 7);
   const [page, setPage] = useSessionState(`${stateKey}:page`, 1);
   const [workerId, setWorkerId] = useSessionState(`${stateKey}:worker`, "");
+  const [managerId, setManagerId] = useSessionState(`${stateKey}:manager`, "");
+  const [includeInactive, setIncludeInactive] = useSessionState(`${stateKey}:include-inactive`, false);
   const [taskId, setTaskId] = useSessionState(`${stateKey}:task`, "");
   const [lot, setLot] = useSessionState(`${stateKey}:lot`, "");
   const [year, setYear] = useSessionState(`${stateKey}:year`, currentYear);
@@ -272,24 +273,35 @@ function AdminOperationalRecordsTable({ source, title, catalogs }) {
       return;
     }
     setPage(1);
-  }, [workerId, taskId, lot, year, month, day]);
+  }, [workerId, managerId, taskId, lot, year, month, day]);
 
   useEffect(() => {
     if (day && Number(day) > daysInMonth) setDay("");
   }, [day, daysInMonth, setDay]);
 
   const { data, loading, error, reload } = useAsyncData(
-    () => listOperationalRecords({ source, page, pageSize, workerId, taskId, lot, from, to }),
-    [source, page, workerId, taskId, lot, from, to],
+    () => listOperationalRecords({ source, page, pageSize, workerId, managerId, taskId, lot, from, to }),
+    [source, page, workerId, managerId, taskId, lot, from, to],
     { records: [], total: 0, page: 1, pageSize }
   );
 
   const workerOptions = [
     { value: "", label: "Todos" },
     ...(catalogs.users || [])
-      .filter((item) => normalizeRole(item.rol) === "operante")
-      .map((item) => ({ value: String(item.id), label: item.nombre || item.email }))
+      .filter((item) => normalizeRole(item.rol) === "operante" && (includeInactive || boolValue(item.activo)))
+      .map((item) => ({ value: String(item.id), label: `${item.nombre || item.email}${boolValue(item.activo) ? "" : " (inactivo)"}` }))
   ];
+  const managerOptions = [
+    { value: "", label: "Todos" },
+    ...(catalogs.managers || [])
+      .filter((item) => normalizeRole(item.rol) === "lider de equipo" && (includeInactive || boolValue(item.activo)))
+      .map((item) => ({ value: String(item.id), label: `${item.nombre || item.email}${boolValue(item.activo) ? "" : " (inactivo)"}` }))
+  ];
+
+  useEffect(() => {
+    if (!includeInactive && workerId && !workerOptions.some((option) => option.value === String(workerId))) setWorkerId("");
+    if (!includeInactive && managerId && !managerOptions.some((option) => option.value === String(managerId))) setManagerId("");
+  }, [includeInactive]);
   const taskOptions = [
     { value: "", label: "Todas" },
     ...(catalogs.tasks || []).map((item) => ({ value: String(item.id), label: getTaskTitle(item) || "Tarea sin nombre" }))
@@ -347,6 +359,8 @@ function AdminOperationalRecordsTable({ source, title, catalogs }) {
     >
       <div className="toolbar">
         <SelectInput label="Operante" value={workerId} onChange={setWorkerId} options={workerOptions} />
+        <SelectInput label="Encargado" value={managerId} onChange={setManagerId} options={managerOptions} />
+        <CheckboxInput label="Incluir inactivos" checked={includeInactive} onChange={setIncludeInactive} />
         <SelectInput label="Tarea" value={taskId} onChange={setTaskId} options={taskOptions} />
         <SelectInput label="Lote" value={lot} onChange={setLot} options={lotOptions} />
         <SelectInput label="Año" value={year} onChange={setYear} options={yearOptions} />
@@ -4623,16 +4637,16 @@ const LOTE_ESTADOS = [
 // pendiente, se calcula contra hoy (no se guarda en ningun lado), asi que la
 // cifra sube sola cada dia hasta que se marque como completado.
 function loteDurationDays(lote) {
-  if (!lote.fecha_ingreso) return null;
+  if (!lote.fecha_trabajo) return null;
   const endDate = lote.estado === "completado" && lote.fecha_completada ? lote.fecha_completada : todayLimaISO();
-  const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lote.fecha_ingreso}T00:00:00`)) / 86400000);
+  const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lote.fecha_trabajo}T00:00:00`)) / 86400000);
   return Number.isFinite(days) ? Math.max(0, days) : null;
 }
 
 function emptyLoteForm() {
   return {
-    codigo_lote: "", cantidad_lote: "", marca_id: "", fecha_ingreso: todayLimaISO(),
-    proveedor: "", usuario_id: "", estado: "pendiente"
+    codigo_lote: "", cantidad_lote: "", marca_id: "", fecha_ingreso: todayLimaISO(), fecha_trabajo: "",
+    fecha_completada: "", proveedor: "", usuario_id: "", estado: "pendiente"
   };
 }
 
@@ -4656,6 +4670,8 @@ function LotesPanel() {
       cantidad_lote: String(selectedLote.cantidad_lote ?? ""),
       marca_id: String(selectedLote.marca_id || ""),
       fecha_ingreso: selectedLote.fecha_ingreso || "",
+      fecha_trabajo: selectedLote.fecha_trabajo || "",
+      fecha_completada: selectedLote.fecha_completada || "",
       proveedor: selectedLote.proveedor || "",
       usuario_id: String(selectedLote.usuario_id || ""),
       estado: selectedLote.estado || "pendiente"
@@ -4681,6 +4697,8 @@ function LotesPanel() {
       cantidad_lote: Number(form.cantidad_lote),
       marca_id: Number(form.marca_id),
       fecha_ingreso: form.fecha_ingreso,
+      fecha_trabajo: form.fecha_trabajo || null,
+      fecha_completada: form.estado === "completado" ? (form.fecha_completada || todayLimaISO()) : null,
       proveedor: form.proveedor.trim(),
       usuario_id: Number(form.usuario_id),
       estado: form.estado
@@ -4756,6 +4774,8 @@ function LotesPanel() {
       Marca: lote.marca_nombre,
       Estado: LOTE_ESTADOS.find((option) => option.value === lote.estado)?.label || lote.estado,
       "Fecha de ingreso": formatDateLima(lote.fecha_ingreso),
+      "Fecha de trabajo": formatDateLima(lote.fecha_trabajo),
+      "Fecha completada": formatDateLima(lote.fecha_completada),
       "Días": days === null ? null : `${days} día${days === 1 ? "" : "s"}`,
       Proveedor: lote.proveedor,
       "Líder de equipo": lote.usuario_nombre
@@ -4774,7 +4794,7 @@ function LotesPanel() {
         ) : (
           <DataTable
             rows={rows}
-            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Días", "Proveedor", "Líder de equipo"]}
+            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Fecha de trabajo", "Fecha completada", "Días", "Proveedor", "Líder de equipo"]}
             onRowClick={(row) => {
               setSelectedId(String(row.id));
               setTab("Editar");
@@ -4824,6 +4844,12 @@ function LotesPanel() {
                 value={form.fecha_ingreso}
                 onChange={(fecha_ingreso) => setForm({ ...form, fecha_ingreso })}
               />
+              <TextInput
+                label="Fecha de trabajo (opcional)"
+                type="date"
+                value={form.fecha_trabajo}
+                onChange={(fecha_trabajo) => setForm({ ...form, fecha_trabajo })}
+              />
               <TextInput label="Proveedor" value={form.proveedor} onChange={(proveedor) => setForm({ ...form, proveedor })} />
               <SelectInput
                 label="Líder de equipo"
@@ -4834,7 +4860,24 @@ function LotesPanel() {
                   ...teamLeaders.map((leader) => ({ value: String(leader.id), label: leader.nombre || leader.email }))
                 ]}
               />
-              <SelectInput label="Estado" value={form.estado} onChange={(estado) => setForm({ ...form, estado })} options={LOTE_ESTADOS} />
+              <SelectInput
+                label="Estado"
+                value={form.estado}
+                onChange={(estado) => setForm({
+                  ...form,
+                  estado,
+                  fecha_completada: estado === "completado" ? (form.fecha_completada || todayLimaISO()) : ""
+                })}
+                options={LOTE_ESTADOS}
+              />
+              <TextInput
+                label="Fecha completada"
+                type="date"
+                value={form.fecha_completada}
+                onChange={(fecha_completada) => setForm({ ...form, fecha_completada })}
+                disabled={tab !== "Editar" || form.estado !== "completado"}
+                hint={tab !== "Editar" ? "Se asigna automáticamente al completar el lote." : form.estado !== "completado" ? "Cambia el estado a Completado para editarla." : "Puedes corregir la fecha antes de guardar."}
+              />
               <div className="form-span">
                 <FormActions saving={saving} saveLabel={tab === "Crear" ? "Crear lote" : "Guardar cambios"} />
               </div>

@@ -43,7 +43,7 @@ export default function App() {
         setUser(null);
       }}
     >
-      {role === "administrador" ? <AdminDashboard section={adminSection} /> : null}
+      {role === "administrador" ? <AdminDashboard section={adminSection} user={user} /> : null}
       {role === "operante" ? <WorkerDashboard user={user} /> : null}
       {["lider de equipo", "otros"].includes(role) ? <GroupLeaderDashboard user={user} /> : null}
       {!["administrador", "operante", "lider de equipo", "otros"].includes(role) ? (

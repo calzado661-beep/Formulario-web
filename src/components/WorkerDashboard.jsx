@@ -873,7 +873,7 @@ function TodayLeaderTaskCard({ user, onUse }) {
 }
 
 const WORKER_HISTORY_EXPORT_COLUMNS = [
-  "Trabajador", "Fecha", "Hora", "Fecha real", "Hora inicio", "Hora fin", "Tarea", "Cantidad", "Tiempo (min)", "Turno",
+  "Trabajador", "Fecha", "Hora", "Hora inicio", "Hora fin", "Tarea", "Cantidad", "Tiempo (min)", "Turno",
   "Cumplimiento", "Puntos", "Tienda", "Guia", "Lote", "Marcas", "Detalle"
 ];
 
@@ -939,7 +939,6 @@ function AllWorkersPaginatedHistory({ user }) {
       Trabajador: log.trabajador_nombre || "",
       Fecha: log.fecha_registro || "",
       Hora: log.hora_registro || "",
-      "Fecha real": formatDateTimeLima(log.created_at) || "",
       Tarea: taskName,
       Cantidad: log.cantidad ?? "",
       Turno: log.turno || (tipoAct === "turno" ? displayShiftFromQuantity(log.cantidad) : ""),
@@ -1082,7 +1081,6 @@ function WorkerHistoryContent({ user }) {
       Trabajador: workerNameById[log.trabajador_id || log.usuario_id] || "",
       Fecha: log.fecha_registro || "",
       Hora: log.hora_registro || "",
-      "Fecha real": formatDateTimeLima(log.created_at) || "",
       "Hora inicio": log.hora_inicio ? liveProgressTime(log.hora_inicio) : "",
       "Hora fin": log.hora_fin ? liveProgressTime(log.hora_fin) : "",
       Tarea: taskName,

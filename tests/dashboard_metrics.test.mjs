@@ -4,12 +4,34 @@ import {
   averageEmployeeTenureMonths,
   buildDashboardPayroll,
   buildComparableIncidentMetrics,
+  buildLeaderOperationSummary,
   buildTaggedPairsByBrand,
   dashboardDateParts,
   taskVolumeRows,
   timedActivityKpi,
   workerProductionRows
 } from "../src/lib/dashboardMetrics.js";
+
+test("resume ingreso y despacho solo con registros del jefe de equipo", () => {
+  const tasks = [
+    { id: 1, name: "Etiquetado" },
+    { id: 2, name: "Picking" },
+    { id: 3, name: "Embalado y Rotulado de Guía" },
+    { id: 4, name: "Otra tarea" }
+  ];
+  const activities = [
+    { source: "jefe-equipo", taskId: 2, workerId: 10, quantity: 120, minutes: 60 },
+    { source: "jefe-equipo", taskId: 2, workerId: 11, quantity: 80, minutes: 30 },
+    { source: "jefe-equipo", taskId: 3, workerId: 11, quantity: 20, minutes: 10 },
+    { source: "operante", taskId: 2, workerId: 12, quantity: 999, minutes: 999 },
+    { source: "jefe-equipo", taskId: 1, workerId: 10, quantity: 50, minutes: 15 },
+    { source: "jefe-equipo", taskId: 4, workerId: 10, quantity: 500, minutes: 120 }
+  ];
+  assert.deepEqual(buildLeaderOperationSummary(activities, tasks, ["picking", "embalado y rotulado de guia", "envio nuevo", "visita de tienda"]), {
+    pairs: 220, workerCount: 2, minutes: 100, averageMinutesPerWorker: 50, records: 3
+  });
+  assert.equal(buildLeaderOperationSummary(activities, tasks, "etiquetado").pairs, 50);
+});
 
 test("la fecha operativa se calcula en America/Lima", () => {
   assert.deepEqual(

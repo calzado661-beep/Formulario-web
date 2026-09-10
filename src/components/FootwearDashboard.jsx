@@ -4,6 +4,7 @@ import { loadFootwearDashboard, updateGroupLeaderAverageReference, updateActivit
 import { attendanceGroup } from "../lib/operations";
 import {
   averageEmployeeTenureMonths,
+  buildLeaderOperationSummary,
   dashboardDateParts,
   taskVolumeRows,
   timedActivityKpi,
@@ -749,7 +750,7 @@ const LOTE_DURATION_STATUS_OPTIONS = [
 function LoteDurationChart({ lots }) {
   const [statusFilter, setStatusFilter] = useState("todos");
   const scoped = lots.filter((lot) => statusFilter === "todos" || lot.status === statusFilter);
-  // Para lotes completados, la duracion es fecha_completado - fecha_ingreso.
+  // Para lotes completados, la duración es fecha_completado - fecha_trabajo.
   // Para lotes pendientes (todavia abiertos), se usa hoy como fin provisorio,
   // asi se puede detectar lotes que llevan demasiados dias sin cerrarse.
   // Una barra por lote (nombre = codigo_lote), altura = dias de duracion.
@@ -782,7 +783,7 @@ function LoteDurationChart({ lots }) {
       <VerticalBarChart
         id="pbi-lote-duration"
         data={byLote}
-        ariaLabel="Dias de duracion de cada lote, desde la fecha de ingreso hasta que se completo"
+        ariaLabel="Días de duración de cada lote, desde la fecha de trabajo hasta que se completó"
         tone="blue"
         unit="días"
         compact
@@ -792,7 +793,7 @@ function LoteDurationChart({ lots }) {
             `Líder de equipo: ${item.teamLeaderName || "—"}`,
             `Marca: ${item.brandName || "—"}`,
             `Pares: ${numberFormatter.format(item.quantity || 0)}`,
-            `Ingreso: ${item.startDate ? formatCalendarDate(item.startDate) : "—"}`,
+            `Fecha de trabajo: ${item.startDate ? formatCalendarDate(item.startDate) : "—"}`,
             `Completado: ${item.completedDate ? formatCalendarDate(item.completedDate) : "—"}`
           ].join(" · ")
         })}
@@ -2131,6 +2132,35 @@ function formatRecordTime(createdAt) {
   return new Intl.DateTimeFormat("es-PE", { timeZone: "America/Lima", hour: "2-digit", minute: "2-digit" }).format(parsed);
 }
 
+function LeaderOperationKpi({ label, summary, periodLabel }) {
+  const items = [
+    [summary.pairs, "Pares registrados"],
+    [summary.workerCount, "Personas involucradas"],
+    [summary.minutes / 60, "Horas totales"],
+    [summary.averageMinutesPerWorker / 60, "Horas promedio por trabajador"]
+  ];
+  return (
+    <article className="pbi-kpi pbi-kpi--paired pbi-kpi--important" aria-label={`Resumen de ${label}`}>
+      <span className="pbi-kpi-label">{label} · {periodLabel}</span>
+      <div className="pbi-kpi-pair">
+        {items.map(([value, detail], index) => <span className="pbi-kpi-pair-item" key={detail}><span className="pbi-kpi-value-line"><strong className="pbi-kpi-value">{index < 2 ? numberFormatter.format(value) : oneDecimalFormatter.format(value)}</strong></span><small>{detail}</small></span>)}
+      </div>
+    </article>
+  );
+}
+
+function SystemExitsKpi({ pairs, periodLabel }) {
+  return (
+    <article className="pbi-kpi pbi-kpi--paired pbi-kpi--important pbi-kpi--system-exits" aria-label={`Salidas del sistema: ${pairs} pares`}>
+      <span className="pbi-kpi-label">Salidas del sistema · {periodLabel}</span>
+      <div className="pbi-system-exits-value">
+        <strong className="pbi-kpi-value">{numberFormatter.format(pairs)}</strong>
+        <span>Pares según el campo cantidad del Excel de guías importado</span>
+      </div>
+    </article>
+  );
+}
+
 function formatRecordCreatedAt(createdAt) {
   if (!createdAt) return "—";
   const parsed = new Date(createdAt);
@@ -2546,8 +2576,15 @@ export default function FootwearDashboard() {
       setHourlyReferenceSaving(false);
     }
   }
-  const pairRankingTasks = OPERATIONAL_TASKS.filter((task) => productionUnit(task) === "pares");
-  const defaultPairTask = pairRankingTasks.find((task) => String(task.name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim() === "etiquetado") || pairRankingTasks[0];
+  const pairRankingTaskNames = new Set([
+    "etiquetado",
+    "picking",
+    "embalado y rotulado de guia",
+    "envio nuevo",
+    "visita de tienda"
+  ]);
+  const pairRankingTasks = TASK_CATALOG.filter((task) => pairRankingTaskNames.has(normalizeSearch(task.name).trim()));
+  const defaultPairTask = pairRankingTasks.find((task) => normalizeSearch(task.name).trim() === "etiquetado") || pairRankingTasks[0];
   const effectiveQuantityTaskId = pairRankingTasks.some((task) => String(task.id) === String(quantityRankingTaskId))
     ? Number(quantityRankingTaskId)
     : defaultPairTask?.id;
@@ -2585,6 +2622,21 @@ export default function FootwearDashboard() {
       };
     });
   const averageActivities = visibleActivities;
+  // Estas dos tarjetas dependen únicamente de la fecha global. No deben
+  // desaparecer por los filtros de trabajador, cargo, inactivos o tipo de
+  // tarea aplicados a las demás visualizaciones de producción.
+  const datedLeaderActivities = (dashboardData?.activities || []).filter((row) => (
+    row.source === "jefe-equipo" && matchesGlobalPeriodDate(row.date)
+  ));
+  // Ingreso corresponde a Etiquetado. Despacho solo agrupa las cuatro tareas
+  // operativas definidas para ese proceso.
+  const intakeSummary = buildLeaderOperationSummary(datedLeaderActivities, TASK_CATALOG, "etiquetado");
+  const dispatchSummary = buildLeaderOperationSummary(datedLeaderActivities, TASK_CATALOG, [
+    "picking",
+    "embalado y rotulado de guia",
+    "envio nuevo",
+    "visita de tienda"
+  ]);
   const filteredActivityKpis = OPERATIONAL_TASKS.filter((task) => task.requiresTime).slice(0, 5).map((task) => {
     const rows = averageActivities.filter((row) => row.taskId === task.id);
     return { label: task.shortName, unit: String(task.unit || "").trim() || productionUnit(task), ...timedActivityKpi(rows) };
@@ -2724,11 +2776,12 @@ export default function FootwearDashboard() {
   const tenure = averageEmployeeTenureMonths(dashboardData?.movements || [], {
     allowedWorkerIds: new Set(WORKERS.map((worker) => Number(worker.id)))
   });
-  // Promedio de dias por lote: TODOS los lotes participan (completados con
-  // fecha_completada - fecha_ingreso; pendientes con hoy - fecha_ingreso, asi
+  // Promedio de días por lote: participan los lotes que ya tienen fecha de
+  // trabajo (completados con fecha_completada - fecha_trabajo; pendientes
+  // con hoy - fecha_trabajo, así
   // un lote pendiente suma un dia mas cada dia que pasa sin cerrarse). No se
   // guarda nada, se recalcula al vuelo con cada carga del dashboard. Respeta
-  // el filtro de periodo global (por fecha_ingreso), igual que el resto del
+  // el filtro de periodo global (por fecha_trabajo), igual que el resto del
   // tablero.
   const loteDurations = (dashboardData?.lotes || [])
     .filter((lot) => lot.startDate && matchesGlobalPeriodDate(lot.startDate))
@@ -2746,7 +2799,7 @@ export default function FootwearDashboard() {
     { label: "Ausentismo", detail: "Registro de asistencias", value: `${attendanceTotal ? ((attendanceTotals.absent / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
     { label: "Tardanza", detail: "Llegadas fuera de hora", value: `${attendanceTotal ? ((attendanceTotals.late / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
     { label: "Permanencia promedio", detail: `${tenure.workerCount} trabajador(es) con periodos laborales cerrados`, suffix: "meses", value: tenure.months.toFixed(2) },
-    { label: "Promedio de días por lote", detail: `${loteDurations.length} lote(s)`, suffix: "días", value: avgLoteDurationDays.toFixed(1) }
+    { label: "Promedio de días por lote", detail: `${loteDurations.length} lote(s) · ${oneDecimalFormatter.format((dashboardData?.lotes || []).length ? dashboardData.lotes.reduce((sum, lot) => sum + Number(lot.quantity || 0), 0) / dashboardData.lotes.length : 0)} pares promedio`, suffix: "días", value: avgLoteDurationDays.toFixed(1) }
   ];
   // No se filtra por periodo ni por trabajador: el historial de amonestaciones
   // se ve completo siempre, sin que lo afecten los demas filtros del tablero.
@@ -3176,6 +3229,12 @@ export default function FootwearDashboard() {
               {filteredActivityKpis.map((item) => <ActivityKpi key={item.label} {...item} />)}
             </section>
 
+            <section className="pbi-important-kpis" aria-label="Indicadores operativos importantes">
+              <LeaderOperationKpi label="Ingreso" summary={intakeSummary} periodLabel={selectedMonthTitleLabel} />
+              <LeaderOperationKpi label="Despacho" summary={dispatchSummary} periodLabel={selectedMonthTitleLabel} />
+              <SystemExitsKpi pairs={guiasTotalPares} periodLabel={selectedMonthTitleLabel} />
+            </section>
+
             <section className="pbi-section-grid pbi-section-grid--indicators" aria-label="Indicadores generales">
               {filteredIndicators.map((item) => <IndicatorKpi key={item.label} {...item} />)}
               <PairedMetricKpi
@@ -3293,7 +3352,7 @@ export default function FootwearDashboard() {
                 <Card
                   id="pbi-lote-duration"
                   title="Días de Duración de Lotes"
-                  meta="Desde fecha de ingreso hasta que se completa"
+                  meta="Desde fecha de trabajo hasta que se completa"
                   className="pbi-card--chart pbi-card--span-6"
                 >
                   <LoteDurationChart lots={dashboardData?.lotes || []} />

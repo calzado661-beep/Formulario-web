@@ -74,11 +74,16 @@ function createInitialForm() {
 }
 var initialFilters = {
   scope: "all",
+  managerId: "",
+  includeInactive: false,
   workerId: "",
   taskId: "",
   categoria: "",
   search: "",
-  order: "desc"
+  order: "desc",
+  year: todayLimaISO().slice(0, 4),
+  month: todayLimaISO().slice(5, 7),
+  day: ""
 };
 function recordSortTime(record) {
   const value = new Date(record.hora_inicio || record.fecha_registro || record.created_at || 0).getTime();
@@ -935,7 +940,7 @@ export function TimeRecordsHistory() {
     <DataTable rows={rows} empty="No hay registros para los filtros seleccionados." />
   </Panel>;
 }
-function GroupTimeDashboard({ user }) {
+export function GroupTimeDashboard({ user }) {
   const timeDraftKey = `leader-time:${user?.id || "unknown"}`;
   const [form, setForm] = useSessionState(`${timeDraftKey}:form`, createInitialForm);
   const [filters, setFilters] = useSessionState(`${timeDraftKey}:filters`, initialFilters);
@@ -959,6 +964,22 @@ function GroupTimeDashboard({ user }) {
   const brands = data.brands || [];
   const stores = data.stores || [];
   const records = data.records || [];
+  const isAdministrator = normalizeRole(user.rol) === "administrador";
+  const userById = new Map((data.allUsers || []).map((item) => [String(item.id), item]));
+  const includeInactive = Boolean(filters.includeInactive);
+  const managerOptions = [...records.reduce((items, record) => {
+    const manager = userById.get(String(record.encargado_id));
+    if (record.encargado_id && (includeInactive || manager?.activo !== false)) items.set(String(record.encargado_id), `${record.encargado_nombre || record.encargado_email || `Encargado ${record.encargado_id}`}${manager?.activo === false ? " (inactivo)" : ""}`);
+    return items;
+  }, new Map()).entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "es"));
+  const recordedWorkerIds = new Set(records.map((record) => String(record.trabajador_id)).filter(Boolean));
+  const historyWorkerOptions = (data.allUsers || [])
+    .filter((item) => recordedWorkerIds.has(String(item.id)) && (includeInactive || item.activo !== false))
+    .map((item) => ({ value: String(item.id), label: `${item.nombre || item.email || "Trabajador sin nombre"}${item.activo === false ? " (inactivo)" : ""}` }));
+  const recordYears = [...new Set([todayLimaISO().slice(0, 4), ...records.map((record) => String(record.fecha_registro || "").slice(0, 4)).filter((year) => /^\d{4}$/.test(year))])].sort((a, b) => b.localeCompare(a));
+  const selectedYear = filters.year || todayLimaISO().slice(0, 4);
+  const selectedMonth = filters.month || "";
+  const daysInSelectedMonth = selectedMonth ? new Date(Number(selectedYear), Number(selectedMonth), 0).getDate() : 0;
   const taskCategoryById = useMemo(
     () => new Map(recordTasks.map((task) => [String(task.id), String(task.tipo_tarea || "").trim()])),
     [recordTasks]
@@ -985,7 +1006,14 @@ function GroupTimeDashboard({ user }) {
   const filteredRecords = useMemo(() => {
     const term = normalizeText(filters.search);
     const filtered = records.filter((record) => {
-      if (filters.scope === "mine" && String(record.encargado_id) !== String(user.id)) return false;
+      if (!isAdministrator && filters.scope === "mine" && String(record.encargado_id) !== String(user.id)) return false;
+      if (isAdministrator && filters.managerId && String(record.encargado_id) !== String(filters.managerId)) return false;
+      if (isAdministrator) {
+        const [recordYear, recordMonth, recordDay] = String(record.fecha_registro || "").slice(0, 10).split("-");
+        if (selectedYear && recordYear !== selectedYear) return false;
+        if (selectedMonth && recordMonth !== selectedMonth) return false;
+        if (filters.day && recordDay !== String(filters.day).padStart(2, "0")) return false;
+      }
       if (filters.workerId && String(record.trabajador_id) !== String(filters.workerId)) return false;
       if (filters.taskId && String(record.tarea_id) !== String(filters.taskId)) return false;
       if (filters.categoria && taskCategoryById.get(String(record.tarea_id)) !== filters.categoria) return false;
@@ -1009,7 +1037,7 @@ function GroupTimeDashboard({ user }) {
       const diff = recordSortTime(a) - recordSortTime(b);
       return filters.order === "asc" ? diff : -diff;
     });
-  }, [filters, records, taskCategoryById, user.id]);
+  }, [filters, records, taskCategoryById, user.id, isAdministrator, selectedYear, selectedMonth]);
   const combinedRows = useMemo(() => {
     const merged = filteredRecords.map((record) => ({
       kind: "record",
@@ -1289,8 +1317,8 @@ function GroupTimeDashboard({ user }) {
         "Exportar a Excel"
       ), /* @__PURE__ */ React.createElement(Button, { variant: "secondary", icon: RefreshCcw, onClick: reload }, "Actualizar"))
     },
-    /* @__PURE__ */ React.createElement(Alert, null, "Las filas marcadas como Sin cerrar esperan su cantidad y su fecha y hora de fin: usa Completar para cargarlas. Al guardar, el tiempo se recalcula. Los registros de otros jefes son de solo lectura."),
-    /* @__PURE__ */ React.createElement("div", { className: "history-toolbar" }, /* @__PURE__ */ React.createElement("div", { className: "scope-switch", "aria-label": "Alcance de registros" }, /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement(Alert, null, normalizeRole(user.rol) === "administrador" ? "Como administrador puedes editar o eliminar cualquier registro. Al guardar, el tiempo se recalcula." : "Las filas marcadas como Sin cerrar esperan su cantidad y su fecha y hora de fin: usa Completar para cargarlas. Al guardar, el tiempo se recalcula. Los registros de otros jefes son de solo lectura."),
+    /* @__PURE__ */ React.createElement("div", { className: "history-toolbar" }, !isAdministrator ? /* @__PURE__ */ React.createElement("div", { className: "scope-switch", "aria-label": "Alcance de registros" }, /* @__PURE__ */ React.createElement(
       "button",
       {
         type: "button",
@@ -1306,7 +1334,35 @@ function GroupTimeDashboard({ user }) {
         onClick: () => updateFilters({ scope: "mine" })
       },
       "Mios"
-    )), /* @__PURE__ */ React.createElement(
+    )) : null, isAdministrator ? /* @__PURE__ */ React.createElement(SelectInput, {
+      label: "Encargado",
+      value: filters.managerId || "",
+      onChange: (managerId) => updateFilters({ managerId }),
+      options: [{ value: "", label: "Todos los encargados" }, ...managerOptions]
+    }) : null, isAdministrator ? /* @__PURE__ */ React.createElement(SelectInput, {
+      label: "Año",
+      value: selectedYear,
+      onChange: (year) => updateFilters({ year, month: "", day: "" }),
+      options: recordYears.map((year) => ({ value: year, label: year }))
+    }) : null, isAdministrator ? /* @__PURE__ */ React.createElement(SelectInput, {
+      label: "Mes",
+      value: selectedMonth,
+      onChange: (month) => updateFilters({ month, day: "" }),
+      options: [
+        { value: "", label: "Todos los meses" },
+        ...["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"].map((label, index) => ({ value: String(index + 1).padStart(2, "0"), label }))
+      ]
+    }) : null, isAdministrator ? /* @__PURE__ */ React.createElement(SelectInput, {
+      label: "Día",
+      value: filters.day || "",
+      onChange: (day) => updateFilters({ day }),
+      disabled: !selectedMonth,
+      options: [{ value: "", label: "Todos los días" }, ...Array.from({ length: daysInSelectedMonth }, (_, index) => ({ value: String(index + 1).padStart(2, "0"), label: String(index + 1) }))]
+    }) : null, isAdministrator ? /* @__PURE__ */ React.createElement(CheckboxInput, {
+      label: "Incluir inactivos",
+      checked: includeInactive,
+      onChange: (checked) => updateFilters({ includeInactive: checked, ...checked ? {} : { managerId: "", workerId: "" } })
+    }) : null, /* @__PURE__ */ React.createElement(
       SelectInput,
       {
         label: "Operante o líder",
@@ -1314,10 +1370,10 @@ function GroupTimeDashboard({ user }) {
         onChange: (workerId) => updateFilters({ workerId }),
         options: [
           { value: "", label: "Todos" },
-          ...workers.map((worker) => ({
+          ...(isAdministrator ? historyWorkerOptions : workers.map((worker) => ({
             value: String(worker.id),
             label: worker.nombre || worker.email || "Trabajador sin nombre"
-          }))
+          })))
         ]
       }
     ), /* @__PURE__ */ React.createElement(
@@ -1376,6 +1432,7 @@ function GroupTimeDashboard({ user }) {
         lotes,
         averageReferenceByTask,
         currentUserId: user.id,
+        canEditAll: normalizeRole(user.rol) === "administrador",
         editingDisabled: data.historyMigrationRequired,
         editingId,
         draft: editDraft,
@@ -1403,6 +1460,7 @@ function EditableGroupHistory({
   lotes,
   averageReferenceByTask,
   currentUserId,
+  canEditAll = false,
   editingDisabled,
   editingId,
   draft,
@@ -1460,7 +1518,7 @@ function EditableGroupHistory({
               }
               const record = row.record;
               const mine = String(record.encargado_id) === String(currentUserId);
-              const editable = mine && !editingDisabled && record.revision !== null && record.revision !== undefined;
+              const editable = (mine || canEditAll) && !editingDisabled && record.revision !== null && record.revision !== undefined;
               if (String(editingId) === String(record.id) && draft) {
                 return (
                   <EditableHistoryRow
@@ -1485,7 +1543,7 @@ function EditableGroupHistory({
                   editable={editable}
                   busy={saving}
                   average={compareToReferenceAverage(record, averageReferenceByTask)}
-                  readonlyReason={mine && record.revision == null ? "Registro anterior" : editingDisabled && mine ? "Migracion pendiente" : "Solo lectura"}
+                  readonlyReason={(mine || canEditAll) && record.revision == null ? "Registro anterior" : editingDisabled && (mine || canEditAll) ? "Migracion pendiente" : "Solo lectura"}
                   onEdit={() => onEdit(record)}
                   onDelete={() => onDelete(record)}
                 />

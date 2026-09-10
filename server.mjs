@@ -1526,7 +1526,7 @@ async function handleReadFootwearDashboard(request, response) {
         code: String(lote.codigo_lote || "").trim().toUpperCase(),
         quantity: Number(lote.cantidad_lote || 0),
         status: String(lote.estado || "pendiente").trim().toLowerCase(),
-        startDate: dashboardDate(lote.fecha_ingreso),
+        startDate: dashboardDate(lote.fecha_trabajo),
         completedDate: dashboardDate(lote.fecha_completada),
         brandName: loteBrandNameById.get(Number(lote.marca_id)) || null,
         teamLeaderName: incidentUserById.get(Number(lote.usuario_id))?.nombre || null
@@ -2212,7 +2212,7 @@ async function handleDeleteStore(request, response, storeId) {
   }
 }
 
-const LOTE_SELECT_COLUMNS = "id,codigo_lote,cantidad_lote,marca_id,fecha_ingreso,proveedor,usuario_id,estado,fecha_completada";
+const LOTE_SELECT_COLUMNS = "id,codigo_lote,cantidad_lote,marca_id,fecha_ingreso,fecha_trabajo,proveedor,usuario_id,estado,fecha_completada";
 const LOTE_ESTADOS = ["pendiente", "completado"];
 
 async function enrichLotes(rows) {
@@ -2256,6 +2256,8 @@ function validateLotePayload(body) {
   const cantidadLote = Number(body.cantidad_lote);
   const marcaId = Number(body.marca_id);
   const fechaIngreso = String(body.fecha_ingreso || "").trim();
+  const fechaTrabajo = String(body.fecha_trabajo || "").trim();
+  const fechaCompletada = String(body.fecha_completada || "").trim();
   const usuarioId = Number(body.usuario_id);
   const estado = String(body.estado || "pendiente").trim().toLowerCase();
   if (!codigoLote) throw invalidLote("El codigo de lote es obligatorio.");
@@ -2264,6 +2266,8 @@ function validateLotePayload(body) {
   }
   if (!Number.isInteger(marcaId) || marcaId <= 0) throw invalidLote("Selecciona una marca.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaIngreso)) throw invalidLote("Selecciona una fecha de ingreso valida.");
+  if (fechaTrabajo && !/^\d{4}-\d{2}-\d{2}$/.test(fechaTrabajo)) throw invalidLote("Selecciona una fecha de trabajo valida.");
+  if (fechaCompletada && !/^\d{4}-\d{2}-\d{2}$/.test(fechaCompletada)) throw invalidLote("Selecciona una fecha completada valida.");
   if (!proveedor) throw invalidLote("El proveedor es obligatorio.");
   if (!Number.isInteger(usuarioId) || usuarioId <= 0) throw invalidLote("Selecciona el líder de equipo responsable del lote.");
   if (!LOTE_ESTADOS.includes(estado)) throw invalidLote("El estado del lote no es valido.");
@@ -2272,6 +2276,8 @@ function validateLotePayload(body) {
     cantidad_lote: cantidadLote,
     marca_id: marcaId,
     fecha_ingreso: fechaIngreso,
+    fecha_trabajo: fechaTrabajo || null,
+    fecha_completada: estado === "completado" ? (fechaCompletada || null) : null,
     proveedor,
     usuario_id: usuarioId,
     estado
@@ -2298,8 +2304,8 @@ async function handleCreateLote(request, response) {
       return;
     }
     await validateLoteResponsible(payload.usuario_id);
-    // fecha_completada se calcula sola, no la manda el formulario.
-    payload.fecha_completada = payload.estado === "completado" ? currentLimaDate() : null;
+    // Al crear, si llega completado sin fecha se asigna hoy.
+    payload.fecha_completada = payload.estado === "completado" ? (payload.fecha_completada || currentLimaDate()) : null;
     let result = await supabase.from("lotes").insert(payload).select(LOTE_SELECT_COLUMNS).single();
     if (isPrimaryKeySequenceConflict(result.error)) {
       result = await supabase
@@ -2333,16 +2339,14 @@ async function handleUpdateLote(request, response, loteId) {
       return;
     }
     await validateLoteResponsible(payload.usuario_id);
-    // fecha_completada se calcula sola: si ya estaba completado y sigue
-    // completado, conserva la fecha original (no se reinicia con cada
-    // edicion); si recien pasa a completado, se pone hoy; si vuelve a
-    // pendiente, se limpia.
+    // Al pasar a completado se asigna hoy por defecto; el formulario también
+    // puede mandar una fecha editada. Al volver a pendiente se limpia.
     const existingLoteResult = await supabase.from("lotes").select("estado,fecha_completada").eq("id", loteId).maybeSingle();
     if (existingLoteResult.error) throw existingLoteResult.error;
     payload.fecha_completada = payload.estado === "completado"
-      ? (existingLoteResult.data?.estado === "completado" && existingLoteResult.data?.fecha_completada
+      ? (payload.fecha_completada || (existingLoteResult.data?.estado === "completado" && existingLoteResult.data?.fecha_completada
         ? existingLoteResult.data.fecha_completada
-        : currentLimaDate())
+        : currentLimaDate()))
       : null;
     const result = await supabase.from("lotes").update(payload).eq("id", loteId).select(LOTE_SELECT_COLUMNS).maybeSingle();
     if (result.error) {
@@ -3450,6 +3454,7 @@ async function handleReadOperationalRecords(request, response) {
     const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10));
     const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get("pageSize") || "25", 10)));
     const workerId = Number(url.searchParams.get("workerId"));
+    const managerId = Number(url.searchParams.get("managerId"));
     const taskId = Number(url.searchParams.get("taskId"));
     const lot = String(url.searchParams.get("lot") || "").trim();
     const fromDate = String(url.searchParams.get("from") || "").trim();
@@ -3459,6 +3464,7 @@ async function handleReadOperationalRecords(request, response) {
     const includeCatalogs = url.searchParams.get("includeCatalogs") === "true";
     let query = supabase.from(table).select("*", { count: "exact" });
     if (workerId > 0) query = query.eq(workerColumn, workerId);
+    if (source === "time" && managerId > 0) query = query.eq("encargado_id", managerId);
     if (taskId > 0) query = query.eq("tarea_id", taskId);
     if (lot) query = query.eq(lotColumn, lot);
     if (/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) query = query.gte("fecha_registro", fromDate);
@@ -3489,15 +3495,19 @@ async function handleReadOperationalRecords(request, response) {
     const stores = new Map((storesResult.data || []).map((item) => [Number(item.id), item.nombre]));
     let catalogs;
     if (includeCatalogs) {
-      const [allUsersResult, allTasks, lotesResult] = await Promise.all([
+      const [allUsersResult, allTasks, lotesResult, catalogRecordRows] = await Promise.all([
         supabase.from("usuarios").select("id,nombre,email,rol,activo").order("nombre", { ascending: true }),
         selectTasks(),
-        supabase.from("lotes").select("codigo_lote").order("codigo_lote", { ascending: true })
+        supabase.from("lotes").select("codigo_lote").order("codigo_lote", { ascending: true }),
+        selectAllDashboardRows(table)
       ]);
       if (allUsersResult.error) throw allUsersResult.error;
       if (lotesResult.error) throw lotesResult.error;
+      const recordedWorkerIds = new Set(catalogRecordRows.map((row) => Number(row[workerColumn])).filter(Boolean));
+      const recordedManagerIds = new Set(catalogRecordRows.map((row) => Number(row.encargado_id)).filter(Boolean));
       catalogs = {
-        users: (allUsersResult.data || []).filter((item) => normalizeRole(item.rol) === "operante"),
+        users: (allUsersResult.data || []).filter((item) => recordedWorkerIds.has(Number(item.id))),
+        managers: (allUsersResult.data || []).filter((item) => recordedManagerIds.has(Number(item.id))),
         tasks: allTasks,
         lotes: lotesResult.data || []
       };
@@ -4589,7 +4599,7 @@ async function handleCreateGroupLeaderRecord(request, response) {
 
 async function handleUpdateGroupLeaderRecord(request, response, recordId) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo", "otros"]);
+    const session = requireSessionRole(request, response, ["administrador", "lider de equipo", "otros"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     if (Object.hasOwn(body, "created_at") || Object.hasOwn(body, "createdAt")) {
@@ -4603,7 +4613,8 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
     if (currentResult.error) throw currentResult.error;
     const current = currentResult.data;
     if (!current) throw invalidGroupRecord("Registro no encontrado.", 404);
-    if (Number(current.encargado_id) !== Number(session.id)) {
+    const administrator = normalizeRole(session.rol) === "administrador";
+    if (!administrator && Number(current.encargado_id) !== Number(session.id)) {
       throw invalidGroupRecord("Solo el jefe que creo el registro puede editarlo.", 403);
     }
     const expectedRevision = Number(body.revision);
@@ -4637,7 +4648,7 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
       .from("registros_tareas_jefe_equipo")
       .update(updatePayload)
       .eq("id", recordId)
-      .eq("encargado_id", Number(session.id))
+      .eq("encargado_id", administrator ? Number(current.encargado_id) : Number(session.id))
       .eq("revision", expectedRevision)
       .select(GROUP_RECORD_COLUMNS_CURRENT)
       .maybeSingle();
@@ -4655,7 +4666,7 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
 
 async function handleDeleteGroupLeaderRecord(request, response, recordId) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo", "otros"]);
+    const session = requireSessionRole(request, response, ["administrador", "lider de equipo", "otros"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const currentResult = await supabase
@@ -4666,7 +4677,8 @@ async function handleDeleteGroupLeaderRecord(request, response, recordId) {
     if (currentResult.error) throw currentResult.error;
     const current = currentResult.data;
     if (!current) throw invalidGroupRecord("Registro no encontrado.", 404);
-    if (Number(current.encargado_id) !== Number(session.id)) {
+    const administrator = normalizeRole(session.rol) === "administrador";
+    if (!administrator && Number(current.encargado_id) !== Number(session.id)) {
       throw invalidGroupRecord("Solo el jefe que creo el registro puede eliminarlo.", 403);
     }
     // Si el cliente manda la revision que tenia a la vista, se comprueba para
@@ -4681,7 +4693,7 @@ async function handleDeleteGroupLeaderRecord(request, response, recordId) {
       .from("registros_tareas_jefe_equipo")
       .delete()
       .eq("id", recordId)
-      .eq("encargado_id", Number(session.id))
+      .eq("encargado_id", administrator ? Number(current.encargado_id) : Number(session.id))
       .select("id")
       .maybeSingle();
     if (deleteResult.error) throw deleteResult.error;

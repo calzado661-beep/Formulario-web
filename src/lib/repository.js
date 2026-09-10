@@ -1290,6 +1290,7 @@ export async function listOperationalRecords({
   page = 1,
   pageSize = 25,
   workerId = "",
+  managerId = "",
   taskId = "",
   lot = "",
   from = "",
@@ -1305,6 +1306,7 @@ export async function listOperationalRecords({
     pageSize: String(pageSize)
   });
   if (workerId) params.set("workerId", String(workerId));
+  if (managerId) params.set("managerId", String(managerId));
   if (taskId) params.set("taskId", String(taskId));
   if (lot) params.set("lot", String(lot));
   if (from) params.set("from", String(from));
