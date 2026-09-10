@@ -4831,3 +4831,7 @@ tbody tr:hover {
     padding: 1.2rem;
   }
 }
+.admin-history-only .group-hero,
+.admin-history-only .group-form-panel {
+  display: none;
+}

@@ -2,14 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BadgeCheck, CheckCircle2, FileSpreadsheet, Minus, Plus, RefreshCcw, Save, Search, Timer, X } from "lucide-react";
 import {
   createWorkerActivityLog,
+  clearOperationalRecordsCache,
   friendlyError,
   getTasksForUser,
   listBrands,
   listLotes,
+  listOperationalRecords,
+  listAllActivityLogs,
+  listAllWorkerTaskRecords,
   listTiendas,
   listTaskScoreRanges,
   listTasks,
   listWorkerActivityLogs,
+  loadGroupLeaderContext,
   loadWorkerLiveProgress
 } from "../lib/repository";
 import { formatDateTimeLima, nowLimaTimeHHMM, todayLimaISO } from "../lib/dates";
@@ -25,10 +30,12 @@ import {
   isGroupLeaderTimeTask,
   NO_TASK_OPTION,
   normalizeMeasurementType,
+  normalizeRole,
   normalizeText,
   SIMPLE_SHIFT
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
+import { useSessionState } from "../lib/sessionState";
 import {
   Alert,
   Button,
@@ -38,6 +45,7 @@ import {
   LoadingBlock,
   Panel,
   SelectInput,
+  TablePager,
   Tabs,
   TextArea,
   TextInput
@@ -87,15 +95,16 @@ function emptyRecord() {
   };
 }
 
-export default function WorkerDashboard({ user, embedded = false }) {
-  const [tab, setTab] = useState("Registrar actividad");
-  const tabs = ["Registrar actividad", "Historial"];
+export default function WorkerDashboard({ user, embedded = false, showAllWorkers = false }) {
+  const [tab, setTab] = useSessionState(`worker-tab:${user?.id || "unknown"}:${embedded ? "embedded" : "main"}`, "Registrar actividad");
+  const tabs = ["Registrar actividad", "Historial", ...(showAllWorkers ? ["Registros de todos los operantes"] : [])];
 
   return (
     <div className={embedded ? "stack embedded-worker" : "stack"}>
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
       {tab === "Registrar actividad" ? <RegisterActivity user={user} /> : null}
       {tab === "Historial" ? <WorkerHistory user={user} /> : null}
+      {showAllWorkers && tab === "Registros de todos los operantes" ? <WorkerHistory user={user} allWorkers /> : null}
     </div>
   );
 }
@@ -115,7 +124,8 @@ function RegisterActivity({ user }) {
   const brands = data.brands || [];
   const stores = data.stores || [];
   const lotes = data.lotes || [];
-  const [records, setRecords] = useState([emptyRecord()]);
+  const draftKey = `worker-draft:${user?.id || "unknown"}`;
+  const [records, setRecords] = useSessionState(`${draftKey}:records`, () => [emptyRecord()]);
   const [status, setStatus] = useState(null);
   const [successDialog, setSuccessDialog] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -127,8 +137,8 @@ function RegisterActivity({ user }) {
     limit.setDate(limit.getDate() - 3);
     return limit.toISOString().slice(0, 10);
   }, [maxRecordDate]);
-  const [recordDate, setRecordDate] = useState(maxRecordDate);
-  const [recordTime, setRecordTime] = useState(nowLimaTimeHHMM());
+  const [recordDate, setRecordDate] = useSessionState(`${draftKey}:date`, maxRecordDate);
+  const [recordTime, setRecordTime] = useSessionState(`${draftKey}:time`, nowLimaTimeHHMM);
 
   const taskMap = useMemo(() => {
     return Object.fromEntries(
@@ -194,7 +204,11 @@ function RegisterActivity({ user }) {
     const required = getTaskRequiredFlags(task);
     const splitsQuantity = taskSplitsQuantity(task);
     const guias = flags.guia && splitsQuantity && record.usaGuias
-      ? record.guias.map((item) => ({ numero_guia: String(item.numero_guia || "").trim(), cantidad: Number(item.cantidad) }))
+      ? record.guias.map((item) => ({
+          numero_guia: String(item.numero_guia || "").trim(),
+          cantidad: Number(item.cantidad),
+          tienda_id: item.tienda_id ? Number(item.tienda_id) : null
+        }))
       : [];
     // La marca siempre es un unico valor por registro; ya no se reparte la
     // cantidad total entre varias marcas. Si la tarea pide lote, la marca se
@@ -267,15 +281,20 @@ function RegisterActivity({ user }) {
       seen.add(record.taskKey);
 
       const shape = recordPayloadShape(record);
-      if (shape.usesStore && shape.required.tienda && !record.tiendaId) {
+      // Cuando la cantidad se distribuye por guias, cada fila trae su propia
+      // tienda. La tienda general solo es obligatoria si no hay distribucion.
+      if (shape.usesStore && shape.required.tienda && !record.tiendaId && !shape.guias.length) {
         return `Selecciona una tienda para ${shape.title}.`;
       }
       if (shape.usesStore && record.tiendaId && !stores.some((store) => String(store.id) === String(record.tiendaId))) {
         return `Selecciona una tienda valida para ${shape.title}.`;
       }
       if (shape.guias.length) {
-        if (shape.guias.some((item) => !item.numero_guia || !Number.isFinite(item.cantidad) || item.cantidad <= 0)) {
-          return `Completa cada número de guía y su cantidad para ${shape.title}.`;
+        if (shape.guias.some((item) => !item.numero_guia || !Number.isFinite(item.cantidad) || item.cantidad <= 0 || !item.tienda_id)) {
+          return `Completa cada número de guía, su cantidad y su tienda para ${shape.title}.`;
+        }
+        if (shape.guias.some((item) => !stores.some((store) => Number(store.id) === Number(item.tienda_id)))) {
+          return `Selecciona una tienda válida para cada guía de ${shape.title}.`;
         }
         const normalizedGuides = shape.guias.map((item) => item.numero_guia.toLowerCase());
         if (new Set(normalizedGuides).size !== normalizedGuides.length) {
@@ -555,9 +574,9 @@ function DynamicRecordFields({ record, task, brands, stores, lotes, onChange }) 
         )}
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
         {flags.marca && !flags.lote ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
-        {usesGuideBreakdown ? <GuideFields record={record} onChange={onChange} /> : null}
+        {usesGuideBreakdown ? <GuideFields record={record} stores={stores} onChange={onChange} /> : null}
         {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
-        <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
+        <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore && !record.usaGuias} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
     );
@@ -578,9 +597,9 @@ function DynamicRecordFields({ record, task, brands, stores, lotes, onChange }) 
         )}
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
         {flags.marca && !flags.lote ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
-        {usesGuideBreakdown ? <GuideFields record={record} onChange={onChange} /> : null}
+        {usesGuideBreakdown ? <GuideFields record={record} stores={stores} onChange={onChange} /> : null}
         {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
-        <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
+        <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore && !record.usaGuias} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
     );
@@ -646,7 +665,7 @@ function OptionalContextFields({ record, stores, onChange, showStore = false }) 
   );
 }
 
-function GuideFields({ record, onChange }) {
+function GuideFields({ record, stores, onChange }) {
   return (
     <>
       <CheckboxInput
@@ -659,7 +678,7 @@ function GuideFields({ record, onChange }) {
         hint="El puntaje se calculará una sola vez con la suma total."
       />
       {record.usaGuias ? (
-        <GuideDistribution items={record.guias} onChange={(guias) => onChange({ guias })} />
+        <GuideDistribution items={record.guias} stores={stores} onChange={(guias) => onChange({ guias })} />
       ) : null}
     </>
   );
@@ -750,14 +769,16 @@ function liveProgressTime(value) {
 // en curso ahora mismo, para que sea lo primero que se ve al entrar.
 function TodayLeaderTaskCard({ user, onUse }) {
   const requestRef = useRef(null);
-  const lastSignatureRef = useRef("");
+  const consumedIdsRef = useRef(new Set());
   const [activities, setActivities] = useState([]);
   const [loaded, setLoaded] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
   const consumedStorageKey = `worker-leader-task-consumed:${user?.id || "unknown"}`;
 
   useEffect(() => {
     let cancelled = false;
+    consumedIdsRef.current = new Set();
+    setActivities([]);
+    setLoaded(false);
     async function refresh() {
       requestRef.current?.abort();
       const controller = new AbortController();
@@ -773,25 +794,17 @@ function TodayLeaderTaskCard({ user, onUse }) {
             && String(activity.fecha_registro || "").slice(0, 10) === today
             && normalizeText(activity.tarea_nombre || activity.actividad_nombre) === "etiquetado"
         );
-        // Si el líder de equipo hizo varios registros de etiquetado hoy, se
-        // acumulan en una sola tarjeta para que el operante registre una vez.
-        // La firma usa solo los IDs: corregir la cantidad del mismo registro
-        // no debe mostrar de nuevo una tarjeta que el operante ya utilizo.
-        const signature = leaderRecordsToday
-          .map((activity) => String(activity.record_id ?? activity.id))
-          .sort()
-          .join("|");
-        if (signature !== lastSignatureRef.current) {
-          lastSignatureRef.current = signature;
-          let consumedSignature = "";
-          try {
-            consumedSignature = window.localStorage.getItem(consumedStorageKey) || "";
-          } catch {
-            // La tarjeta sigue funcionando aunque el navegador bloquee localStorage.
-          }
-          setDismissed(Boolean(signature) && signature === consumedSignature);
+        // Conserva los IDs ya usados, incluyendo la firma del formato anterior.
+        // Los registros nuevos solo aportan su propia cantidad a la tarjeta.
+        try {
+          const storedIds = window.localStorage.getItem(consumedStorageKey) || "";
+          storedIds.split("|").filter(Boolean).forEach((id) => consumedIdsRef.current.add(id));
+        } catch {
+          // Conserva los IDs en memoria si el navegador bloquea localStorage.
         }
-        setActivities(leaderRecordsToday);
+        setActivities(leaderRecordsToday.filter(
+          (activity) => !consumedIdsRef.current.has(String(activity.record_id ?? activity.id))
+        ));
         setLoaded(true);
       } catch (err) {
         if (err?.name !== "AbortError" && !cancelled) setLoaded(true);
@@ -815,7 +828,7 @@ function TodayLeaderTaskCard({ user, onUse }) {
       }
     : null;
 
-  if (!loaded || !summary || dismissed) return null;
+  if (!loaded || !summary) return null;
 
   return (
     <Panel title="Tu líder de equipo te registro esto hoy" eyebrow="Datos para completar" className="today-leader-task-panel">
@@ -839,13 +852,16 @@ function TodayLeaderTaskCard({ user, onUse }) {
             type="button"
             variant="secondary"
             onClick={() => {
+              onUse(summary);
+              activities.forEach((activity) => {
+                consumedIdsRef.current.add(String(activity.record_id ?? activity.id));
+              });
               try {
-                window.localStorage.setItem(consumedStorageKey, lastSignatureRef.current);
+                window.localStorage.setItem(consumedStorageKey, [...consumedIdsRef.current].sort().join("|"));
               } catch {
                 // Al menos se oculta durante la sesion actual.
               }
-              onUse(summary);
-              setDismissed(true);
+              setActivities([]);
             }}
           >
             Usar estos datos
@@ -857,26 +873,176 @@ function TodayLeaderTaskCard({ user, onUse }) {
 }
 
 const WORKER_HISTORY_EXPORT_COLUMNS = [
-  "Fecha", "Hora", "Fecha real", "Hora inicio", "Hora fin", "Tarea", "Cantidad", "Tiempo (min)", "Turno",
+  "Trabajador", "Fecha", "Hora", "Hora inicio", "Hora fin", "Tarea", "Cantidad", "Tiempo (min)", "Turno",
   "Cumplimiento", "Puntos", "Tienda", "Guia", "Lote", "Marcas", "Detalle"
 ];
 
-export function WorkerHistory({ user }) {
+export function WorkerHistory({ user, allWorkers = false }) {
+  return allWorkers ? <AllWorkersPaginatedHistory user={user} /> : <WorkerHistoryContent user={user} />;
+}
+
+function AllWorkersPaginatedHistory({ user }) {
+  const pageSize = 25;
+  const stateKey = `all-worker-records:${user?.id || "unknown"}`;
+  const [page, setPage] = useSessionState(`${stateKey}:page`, 1);
+  const [workerFilter, setWorkerFilter] = useSessionState(`${stateKey}:worker`, "");
+  const [taskFilter, setTaskFilter] = useSessionState(`${stateKey}:task`, "");
+  const [lotFilter, setLotFilter] = useSessionState(`${stateKey}:lot`, "");
+  const [dateFrom, setDateFrom] = useSessionState(`${stateKey}:from`, "");
+  const [dateTo, setDateTo] = useSessionState(`${stateKey}:to`, "");
+  const [sortOrder, setSortOrder] = useSessionState(`${stateKey}:order`, "desc");
+  const [searchInput, setSearchInput] = useSessionState(`${stateKey}:search-input`, "");
+  const [search, setSearch] = useState(searchInput);
+  const [catalogs, setCatalogs] = useSessionState(`${stateKey}:catalogs`, null);
+  const filtersMounted = useRef(false);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setSearch(searchInput.trim()), 350);
+    return () => window.clearTimeout(timeoutId);
+  }, [searchInput]);
+
+  useEffect(() => {
+    if (!filtersMounted.current) {
+      filtersMounted.current = true;
+      return;
+    }
+    setPage(1);
+  }, [workerFilter, taskFilter, lotFilter, dateFrom, dateTo, sortOrder, search]);
+
+  const { data, loading, error, reload } = useAsyncData(
+    async () => {
+      const result = await listOperationalRecords({
+        source: "normal",
+        page,
+        pageSize,
+        workerId: workerFilter,
+        taskId: taskFilter,
+        lot: lotFilter,
+        from: dateFrom,
+        to: dateTo,
+        order: sortOrder,
+        search,
+        includeCatalogs: !catalogs
+      });
+      if (result.catalogs) setCatalogs(result.catalogs);
+      return result;
+    },
+    [page, workerFilter, taskFilter, lotFilter, dateFrom, dateTo, sortOrder, search, user?.id],
+    { records: [], total: 0, page: 1, pageSize }
+  );
+
+  const availableCatalogs = data.catalogs || catalogs || { users: [], tasks: [], lotes: [] };
+  const rows = (data.records || []).map((log) => {
+    const taskName = log.tarea_nombre || log.actividad_nombre || "";
+    const [tipoAct] = getActivityCaptureMode(taskName);
+    return {
+      Trabajador: log.trabajador_nombre || "",
+      Fecha: log.fecha_registro || "",
+      Hora: log.hora_registro || "",
+      Tarea: taskName,
+      Cantidad: log.cantidad ?? "",
+      Turno: log.turno || (tipoAct === "turno" ? displayShiftFromQuantity(log.cantidad) : ""),
+      Cumplimiento: log.cumplimiento,
+      Puntos: log.puntaje,
+      Tienda: log.tienda_nombre || "",
+      Guia: log.numero_guia || "",
+      Lote: log.lote || "",
+      Marcas: (log.marcas || []).map((item) => `${item.marca_nombre}: ${item.cantidad}`).join(", "),
+      Detalle: log.detalle || ""
+    };
+  });
+  const totalPages = Math.max(1, Math.ceil(Number(data.total || 0) / pageSize));
+
+  function refresh() {
+    clearOperationalRecordsCache("normal");
+    reload();
+  }
+
+  function exportCurrentPage() {
+    downloadCsv(`registros-operantes-pagina-${page}-${todayLimaISO()}.csv`, WORKER_HISTORY_EXPORT_COLUMNS, rows);
+  }
+
+  return (
+    <Panel
+      title="Registros de todos los operantes"
+      eyebrow="25 registros por pagina"
+      actions={(
+        <>
+          <Button variant="secondary" icon={FileSpreadsheet} disabled={!rows.length} onClick={exportCurrentPage}>Exportar pagina</Button>
+          <Button variant="secondary" icon={RefreshCcw} onClick={refresh}>Actualizar</Button>
+        </>
+      )}
+    >
+      <div className="toolbar">
+        <SelectInput
+          label="Operante"
+          value={workerFilter}
+          onChange={setWorkerFilter}
+          options={[{ value: "", label: "Todos" }, ...(availableCatalogs.users || []).map((item) => ({ value: String(item.id), label: item.nombre || item.email }))]}
+        />
+        <SelectInput
+          label="Tarea"
+          value={taskFilter}
+          onChange={setTaskFilter}
+          options={[{ value: "", label: "Todas" }, ...(availableCatalogs.tasks || []).map((item) => ({ value: String(item.id), label: getTaskTitle(item) || "Tarea sin nombre" }))]}
+        />
+        <SelectInput
+          label="Lote"
+          value={lotFilter}
+          onChange={setLotFilter}
+          options={[{ value: "", label: "Todos los lotes" }, ...(availableCatalogs.lotes || []).map((item) => ({ value: String(item.codigo_lote || ""), label: String(item.codigo_lote || "") })).filter((item) => item.value)]}
+        />
+        <TextInput label="Fecha desde" type="date" value={dateFrom} onChange={setDateFrom} />
+        <TextInput label="Fecha hasta" type="date" value={dateTo} onChange={setDateTo} />
+        <SelectInput
+          label="Ordenar por fecha"
+          value={sortOrder}
+          onChange={setSortOrder}
+          options={[{ value: "desc", label: "Mas reciente primero" }, { value: "asc", label: "Mas antigua primero" }]}
+        />
+        <label className="field search-field">
+          <span className="field-label">Buscar</span>
+          <span className="search-input">
+            <Search />
+            <input className="input" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Guia, lote o detalle" />
+          </span>
+        </label>
+      </div>
+      {error ? <Alert type="error">{friendlyError(error)}</Alert> : null}
+      {loading && !rows.length ? <LoadingBlock /> : null}
+      {!loading && !rows.length ? <Alert>No hay registros para los filtros seleccionados.</Alert> : null}
+      {rows.length ? <DataTable rows={rows} pageSize={0} /> : null}
+      <TablePager page={page - 1} totalPages={totalPages} totalRows={Number(data.total || 0)} onChange={(nextPage) => setPage(nextPage + 1)} />
+    </Panel>
+  );
+}
+
+function WorkerHistoryContent({ user }) {
+  const allWorkers = false;
   const [sortOrder, setSortOrder] = useState("desc");
   const [taskFilter, setTaskFilter] = useState("");
+  const [workerFilter, setWorkerFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [lotFilter, setLotFilter] = useState("");
   const [search, setSearch] = useState("");
   const { data, loading, error, reload } = useAsyncData(
     async () => {
-      const [logs, tasks, stores] = await Promise.all([listWorkerActivityLogs(user.id), listTasks(), listTiendas()]);
-      return { logs, tasks, stores };
+      const [logs, tasks, stores, users, lotes] = await Promise.all([
+        allWorkers ? listAllWorkerTaskRecords() : listWorkerActivityLogs(user.id),
+        listTasks(), listTiendas(), allWorkers ? loadGroupLeaderContext().then((context) => context.allUsers || []) : Promise.resolve([user]),
+        listLotes().catch(() => [])
+      ]);
+      return { logs, tasks, stores, users, lotes };
     },
     [user?.id],
-    { logs: [], tasks: [], stores: [] }
+    { logs: [], tasks: [], stores: [], users: [], lotes: [] }
   );
 
   const taskNameById = Object.fromEntries((data.tasks || []).map((task) => [task.id, getTaskTitle(task) || "Tarea sin nombre"]));
   const storeNameById = Object.fromEntries((data.stores || []).map((store) => [store.id, store.nombre]));
   const allLogs = data.logs || [];
+  const workerNameById = Object.fromEntries((data.users || []).map((item) => [item.id, item.nombre || item.email]));
 
   const loggedTaskOptions = [];
   const seenTaskIds = new Set();
@@ -890,6 +1056,12 @@ export function WorkerHistory({ user }) {
 
   const filteredLogs = allLogs.filter((log) => {
     if (taskFilter && String(log.tarea_id) !== taskFilter) return false;
+    const workerId = log.trabajador_id || log.usuario_id;
+    if (workerFilter && String(workerId) !== workerFilter) return false;
+    const date = String(log.fecha_registro || "").slice(0, 10);
+    if (dateFrom && date < dateFrom) return false;
+    if (dateTo && date > dateTo) return false;
+    if (lotFilter && String(log.lote || "") !== lotFilter) return false;
     if (!search.trim()) return true;
     const taskName = taskNameById[log.tarea_id] || log.actividad_nombre || "";
     const term = normalizeText(search);
@@ -906,9 +1078,9 @@ export function WorkerHistory({ user }) {
     const taskName = taskNameById[log.tarea_id] || log.actividad_nombre || "";
     const [tipoAct] = getActivityCaptureMode(taskName);
     return {
+      Trabajador: workerNameById[log.trabajador_id || log.usuario_id] || "",
       Fecha: log.fecha_registro || "",
       Hora: log.hora_registro || "",
-      "Fecha real": formatDateTimeLima(log.created_at) || "",
       "Hora inicio": log.hora_inicio ? liveProgressTime(log.hora_inicio) : "",
       "Hora fin": log.hora_fin ? liveProgressTime(log.hora_fin) : "",
       Tarea: taskName,
@@ -943,12 +1115,32 @@ export function WorkerHistory({ user }) {
       }
     >
       <div className="toolbar">
+        {allWorkers ? <SelectInput
+          label="Operante"
+          value={workerFilter}
+          onChange={setWorkerFilter}
+          options={[{ value: "", label: "Todos" }, ...(data.users || []).filter((item) => normalizeRole(item.rol) === "operante").map((item) => ({ value: String(item.id), label: item.nombre || item.email }))]}
+        /> : null}
         <SelectInput
           label="Tarea"
           value={taskFilter}
           onChange={setTaskFilter}
           options={[{ value: "", label: "Todas" }, ...loggedTaskOptions]}
         />
+        <SelectInput
+          label="Lote"
+          value={lotFilter}
+          onChange={setLotFilter}
+          options={[
+            { value: "", label: "Todos los lotes" },
+            ...(data.lotes || []).map((lote) => ({
+              value: String(lote.codigo_lote || lote.lote || ""),
+              label: lote.marca_nombre ? `${lote.codigo_lote} - ${lote.marca_nombre}` : String(lote.codigo_lote || lote.lote || "")
+            })).filter((option) => option.value)
+          ]}
+        />
+        <TextInput label="Fecha desde" type="date" value={dateFrom} onChange={setDateFrom} />
+        <TextInput label="Fecha hasta" type="date" value={dateTo} onChange={setDateTo} />
         <SelectInput
           label="Ordenar por fecha"
           value={sortOrder}

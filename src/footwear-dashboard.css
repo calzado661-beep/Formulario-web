@@ -1490,6 +1490,70 @@ h2.pbi-section-heading {
   grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
+.pbi-important-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.pbi-kpi--important {
+  min-height: 180px;
+  overflow: visible;
+  border: 3px solid var(--pbi-gold);
+  box-shadow: 0 10px 26px rgba(225, 194, 51, 0.16);
+}
+
+.pbi-kpi--important > .pbi-kpi-label {
+  padding: 0.65rem 0.8rem;
+  background: linear-gradient(135deg, var(--pbi-blue), #087f8c);
+  font-size: clamp(0.9rem, 1.1vw, 1.12rem);
+  font-weight: 900;
+}
+
+.pbi-kpi--important .pbi-kpi-pair {
+  min-height: 125px;
+}
+
+.pbi-kpi--important .pbi-kpi-pair-item {
+  padding: 0.62rem 0.45rem;
+}
+
+.pbi-kpi--important .pbi-kpi-pair-item .pbi-kpi-value {
+  font-size: clamp(1.35rem, 2vw, 2.15rem);
+}
+
+
+.pbi-kpi--important .pbi-kpi-pair-item small {
+  overflow: visible;
+  font-size: clamp(0.68rem, 0.78vw, 0.82rem);
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.pbi-system-exits-value {
+  display: grid;
+  min-height: 125px;
+  padding: 1rem;
+  place-content: center;
+  justify-items: center;
+  gap: 0.55rem;
+  text-align: center;
+}
+
+.pbi-system-exits-value .pbi-kpi-value {
+  color: var(--pbi-ink);
+  font-size: clamp(2.2rem, 4vw, 4.25rem);
+}
+
+.pbi-system-exits-value span {
+  color: var(--pbi-muted);
+  font-size: clamp(0.75rem, 0.9vw, 0.92rem);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
 .pbi-kpi--indicator,
 .pbi-kpi--birthday {
   min-height: 112px;
@@ -4864,6 +4928,10 @@ button.pbi-legend-item:focus-visible,
   .pbi-kpi-grid--activities,
   .pbi-section-grid--indicators {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pbi-important-kpis {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .pbi-card,

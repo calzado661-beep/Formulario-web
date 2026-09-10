@@ -206,7 +206,7 @@ function normalizeRole(role) {
 }
 
 function isTimedTaskWorkerRole(role) {
-  return ["operante", "lider de equipo"].includes(normalizeRole(role));
+  return ["operante", "lider de equipo", "otros"].includes(normalizeRole(role));
 }
 
 function normalizeTaskName(value) {
@@ -1526,7 +1526,7 @@ async function handleReadFootwearDashboard(request, response) {
         code: String(lote.codigo_lote || "").trim().toUpperCase(),
         quantity: Number(lote.cantidad_lote || 0),
         status: String(lote.estado || "pendiente").trim().toLowerCase(),
-        startDate: dashboardDate(lote.fecha_ingreso),
+        startDate: dashboardDate(lote.fecha_trabajo),
         completedDate: dashboardDate(lote.fecha_completada),
         brandName: loteBrandNameById.get(Number(lote.marca_id)) || null,
         teamLeaderName: incidentUserById.get(Number(lote.usuario_id))?.nombre || null
@@ -1627,13 +1627,14 @@ function normalizedGuideItems(value) {
   return value.map((item) => {
     const numero_guia = String(item.numero_guia || "").trim();
     const cantidad = Number(item.cantidad);
-    if (!numero_guia || !Number.isFinite(cantidad) || cantidad <= 0) {
+    const tienda_id = Number(item.tienda_id);
+    if (!numero_guia || !Number.isFinite(cantidad) || cantidad <= 0 || !Number.isInteger(tienda_id) || tienda_id <= 0) {
       throw new Error("Cada guía debe tener un número y una cantidad mayor a cero.");
     }
     const normalizedNumber = normalizeRole(numero_guia);
     if (seen.has(normalizedNumber)) throw new Error("No puedes repetir un número de guía en el mismo registro.");
     seen.add(normalizedNumber);
-    return { numero_guia, cantidad };
+    return { numero_guia, cantidad, tienda_id };
   });
 }
 
@@ -2132,7 +2133,7 @@ async function handleDeleteTaskScoreRanges(request, response) {
 
 async function handleReadStores(request, response) {
   try {
-    if (!requireSessionRole(request, response, ["administrador", "operante", "lider de equipo"])) return;
+    if (!requireSessionRole(request, response, ["administrador", "operante", "lider de equipo", "otros"])) return;
     const result = await supabase.from("tiendas").select("*").order("id", { ascending: true });
     if (result.error) throw result.error;
     sendJson(response, 200, { stores: result.data || [] });
@@ -2211,7 +2212,7 @@ async function handleDeleteStore(request, response, storeId) {
   }
 }
 
-const LOTE_SELECT_COLUMNS = "id,codigo_lote,cantidad_lote,marca_id,fecha_ingreso,proveedor,usuario_id,estado,fecha_completada";
+const LOTE_SELECT_COLUMNS = "id,codigo_lote,cantidad_lote,marca_id,fecha_ingreso,fecha_trabajo,proveedor,usuario_id,estado,fecha_completada";
 const LOTE_ESTADOS = ["pendiente", "completado"];
 
 async function enrichLotes(rows) {
@@ -2234,7 +2235,7 @@ async function enrichLotes(rows) {
 
 async function handleReadLotes(request, response) {
   try {
-    if (!requireSessionRole(request, response, ["administrador", "operante", "lider de equipo"])) return;
+    if (!requireSessionRole(request, response, ["administrador", "operante", "lider de equipo", "otros"])) return;
     const result = await supabase.from("lotes").select(LOTE_SELECT_COLUMNS).order("id", { ascending: false });
     if (result.error) throw result.error;
     sendJson(response, 200, { lotes: await enrichLotes(result.data || []) });
@@ -2255,6 +2256,8 @@ function validateLotePayload(body) {
   const cantidadLote = Number(body.cantidad_lote);
   const marcaId = Number(body.marca_id);
   const fechaIngreso = String(body.fecha_ingreso || "").trim();
+  const fechaTrabajo = String(body.fecha_trabajo || "").trim();
+  const fechaCompletada = String(body.fecha_completada || "").trim();
   const usuarioId = Number(body.usuario_id);
   const estado = String(body.estado || "pendiente").trim().toLowerCase();
   if (!codigoLote) throw invalidLote("El codigo de lote es obligatorio.");
@@ -2263,6 +2266,8 @@ function validateLotePayload(body) {
   }
   if (!Number.isInteger(marcaId) || marcaId <= 0) throw invalidLote("Selecciona una marca.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaIngreso)) throw invalidLote("Selecciona una fecha de ingreso valida.");
+  if (fechaTrabajo && !/^\d{4}-\d{2}-\d{2}$/.test(fechaTrabajo)) throw invalidLote("Selecciona una fecha de trabajo valida.");
+  if (fechaCompletada && !/^\d{4}-\d{2}-\d{2}$/.test(fechaCompletada)) throw invalidLote("Selecciona una fecha completada valida.");
   if (!proveedor) throw invalidLote("El proveedor es obligatorio.");
   if (!Number.isInteger(usuarioId) || usuarioId <= 0) throw invalidLote("Selecciona el líder de equipo responsable del lote.");
   if (!LOTE_ESTADOS.includes(estado)) throw invalidLote("El estado del lote no es valido.");
@@ -2271,6 +2276,8 @@ function validateLotePayload(body) {
     cantidad_lote: cantidadLote,
     marca_id: marcaId,
     fecha_ingreso: fechaIngreso,
+    fecha_trabajo: fechaTrabajo || null,
+    fecha_completada: estado === "completado" ? (fechaCompletada || null) : null,
     proveedor,
     usuario_id: usuarioId,
     estado
@@ -2297,8 +2304,8 @@ async function handleCreateLote(request, response) {
       return;
     }
     await validateLoteResponsible(payload.usuario_id);
-    // fecha_completada se calcula sola, no la manda el formulario.
-    payload.fecha_completada = payload.estado === "completado" ? currentLimaDate() : null;
+    // Al crear, si llega completado sin fecha se asigna hoy.
+    payload.fecha_completada = payload.estado === "completado" ? (payload.fecha_completada || currentLimaDate()) : null;
     let result = await supabase.from("lotes").insert(payload).select(LOTE_SELECT_COLUMNS).single();
     if (isPrimaryKeySequenceConflict(result.error)) {
       result = await supabase
@@ -2332,16 +2339,14 @@ async function handleUpdateLote(request, response, loteId) {
       return;
     }
     await validateLoteResponsible(payload.usuario_id);
-    // fecha_completada se calcula sola: si ya estaba completado y sigue
-    // completado, conserva la fecha original (no se reinicia con cada
-    // edicion); si recien pasa a completado, se pone hoy; si vuelve a
-    // pendiente, se limpia.
+    // Al pasar a completado se asigna hoy por defecto; el formulario también
+    // puede mandar una fecha editada. Al volver a pendiente se limpia.
     const existingLoteResult = await supabase.from("lotes").select("estado,fecha_completada").eq("id", loteId).maybeSingle();
     if (existingLoteResult.error) throw existingLoteResult.error;
     payload.fecha_completada = payload.estado === "completado"
-      ? (existingLoteResult.data?.estado === "completado" && existingLoteResult.data?.fecha_completada
+      ? (payload.fecha_completada || (existingLoteResult.data?.estado === "completado" && existingLoteResult.data?.fecha_completada
         ? existingLoteResult.data.fecha_completada
-        : currentLimaDate())
+        : currentLimaDate()))
       : null;
     const result = await supabase.from("lotes").update(payload).eq("id", loteId).select(LOTE_SELECT_COLUMNS).maybeSingle();
     if (result.error) {
@@ -3409,12 +3414,22 @@ async function handleSendActivityReport(request, response, configId = 1) {
 
 async function handleReadActivityLogs(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["administrador", "operante", "lider de equipo"]);
+    const session = requireSessionRole(request, response, ["administrador", "operante", "lider de equipo", "otros"]);
     if (!session) return;
     const url = new URL(request.url, `http://${request.headers.host}`);
     const workerId = url.searchParams.get("workerId");
+    const source = url.searchParams.get("source");
     if (normalizeRole(session.rol) !== "administrador" && workerId && Number(workerId) !== Number(session.id)) {
       sendJson(response, 403, { error: "No puedes consultar los registros de otro usuario." });
+      return;
+    }
+    if (source === "registros_tareas") {
+      if (!["administrador", "otros"].includes(normalizeRole(session.rol))) {
+        sendJson(response, 403, { error: "Tu rol no puede consultar la tabla completa." });
+        return;
+      }
+      const rows = await selectAllDashboardRows("registros_tareas", { orderColumn: "fecha_registro" });
+      sendJson(response, 200, { logs: await attachBrandBreakdown(rows.map(normalizeActivityLog)) });
       return;
     }
     sendJson(response, 200, { logs: await selectActivityLogs(workerId) });
@@ -3423,9 +3438,100 @@ async function handleReadActivityLogs(request, response) {
   }
 }
 
+async function handleReadOperationalRecords(request, response) {
+  try {
+    const session = requireSessionRole(request, response, ["administrador", "otros"]);
+    if (!session) return;
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    const source = url.searchParams.get("source") === "time" ? "time" : "normal";
+    if (source === "time" && normalizeRole(session.rol) !== "administrador") {
+      sendJson(response, 403, { error: "Tu rol no puede consultar todos los registros por tiempo." });
+      return;
+    }
+    const table = source === "time" ? "registros_tareas_jefe_equipo" : "registros_tareas";
+    const workerColumn = source === "time" ? "trabajador_id" : "usuario_id";
+    const lotColumn = source === "time" ? "lote" : "dato_extra";
+    const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10));
+    const pageSize = Math.min(100, Math.max(10, Number.parseInt(url.searchParams.get("pageSize") || "25", 10)));
+    const workerId = Number(url.searchParams.get("workerId"));
+    const managerId = Number(url.searchParams.get("managerId"));
+    const taskId = Number(url.searchParams.get("taskId"));
+    const lot = String(url.searchParams.get("lot") || "").trim();
+    const fromDate = String(url.searchParams.get("from") || "").trim();
+    const toDate = String(url.searchParams.get("to") || "").trim();
+    const order = url.searchParams.get("order") === "asc" ? "asc" : "desc";
+    const search = String(url.searchParams.get("search") || "").replace(/[,()%]/g, " ").trim();
+    const includeCatalogs = url.searchParams.get("includeCatalogs") === "true";
+    let query = supabase.from(table).select("*", { count: "exact" });
+    if (workerId > 0) query = query.eq(workerColumn, workerId);
+    if (source === "time" && managerId > 0) query = query.eq("encargado_id", managerId);
+    if (taskId > 0) query = query.eq("tarea_id", taskId);
+    if (lot) query = query.eq(lotColumn, lot);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) query = query.gte("fecha_registro", fromDate);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(toDate)) query = query.lte("fecha_registro", toDate);
+    if (search && source === "normal") {
+      query = query.or(`observacion.ilike.%${search}%,numero_guia.ilike.%${search}%,dato_extra.ilike.%${search}%`);
+    }
+    const start = (page - 1) * pageSize;
+    const ascending = order === "asc";
+    const result = await query.order("fecha_registro", { ascending }).order("id", { ascending }).range(start, start + pageSize - 1);
+    if (result.error) throw result.error;
+    const normalizedRecords = (result.data || []).map(normalizeActivityLog);
+    const records = source === "normal" ? await attachBrandBreakdown(normalizedRecords) : normalizedRecords;
+    const userIds = [...new Set(records.flatMap((row) => [Number(row[workerColumn]), Number(row.encargado_id)]).filter(Boolean))];
+    const taskIds = [...new Set(records.map((row) => Number(row.tarea_id)).filter(Boolean))];
+    const storeIds = [...new Set(records.map((row) => Number(row.tienda_id)).filter(Boolean))];
+    const taskTable = await getTaskTableName();
+    const [usersResult, tasksResult, storesResult] = await Promise.all([
+      userIds.length ? supabase.from("usuarios").select("id,nombre,email").in("id", userIds) : Promise.resolve({ data: [] }),
+      taskIds.length ? supabase.from(taskTable).select("*").in("id", taskIds) : Promise.resolve({ data: [] }),
+      storeIds.length ? supabase.from("tiendas").select("id,nombre").in("id", storeIds) : Promise.resolve({ data: [] })
+    ]);
+    if (usersResult.error) throw usersResult.error;
+    if (tasksResult.error) throw tasksResult.error;
+    if (storesResult.error) throw storesResult.error;
+    const users = new Map((usersResult.data || []).map((item) => [Number(item.id), item.nombre || item.email]));
+    const tasks = new Map((tasksResult.data || []).map((item) => [Number(item.id), taskTitle(item)]));
+    const stores = new Map((storesResult.data || []).map((item) => [Number(item.id), item.nombre]));
+    let catalogs;
+    if (includeCatalogs) {
+      const [allUsersResult, allTasks, lotesResult, catalogRecordRows] = await Promise.all([
+        supabase.from("usuarios").select("id,nombre,email,rol,activo").order("nombre", { ascending: true }),
+        selectTasks(),
+        supabase.from("lotes").select("codigo_lote").order("codigo_lote", { ascending: true }),
+        selectAllDashboardRows(table)
+      ]);
+      if (allUsersResult.error) throw allUsersResult.error;
+      if (lotesResult.error) throw lotesResult.error;
+      const recordedWorkerIds = new Set(catalogRecordRows.map((row) => Number(row[workerColumn])).filter(Boolean));
+      const recordedManagerIds = new Set(catalogRecordRows.map((row) => Number(row.encargado_id)).filter(Boolean));
+      catalogs = {
+        users: (allUsersResult.data || []).filter((item) => recordedWorkerIds.has(Number(item.id))),
+        managers: (allUsersResult.data || []).filter((item) => recordedManagerIds.has(Number(item.id))),
+        tasks: allTasks,
+        lotes: lotesResult.data || []
+      };
+    }
+    sendJson(response, 200, {
+      records: records.map((row) => ({
+        ...row,
+        trabajador_nombre: users.get(Number(row[workerColumn])) || "",
+        encargado_nombre: users.get(Number(row.encargado_id)) || "",
+        tarea_nombre: tasks.get(Number(row.tarea_id)) || "",
+        tienda_nombre: stores.get(Number(row.tienda_id)) || "",
+        lote: source === "time" ? row.lote : row.dato_extra
+      })),
+      total: Number(result.count || 0), page, pageSize,
+      ...(catalogs ? { catalogs } : {})
+    });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "No se pudieron cargar los registros operativos." });
+  }
+}
+
 async function handleCreateActivityLog(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["operante", "lider de equipo"]);
+    const session = requireSessionRole(request, response, ["operante", "lider de equipo", "otros"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const submittedTime = body.tiempo_minutos ?? body.dato_extra;
@@ -3581,7 +3687,10 @@ async function handleCreateActivityLog(request, response) {
       sendJson(response, 400, { error: "Usuario y tarea son obligatorios." });
       return;
     }
-    if (requiresStore && !payload.tienda_id) {
+    // Una tarea puede usar una tienda general o una tienda distinta por guia.
+    // En el segundo caso normalizedGuideItems ya exige tienda_id en cada fila
+    // y, al insertar, el resto de los campos del registro se conserva.
+    if (requiresStore && !payload.tienda_id && !guideItems.length) {
       sendJson(response, 400, { error: `La tienda es obligatoria para ${taskTitle(taskResult.data)}.` });
       return;
     }
@@ -3608,6 +3717,22 @@ async function handleCreateActivityLog(request, response) {
       }
     }
 
+    if (guideItems.length) {
+      const guideStoreIds = [...new Set(guideItems.map((item) => item.tienda_id))];
+      const guideStoresResult = await supabase.from("tiendas").select("id,activo").in("id", guideStoreIds);
+      if (guideStoresResult.error) {
+        sendJson(response, 500, { error: guideStoresResult.error.message });
+        return;
+      }
+      const validStoreIds = new Set(
+        (guideStoresResult.data || []).filter((store) => isActive(store.activo)).map((store) => Number(store.id))
+      );
+      if (guideStoreIds.some((id) => !validStoreIds.has(Number(id)))) {
+        sendJson(response, 400, { error: "Selecciona una tienda activa y valida para cada guia." });
+        return;
+      }
+    }
+
     const insertedRows = [];
     const rowsToInsert = brandItems.length
       ? brandItems.map((item, index) => ({
@@ -3621,6 +3746,7 @@ async function handleCreateActivityLog(request, response) {
             ...payload,
             cantidad: item.cantidad,
             numero_guia: item.numero_guia,
+            tienda_id: item.tienda_id,
             puntaje: index === 0 ? payload.puntaje : 0
           }))
       : [payload];
@@ -3918,7 +4044,7 @@ async function loadGroupLeaderData() {
 
 async function handleUpdateAverageReference(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo", "administrador"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "administrador", "otros"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const taskId = Number(body.tarea_id);
@@ -3986,7 +4112,7 @@ async function handleReadAverageReferences(request, response) {
 
 async function handleGroupLeaderContext(request, response) {
   try {
-    if (!requireSessionRole(request, response, ["lider de equipo"])) return;
+    if (!requireSessionRole(request, response, ["administrador", "lider de equipo", "otros"])) return;
     const data = await loadGroupLeaderData();
     sendJson(response, 200, data);
   } catch (error) {
@@ -4064,7 +4190,7 @@ async function handleWorkerLiveProgress(request, response) {
 
 async function handleCreateGroupLeaderRecordLegacy(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "otros"]);
     if (!session) return;
     const rawBody = await readBody(request);
     const body = JSON.parse(rawBody || "{}");
@@ -4446,7 +4572,7 @@ async function validateGroupRecordBase(body, { current = null, validateWorker = 
 
 async function handleCreateGroupLeaderRecord(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "otros"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const { payload } = await validateGroupRecordBase(body);
@@ -4473,7 +4599,7 @@ async function handleCreateGroupLeaderRecord(request, response) {
 
 async function handleUpdateGroupLeaderRecord(request, response, recordId) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo"]);
+    const session = requireSessionRole(request, response, ["administrador", "lider de equipo", "otros"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     if (Object.hasOwn(body, "created_at") || Object.hasOwn(body, "createdAt")) {
@@ -4487,7 +4613,8 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
     if (currentResult.error) throw currentResult.error;
     const current = currentResult.data;
     if (!current) throw invalidGroupRecord("Registro no encontrado.", 404);
-    if (Number(current.encargado_id) !== Number(session.id)) {
+    const administrator = normalizeRole(session.rol) === "administrador";
+    if (!administrator && Number(current.encargado_id) !== Number(session.id)) {
       throw invalidGroupRecord("Solo el jefe que creo el registro puede editarlo.", 403);
     }
     const expectedRevision = Number(body.revision);
@@ -4521,7 +4648,7 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
       .from("registros_tareas_jefe_equipo")
       .update(updatePayload)
       .eq("id", recordId)
-      .eq("encargado_id", Number(session.id))
+      .eq("encargado_id", administrator ? Number(current.encargado_id) : Number(session.id))
       .eq("revision", expectedRevision)
       .select(GROUP_RECORD_COLUMNS_CURRENT)
       .maybeSingle();
@@ -4539,7 +4666,7 @@ async function handleUpdateGroupLeaderRecord(request, response, recordId) {
 
 async function handleDeleteGroupLeaderRecord(request, response, recordId) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo"]);
+    const session = requireSessionRole(request, response, ["administrador", "lider de equipo", "otros"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const currentResult = await supabase
@@ -4550,7 +4677,8 @@ async function handleDeleteGroupLeaderRecord(request, response, recordId) {
     if (currentResult.error) throw currentResult.error;
     const current = currentResult.data;
     if (!current) throw invalidGroupRecord("Registro no encontrado.", 404);
-    if (Number(current.encargado_id) !== Number(session.id)) {
+    const administrator = normalizeRole(session.rol) === "administrador";
+    if (!administrator && Number(current.encargado_id) !== Number(session.id)) {
       throw invalidGroupRecord("Solo el jefe que creo el registro puede eliminarlo.", 403);
     }
     // Si el cliente manda la revision que tenia a la vista, se comprueba para
@@ -4565,7 +4693,7 @@ async function handleDeleteGroupLeaderRecord(request, response, recordId) {
       .from("registros_tareas_jefe_equipo")
       .delete()
       .eq("id", recordId)
-      .eq("encargado_id", Number(session.id))
+      .eq("encargado_id", administrator ? Number(current.encargado_id) : Number(session.id))
       .select("id")
       .maybeSingle();
     if (deleteResult.error) throw deleteResult.error;
@@ -4688,7 +4816,7 @@ async function insertLiveActivityHistory(activityId, quantity, userId, type, poi
 
 async function handleCreateLiveGroupLeaderActivity(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "otros"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const { task, taskId, workerId } = await validateLiveActivityContext(body);
@@ -4786,7 +4914,7 @@ async function handleCreateLiveGroupLeaderActivity(request, response) {
 
 async function handleUpdateLiveGroupLeaderActivity(request, response, activityId) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "otros"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const currentResult = await supabase.from("actividades_jefe_equipo").select("*").eq("id", activityId).maybeSingle();
@@ -4939,7 +5067,7 @@ async function handleUpdateLiveGroupLeaderActivity(request, response, activityId
 
 async function handleCancelLiveGroupLeaderActivity(request, response, activityId) {
   try {
-    const session = requireSessionRole(request, response, ["lider de equipo"]);
+    const session = requireSessionRole(request, response, ["lider de equipo", "otros"]);
     if (!session) return;
     const currentResult = await supabase.from("actividades_jefe_equipo").select("id,encargado_id,estado,registro_tarea_id").eq("id", activityId).maybeSingle();
     if (currentResult.error) throw currentResult.error;
@@ -4971,7 +5099,7 @@ async function loadIncidentData() {
     supabase.from("areas_departamento").select("id,nombre").order("nombre", { ascending: true }),
     supabase
       .from("registro_errores")
-      .select("id_error,turno,tarea_error_id,tienda_id,numero_guia,observacion,tipo_error,usuario_id,fecha_error,area_id")
+      .select("id_error,turno,tarea_error_id,tienda_id,numero_guia,numero_lote,observacion,tipo_error,usuario_id,fecha_error,area_id")
       .order("fecha_error", { ascending: false })
   ]);
 
@@ -5005,7 +5133,7 @@ async function loadIncidentData() {
 
 async function handleIncidentContext(request, response) {
   try {
-    if (!requireSessionRole(request, response, ["administrador", "lider de equipo"])) return;
+    if (!requireSessionRole(request, response, ["administrador", "lider de equipo", "otros"])) return;
     sendJson(response, 200, await loadIncidentData());
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudieron cargar las incidencias." });
@@ -5014,7 +5142,7 @@ async function handleIncidentContext(request, response) {
 
 async function handleCreateIncident(request, response) {
   try {
-    const session = requireSessionRole(request, response, ["administrador", "lider de equipo"]);
+    const session = requireSessionRole(request, response, ["administrador", "lider de equipo", "otros"]);
     if (!session) return;
     const body = JSON.parse((await readBody(request)) || "{}");
     const workerId = Number(body.usuario_id);
@@ -5022,6 +5150,7 @@ async function handleCreateIncident(request, response) {
     const storeId = Number(body.tienda_id);
     const turno = String(body.turno || "").trim().toLowerCase();
     const guideNumber = String(body.numero_guia || "").trim();
+    const lotNumber = String(body.numero_lote || "").trim();
     const errorType = String(body.tipo_error || "").trim().toUpperCase();
     const incidentDate = String(body.fecha_error || currentLimaDate()).trim();
     const areaId = Number(body.area_id);
@@ -5031,8 +5160,8 @@ async function handleCreateIncident(request, response) {
       sendJson(response, 400, { error: "Tarea y tienda son obligatorias." });
       return;
     }
-    if (!turno || !guideNumber || !errorType) {
-      sendJson(response, 400, { error: "Turno, número de guía y tipo de error son obligatorios." });
+    if (!turno || !errorType) {
+      sendJson(response, 400, { error: "Turno y tipo de error son obligatorios." });
       return;
     }
     const parsedIncidentDate = new Date(`${incidentDate}T00:00:00Z`);
@@ -5093,6 +5222,7 @@ async function handleCreateIncident(request, response) {
       tarea_error_id: task.id,
       tienda_id: store.id,
       numero_guia: guideNumber,
+      numero_lote: lotNumber || null,
       observacion: body.observacion ? String(body.observacion).trim() : null,
       tipo_error: errorType,
       usuario_id: isAreaIncident ? null : worker.id,
@@ -5114,6 +5244,70 @@ async function handleCreateIncident(request, response) {
     sendJson(response, 201, { incident: { ...result.data, tienda_nombre: store.nombre } });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "No se pudo guardar la incidencia." });
+  }
+}
+
+async function handleUpdateIncident(request, response, incidentId) {
+  try {
+    if (!requireSessionRole(request, response, ["administrador", "lider de equipo", "otros"])) return;
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const turno = String(body.turno || "").trim().toLowerCase();
+    const isAreaIncident = ["incidencia", "error"].includes(turno);
+    const payload = {
+      turno: isAreaIncident ? "incidencia" : turno,
+      tarea_error_id: Number(body.tarea_error_id),
+      tienda_id: Number(body.tienda_id),
+      numero_guia: String(body.numero_guia || "").trim(),
+      numero_lote: String(body.numero_lote || "").trim() || null,
+      observacion: String(body.observacion || "").trim() || null,
+      tipo_error: String(body.tipo_error || "").trim().toUpperCase(),
+      usuario_id: isAreaIncident ? null : Number(body.usuario_id),
+      area_id: isAreaIncident ? Number(body.area_id) : null,
+      fecha_error: String(body.fecha_error || "").trim()
+    };
+    if (!Number.isInteger(incidentId) || incidentId <= 0) throw invalidGroupRecord("Registro de error invalido.");
+    if (![payload.tarea_error_id, payload.tienda_id].every((id) => Number.isInteger(id) && id > 0)) {
+      throw invalidGroupRecord("Tarea y tienda son obligatorias.");
+    }
+    if (!["CONTENIDO", "LIBERADO"].includes(payload.tipo_error)) {
+      throw invalidGroupRecord("El tipo de error es obligatorio.");
+    }
+    if (!["turno regular", "incidencia", "turno extra"].includes(payload.turno)) {
+      throw invalidGroupRecord("Selecciona un turno valido.");
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(payload.fecha_error) || payload.fecha_error > currentLimaDate()) {
+      throw invalidGroupRecord("Selecciona una fecha valida que no este en el futuro.");
+    }
+    if (isAreaIncident && (!Number.isInteger(payload.area_id) || payload.area_id <= 0)) {
+      throw invalidGroupRecord("Selecciona un area valida.");
+    }
+    if (!isAreaIncident && (!Number.isInteger(payload.usuario_id) || payload.usuario_id <= 0)) {
+      throw invalidGroupRecord("Selecciona un trabajador activo.");
+    }
+    const result = await supabase
+      .from("registro_errores")
+      .update(payload)
+      .eq("id_error", incidentId)
+      .select("*")
+      .maybeSingle();
+    if (result.error) throw result.error;
+    if (!result.data) throw invalidGroupRecord("El registro de error no existe.", 404);
+    sendJson(response, 200, { incident: result.data });
+  } catch (error) {
+    sendJson(response, error.statusCode || 500, { error: error.message || "No se pudo actualizar el error." });
+  }
+}
+
+async function handleDeleteIncident(request, response, incidentId) {
+  try {
+    if (!requireSessionRole(request, response, ["administrador", "lider de equipo", "otros"])) return;
+    if (!Number.isInteger(incidentId) || incidentId <= 0) throw invalidGroupRecord("Registro de error invalido.");
+    const result = await supabase.from("registro_errores").delete().eq("id_error", incidentId).select("id_error").maybeSingle();
+    if (result.error) throw result.error;
+    if (!result.data) throw invalidGroupRecord("El registro de error no existe.", 404);
+    sendJson(response, 200, { deleted: Number(result.data.id_error) });
+  } catch (error) {
+    sendJson(response, error.statusCode || 500, { error: error.message || "No se pudo eliminar el error." });
   }
 }
 
@@ -5502,6 +5696,11 @@ export async function handleRequest(request, response, { serveFiles = true } = {
     return;
   }
 
+  if (/^\/api\/operational-records\/?$/.test(apiPath) && request.method === "GET") {
+    await handleReadOperationalRecords(request, response);
+    return;
+  }
+
   if (request.url?.startsWith("/api/activity-logs") && request.method === "GET") {
     await handleReadActivityLogs(request, response);
     return;
@@ -5569,6 +5768,8 @@ export async function handleRequest(request, response, { serveFiles = true } = {
     return;
   }
 
+  const incidentMatch = apiPath.match(/^\/api\/incidents\/(\d+)\/?$/);
+
   if (request.url?.startsWith("/api/incidents/context") && request.method === "GET") {
     await handleIncidentContext(request, response);
     return;
@@ -5576,6 +5777,16 @@ export async function handleRequest(request, response, { serveFiles = true } = {
 
   if (request.url?.startsWith("/api/incidents") && request.method === "POST") {
     await handleCreateIncident(request, response);
+    return;
+  }
+
+  if (incidentMatch && request.method === "PUT") {
+    await handleUpdateIncident(request, response, Number(incidentMatch[1]));
+    return;
+  }
+
+  if (incidentMatch && request.method === "DELETE") {
+    await handleDeleteIncident(request, response, Number(incidentMatch[1]));
     return;
   }
 
