@@ -30,12 +30,13 @@ async function backendIsCompatible() {
     });
     if (!response.ok || !(response.headers.get("content-type") || "").includes("application/json")) return false;
     const payload = await response.json();
-    return Number(payload.apiVersion) >= 9 &&
+    return Number(payload.apiVersion) >= 11 &&
       payload.features?.includes("attendance-early-exit") &&
       payload.features?.includes("live-group-activities") &&
       payload.features?.includes("live-footwear-dashboard") &&
       payload.features?.includes("worker-live-progress") &&
-      payload.features?.includes("group-history-times");
+      payload.features?.includes("group-history-times") &&
+      payload.features?.includes("lote-stage-dates");
   } catch {
     return false;
   }

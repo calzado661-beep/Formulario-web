@@ -2214,7 +2214,7 @@ async function handleDeleteStore(request, response, storeId) {
 }
 
 const LOTE_SELECT_COLUMNS = "id,codigo_lote,cantidad_lote,marca_id,fecha_ingreso,fecha_trabajo,fecha_fin_clasificado,proveedor,usuario_id,estado,fecha_completada";
-const LOTE_ESTADOS = ["pendiente", "completado"];
+const LOTE_ESTADOS = ["pendiente", "en_curso", "completado"];
 
 async function enrichLotes(rows) {
   const marcaIds = Array.from(new Set(rows.map((row) => Number(row.marca_id)).filter(Boolean)));
@@ -2281,6 +2281,9 @@ function validateLotePayload(body) {
   if (!proveedor) throw invalidLote("El proveedor es obligatorio.");
   if (!Number.isInteger(usuarioId) || usuarioId <= 0) throw invalidLote("Selecciona el líder de equipo responsable del lote.");
   if (!LOTE_ESTADOS.includes(estado)) throw invalidLote("El estado del lote no es valido.");
+  if (estado === "en_curso" && !fechaFinClasificado) {
+    throw invalidLote("La fecha fin de clasificado / inicio de etiquetado es obligatoria para usar el estado En curso.");
+  }
   const resolvedFechaCompletada = estado === "completado" ? (fechaCompletada || currentLimaDate()) : "";
   if (fechaFinClasificado && resolvedFechaCompletada && resolvedFechaCompletada < fechaFinClasificado) {
     throw invalidLote("La fecha completada de etiquetado no puede ser anterior a su fecha de inicio.");
@@ -5391,7 +5394,7 @@ export async function handleRequest(request, response, { serveFiles = true } = {
   if (/^\/api\/health\/?$/.test(apiPath) && request.method === "GET") {
     sendJson(response, 200, {
       ok: true,
-      apiVersion: 10,
+      apiVersion: 11,
       features: [
         "attendance-report",
         "attendance-report-schedules",
@@ -5402,7 +5405,8 @@ export async function handleRequest(request, response, { serveFiles = true } = {
         "live-footwear-dashboard",
         "worker-live-progress",
         "group-history-times",
-        "editable-group-history"
+        "editable-group-history",
+        "lote-stage-dates"
       ]
     });
     return;

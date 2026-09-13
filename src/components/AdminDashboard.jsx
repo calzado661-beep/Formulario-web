@@ -4630,6 +4630,7 @@ function BrandsSection() {
 
 const LOTE_ESTADOS = [
   { value: "pendiente", label: "Pendiente" },
+  { value: "en_curso", label: "En curso" },
   { value: "completado", label: "Completado" }
 ];
 
@@ -4641,7 +4642,7 @@ function loteClassificationDays(lote) {
   const endDate = lote.fecha_fin_clasificado || (lote.estado !== "completado" ? todayLimaISO() : null);
   if (!endDate) return null;
   const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lote.fecha_trabajo}T00:00:00`)) / 86400000);
-  return Number.isFinite(days) ? Math.max(0, days) : null;
+  return Number.isFinite(days) ? Math.max(1, days + 1) : null;
 }
 
 function loteLabelingDays(lote) {
@@ -4703,6 +4704,9 @@ function LotesPanel() {
     if (!form.proveedor.trim()) return "El proveedor es obligatorio.";
     if (!form.usuario_id) return "Selecciona el líder de equipo responsable del lote.";
     if (!LOTE_ESTADOS.some((option) => option.value === form.estado)) return "Selecciona un estado valido.";
+    if (form.estado === "en_curso" && !form.fecha_fin_clasificado) {
+      return "Ingresa la fecha fin de clasificado / inicio de etiquetado para usar el estado En curso.";
+    }
     return null;
   }
 
@@ -4882,7 +4886,11 @@ function LotesPanel() {
                 label="Fecha fin clasificado / inicio de etiquetado (opcional)"
                 type="date"
                 value={form.fecha_fin_clasificado}
-                onChange={(fecha_fin_clasificado) => setForm({ ...form, fecha_fin_clasificado })}
+                onChange={(fecha_fin_clasificado) => setForm({
+                  ...form,
+                  fecha_fin_clasificado,
+                  estado: !fecha_fin_clasificado && form.estado === "en_curso" ? "pendiente" : form.estado
+                })}
               />
               <TextInput label="Proveedor" value={form.proveedor} onChange={(proveedor) => setForm({ ...form, proveedor })} />
               <SelectInput
@@ -4902,7 +4910,11 @@ function LotesPanel() {
                   estado,
                   fecha_completada: estado === "completado" ? (form.fecha_completada || todayLimaISO()) : ""
                 })}
-                options={LOTE_ESTADOS}
+                options={LOTE_ESTADOS.map((option) => ({
+                  ...option,
+                  disabled: option.value === "en_curso" && !form.fecha_fin_clasificado
+                }))}
+                hint={!form.fecha_fin_clasificado ? "En curso se habilita al ingresar el inicio de etiquetado." : ""}
               />
               <TextInput
                 label="Fecha completada etiquetado"

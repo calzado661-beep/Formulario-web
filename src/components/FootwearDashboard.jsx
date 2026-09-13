@@ -744,6 +744,7 @@ function LotProgressCard({ lots, selectedCode, onChange, labeledPairs, compact =
 const LOTE_DURATION_STATUS_OPTIONS = [
   { value: "todos", label: "Todos" },
   { value: "pendiente", label: "Pendiente" },
+  { value: "en_curso", label: "En curso" },
   { value: "completado", label: "Completado" }
 ];
 
@@ -757,7 +758,7 @@ function LoteDurationChart({ lots }) {
       const classificationEndDate = lot.labelingStartDate || (lot.status !== "completado" ? CURRENT_LIMA_PARTS.iso : null);
       const labelingEndDate = lot.status === "completado" ? lot.completedLabelingDate : CURRENT_LIMA_PARTS.iso;
       const classificationDays = lot.classificationStartDate && classificationEndDate
-        ? Math.round((new Date(`${classificationEndDate}T00:00:00`) - new Date(`${lot.classificationStartDate}T00:00:00`)) / 86400000)
+        ? Math.round((new Date(`${classificationEndDate}T00:00:00`) - new Date(`${lot.classificationStartDate}T00:00:00`)) / 86400000) + 1
         : null;
       const labelingDays = lot.labelingStartDate && labelingEndDate
         ? Math.round((new Date(`${labelingEndDate}T00:00:00`) - new Date(`${lot.labelingStartDate}T00:00:00`)) / 86400000)
@@ -766,8 +767,8 @@ function LoteDurationChart({ lots }) {
       const validLabelingDays = Number.isFinite(labelingDays) && labelingDays >= 0 ? labelingDays : null;
       return validClassificationDays !== null || validLabelingDays !== null ? {
         name: lot.code,
-        value: validLabelingDays ?? 0,
-        secondaryValue: validClassificationDays ?? 0,
+        value: validClassificationDays ?? 0,
+        secondaryValue: validLabelingDays ?? 0,
         classificationDays: validClassificationDays,
         labelingDays: validLabelingDays,
         teamLeaderName: lot.teamLeaderName,
@@ -795,8 +796,8 @@ function LoteDurationChart({ lots }) {
         tone="blue"
         unit="días"
         compact
-        primaryLabel="Días de etiquetado"
-        secondaryLabel="Días de clasificado"
+        primaryLabel="Días de clasificado"
+        secondaryLabel="Días de etiquetado"
         secondaryColor="#e7c42d"
         tooltipFormatter={(item) => ({
           value: `Etiquetado: ${item.labelingDays === null ? "Sin dato" : `${numberFormatter.format(item.labelingDays)} día${item.labelingDays === 1 ? "" : "s"}`} · Clasificado: ${item.classificationDays === null ? "Sin dato" : `${numberFormatter.format(item.classificationDays)} día${item.classificationDays === 1 ? "" : "s"}`}`,
@@ -1248,11 +1249,11 @@ function HorizontalBars({ data, ariaLabel, color = "#0a4f87", valueFormatter = (
   );
 }
 
-function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primaryColor, secondaryColor, onSelect, onSeriesSelect, selectedNames = [] }) {
+function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primaryColor, secondaryColor, onSelect, onSeriesSelect, selectedNames = [], valueFormatter = (value) => value, maximumValue }) {
   const [tooltip, setTooltip] = useState(null);
   const [visibleSeries, setVisibleSeries] = useState({ primary: true, secondary: true });
   if (!data.length) return <p className="pbi-chart-empty">No hay datos para el filtro seleccionado.</p>;
-  const maximum = Math.max(...data.flatMap((item) => [item.primary, item.secondary]), 1);
+  const maximum = Number(maximumValue) > 0 ? Number(maximumValue) : Math.max(...data.flatMap((item) => [item.primary, item.secondary]), 1);
   const animationKey = data.map((item) => `${item.name}:${item.primary}:${item.secondary}`).join("|");
   // Indicador opcional de personal al inicio/fin del mes (se usa en Rotacion
   // de Personal para poder cuadrar el conteo exacto); si el dato no lo trae,
@@ -1300,11 +1301,11 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
             : (onSelect ? "Presiona Enter para filtrar" : "");
           const showPrimaryTooltip = (event) => {
             event.stopPropagation();
-            tooltipAt(event, setTooltip, tooltipLabel, `${primaryLabel}: ${item.primary}`, primaryDetail);
+            tooltipAt(event, setTooltip, tooltipLabel, `${primaryLabel}: ${valueFormatter(item.primary)}`, primaryDetail);
           };
           const showSecondaryTooltip = (event) => {
             event.stopPropagation();
-            tooltipAt(event, setTooltip, tooltipLabel, `${secondaryLabel}: ${item.secondary}`, secondaryDetail);
+            tooltipAt(event, setTooltip, tooltipLabel, `${secondaryLabel}: ${valueFormatter(item.secondary)}`, secondaryDetail);
           };
           const selectSeries = (event, series) => {
             if (!onSeriesSelect) return;
@@ -1335,8 +1336,8 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
                 onSelect(item);
               }
             }}
-            onPointerMove={(event) => tooltipAt(event, setTooltip, tooltipLabel, `${primaryLabel}: ${item.primary} · ${secondaryLabel}: ${item.secondary}`, rowDetail)}
-            onFocus={(event) => tooltipAtFocus(event, setTooltip, tooltipLabel, `${primaryLabel}: ${item.primary} · ${secondaryLabel}: ${item.secondary}`, rowDetailFocus)}
+            onPointerMove={(event) => tooltipAt(event, setTooltip, tooltipLabel, `${primaryLabel}: ${valueFormatter(item.primary)} · ${secondaryLabel}: ${valueFormatter(item.secondary)}`, rowDetail)}
+            onFocus={(event) => tooltipAtFocus(event, setTooltip, tooltipLabel, `${primaryLabel}: ${valueFormatter(item.primary)} · ${secondaryLabel}: ${valueFormatter(item.secondary)}`, rowDetailFocus)}
             onBlur={() => setTooltip(null)}
             onMouseLeave={() => setTooltip(null)}
           >
@@ -1350,19 +1351,19 @@ function ComparisonBars({ data, ariaLabel, primaryLabel, secondaryLabel, primary
               if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectSeries(event, "primary"); }
             }} onPointerMove={showPrimaryTooltip}>
               <i style={{ width: visibleSeries.primary ? `${(item.primary / maximum) * 100}%` : "0%", backgroundColor: primaryColor, "--pbi-index": index }} />
-              {hasHeadcount ? <span className="pbi-comparison-track-value">{visibleSeries.primary ? item.primary : "—"}</span> : null}
+              {hasHeadcount ? <span className="pbi-comparison-track-value">{visibleSeries.primary ? valueFormatter(item.primary) : "—"}</span> : null}
             </span>
             {!hasHeadcount ? (
-              <span className={onSeriesSelect ? "pbi-comparison-value-action" : undefined} onClick={(event) => selectSeries(event, "primary")} onPointerMove={showPrimaryTooltip}>{visibleSeries.primary ? item.primary : "—"}</span>
+              <span className={onSeriesSelect ? "pbi-comparison-value-action" : undefined} onClick={(event) => selectSeries(event, "primary")} onPointerMove={showPrimaryTooltip}>{visibleSeries.primary ? valueFormatter(item.primary) : "—"}</span>
             ) : null}
             <span className="pbi-comparison-track" role={onSeriesSelect ? "button" : undefined} tabIndex={onSeriesSelect ? 0 : undefined} aria-label={onSeriesSelect ? `Ver ${secondaryLabel.toLowerCase()} de ${tooltipLabel}` : undefined} onClick={(event) => selectSeries(event, "secondary")} onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectSeries(event, "secondary"); }
             }} onPointerMove={showSecondaryTooltip}>
               <i style={{ width: visibleSeries.secondary ? `${(item.secondary / maximum) * 100}%` : "0%", backgroundColor: secondaryColor, "--pbi-index": index }} />
-              {hasHeadcount ? <span className="pbi-comparison-track-value">{visibleSeries.secondary ? item.secondary : "—"}</span> : null}
+              {hasHeadcount ? <span className="pbi-comparison-track-value">{visibleSeries.secondary ? valueFormatter(item.secondary) : "—"}</span> : null}
             </span>
             {!hasHeadcount ? (
-              <span className={onSeriesSelect ? "pbi-comparison-value-action" : undefined} onClick={(event) => selectSeries(event, "secondary")} onPointerMove={showSecondaryTooltip}>{visibleSeries.secondary ? item.secondary : "—"}</span>
+              <span className={onSeriesSelect ? "pbi-comparison-value-action" : undefined} onClick={(event) => selectSeries(event, "secondary")} onPointerMove={showSecondaryTooltip}>{visibleSeries.secondary ? valueFormatter(item.secondary) : "—"}</span>
             ) : null}
             {hasHeadcount ? (
               <span className="pbi-comparison-headcount" onPointerMove={showHeadcountEndTooltip} onMouseLeave={() => setTooltip(null)}>
@@ -1444,6 +1445,64 @@ function AttendanceBars({ data, onSelect, selectedNames = [] }) {
         );})}
       </div>
       <ChartTooltip tooltip={tooltip} />
+    </div>
+  );
+}
+
+const ATTENDANCE_MATRIX_STATES = {
+  ASISTENCIA: { code: "A", label: "Asistencia", tone: "present" },
+  TARDANZA: { code: "T", label: "Tardanza", tone: "late" },
+  FALTA: { code: "F", label: "Falta", tone: "absent" },
+  MEDIO_TURNO: { code: "MT", label: "Medio turno", tone: "half" },
+  APOYO: { code: "AP", label: "Apoyo", tone: "support" },
+  PERMISO: { code: "P", label: "Permiso", tone: "permission" },
+  DESCANSO_MEDICO: { code: "DM", label: "Descanso médico", tone: "medical" },
+  SUSPENSION: { code: "S", label: "Suspensión", tone: "suspended" }
+};
+
+function AttendanceCalendarMatrix({ workers, records, year, month }) {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const dates = Array.from({ length: daysInMonth }, (_, index) => {
+    const day = index + 1;
+    const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const date = new Date(`${iso}T00:00:00`);
+    return { day, iso, weekday: new Intl.DateTimeFormat("es-PE", { weekday: "narrow" }).format(date).toUpperCase(), weekend: [0, 6].includes(date.getDay()) };
+  });
+  const attendanceByWorkerDate = new Map(records.map((row) => [`${Number(row.workerId)}:${row.date}`, row]));
+  const dailyTotals = new Map(dates.map(({ iso }) => [iso, records.filter((row) => row.date === iso && attendanceGroup(row.state) !== "ausente").length]));
+  const legend = Object.values(ATTENDANCE_MATRIX_STATES);
+
+  return (
+    <div className="pbi-attendance-matrix" role="region" aria-label={`Matriz mensual de asistencia ${month}/${year}`} tabIndex="0">
+      <div className="pbi-attendance-matrix-legend">
+        {legend.map((item) => <span key={item.code}><i className={`is-${item.tone}`} />{item.code} · {item.label}</span>)}
+      </div>
+      <div className="pbi-attendance-matrix-scroll">
+        <table>
+          <thead>
+            <tr className="pbi-attendance-matrix-total">
+              <th>Total asistencia</th>
+              {dates.map((date) => <th key={date.iso}>{dailyTotals.get(date.iso) || 0}</th>)}
+            </tr>
+            <tr>
+              <th>Nombre</th>
+              {dates.map((date) => <th className={date.weekend ? "is-weekend" : ""} key={date.iso}><small>{date.weekday}</small>{date.day}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {workers.map((worker) => (
+              <tr key={worker.id}>
+                <th scope="row">{worker.alias || worker.name}</th>
+                {dates.map((date) => {
+                  const record = attendanceByWorkerDate.get(`${Number(worker.id)}:${date.iso}`);
+                  const state = record ? ATTENDANCE_MATRIX_STATES[String(record.state || "").toUpperCase()] : null;
+                  return <td className={`${date.weekend ? "is-weekend " : ""}${state ? `is-${state.tone}` : "is-empty"}`} key={date.iso} title={state ? `${worker.name}: ${state.label} · ${formatCalendarDate(date.iso)}` : `${worker.name}: sin registro · ${formatCalendarDate(date.iso)}`}>{state?.code || ""}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1775,7 +1834,7 @@ const DASHBOARD_HELP_SECTIONS = [
       { title: "Permanencia promedio", text: "Meses promedio que duraron los trabajadores con un período laboral ya cerrado (con fecha de salida). No cuenta el tiempo en curso de quienes siguen activos, para que las contrataciones nuevas no bajen el promedio. No se ve afectado por ningún filtro." },
       { title: "Promedio de días por lote", text: "Días promedio que tardan los lotes en completarse. Los pendientes cuentan sus días contra hoy, así que suben solos cada día." },
       { title: "Promedio / Totales Guías y Pares", text: "Promedio diario y totales de guías distintas y pares registrados en el período filtrado." },
-      { title: "Avance de pares por lote", text: "Pares etiquetados por el líder de equipo frente a la cantidad total del lote seleccionado." },
+      { title: "Avance de pares por lote", text: "Pares etiquetados por el líder de equipo frente a la cantidad total del lote seleccionado. Al llegar al 100 %, el lote cambia automáticamente a Completado y registra la fecha del día." },
       { title: "Próximo Cumpleaños", text: "Próximos cumpleaños del equipo, ordenados por fecha." }
     ]
   },
@@ -2236,6 +2295,7 @@ export default function FootwearDashboard() {
   const [selectedTaskTypes, setSelectedTaskTypes] = useState([]);
   const [selectedIncidentTaskIds, setSelectedIncidentTaskIds] = useState([]);
   const [incidentAreaIds, setIncidentAreaIds] = useState([]);
+  const [qualityRecordKind, setQualityRecordKind] = useState("errores");
   const [trainingCourseIds, setTrainingCourseIds] = useState([]);
   const [trainingStatuses, setTrainingStatuses] = useState([]);
   const [selectedMovementMonths, setSelectedMovementMonths] = useState([]);
@@ -2673,6 +2733,17 @@ export default function FootwearDashboard() {
   const visibleErrorRecords = visibleIncidentRecords.filter((incident) => (
     !["incidencia", "error"].includes(String(incident.shift || "").trim().toLowerCase())
   ));
+  const visibleExternalIncidents = visibleIncidentRecords.filter((incident) => (
+    ["incidencia", "error"].includes(String(incident.shift || "").trim().toLowerCase())
+  ));
+  const visibleQualityRecords = qualityRecordKind === "incidencias"
+    ? visibleExternalIncidents
+    : qualityRecordKind === "todos"
+      ? visibleIncidentRecords
+      : visibleErrorRecords;
+  const qualityLabel = qualityRecordKind === "incidencias"
+    ? "Incidencias"
+    : qualityRecordKind === "todos" ? "Errores e incidencias" : "Errores";
   const externalIncidentCount = visibleIncidentRecords.length - visibleErrorRecords.length;
   // Margen de error = errores de turno regular o extra del periodo filtrado
   // sobre la cantidad de guias DISTINTAS registradas en el mismo rango.
@@ -2687,7 +2758,7 @@ export default function FootwearDashboard() {
   const guiasDistinctDays = new Set(filteredGuias.map((row) => row.date)).size;
   const guiasAvgPerDay = guiasDistinctDays ? totalGuideCount / guiasDistinctDays : 0;
   const paresAvgPerDay = guiasDistinctDays ? guiasTotalPares / guiasDistinctDays : 0;
-  const incidentCountByTask = visibleErrorRecords.reduce((counts, incident) => {
+  const incidentCountByTask = visibleQualityRecords.reduce((counts, incident) => {
     const item = counts.get(incident.taskId) || { value: 0, lastDate: null };
     item.value += 1;
     if (!item.lastDate || incident.date > item.lastDate) item.lastDate = incident.date;
@@ -2700,7 +2771,7 @@ export default function FootwearDashboard() {
     value,
     lastDate
   })).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
-  const filteredErrorsByOffender = [...visibleErrorRecords.reduce((groups, incident) => {
+  const filteredErrorsByOffender = [...visibleQualityRecords.reduce((groups, incident) => {
     const offenderName = incident.offenderName || "Sin identificar";
     const offenderType = incident.offenderType || "Usuario/Área";
     const key = `${offenderName} (${offenderType})`;
@@ -2710,22 +2781,25 @@ export default function FootwearDashboard() {
     groups.set(key, group);
     return groups;
   }, new Map()).values()].sort((a, b) => b.value - a.value);
-  const filteredErrorsByTypeAndShift = [
+  const qualityShiftOptions = [
     { value: "turno regular", label: "Turno regular" },
-    { value: "turno extra", label: "Turno extra" }
-  ].map((shift) => {
+    { value: "turno extra", label: "Turno extra" },
+    { value: "incidencia", aliases: ["incidencia", "error"], label: "Incidencias" }
+  ].filter((shift) => qualityRecordKind !== "errores" || shift.value !== "incidencia");
+  const qualityRecordTotal = visibleQualityRecords.length;
+  const filteredErrorsByTypeAndShift = qualityShiftOptions.map((shift) => {
     const acceptedValues = shift.aliases || [shift.value];
-    const rows = visibleErrorRecords.filter((incident) => acceptedValues.includes(incident.shift));
+    const rows = visibleQualityRecords.filter((incident) => acceptedValues.includes(incident.shift));
     const primaryRows = rows.filter((incident) => incident.errorType === "CONTENIDO");
     const secondaryRows = rows.filter((incident) => incident.errorType === "LIBERADO");
     return {
       name: shift.label,
       primaryRows,
       secondaryRows,
-      primary: primaryRows.length,
-      secondary: secondaryRows.length,
-      primaryDetail: primaryRows.length ? "Haz clic para ver responsables" : "Sin errores de contenido",
-      secondaryDetail: secondaryRows.length ? "Haz clic para ver responsables" : "Sin errores liberados"
+      primary: qualityRecordTotal ? (primaryRows.length / qualityRecordTotal) * 100 : 0,
+      secondary: qualityRecordTotal ? (secondaryRows.length / qualityRecordTotal) * 100 : 0,
+      primaryDetail: primaryRows.length ? `${primaryRows.length} registro(s) · Haz clic para ver responsables` : "Sin registros de contenido",
+      secondaryDetail: secondaryRows.length ? `${secondaryRows.length} registro(s) · Haz clic para ver responsables` : "Sin registros liberados"
     };
   });
   const aggregateAttendance = (rows) => [...rows.reduce((totals, row) => {
@@ -2751,6 +2825,13 @@ export default function FootwearDashboard() {
     return totals;
   }, new Map()).values()];
   const filteredAttendance = aggregateAttendance((dashboardData?.attendances || []).filter((row) => matchesPeopleDate(row.date) && matchesPeopleWorker(row.workerId)));
+  const attendanceMatrixYear = globalPeriodYear === "all" ? CURRENT_LIMA_YEAR : Number(globalPeriodYear);
+  const attendanceMatrixMonth = globalPeriodMonth === "all" ? CURRENT_LIMA_MONTH : Number(globalPeriodMonth);
+  const attendanceMatrixRecords = (dashboardData?.attendances || []).filter((row) => (
+    Number(String(row.date || "").slice(0, 4)) === attendanceMatrixYear
+    && Number(String(row.date || "").slice(5, 7)) === attendanceMatrixMonth
+    && matchesPeopleWorker(row.workerId)
+  ));
   const trainingById = new Map((dashboardData?.trainings || []).map((course) => [course.id, course]));
   const normalizeTrainingStatus = (state) => ["finalizado", "completado"].includes(state) ? "completado" : state === "en_curso" ? "en_curso" : "pendiente";
   // Capacitacion es un resumen anual fijo: no responde al selector global de
@@ -2946,7 +3027,7 @@ export default function FootwearDashboard() {
     return { ...MONTHLY_TASKS[monthIndex], value, workers };
   });
   const payrollTotal = filteredPayroll.reduce((sum, item) => sum + item.value, 0);
-  const lotes = (dashboardData?.lotes || []).filter((lot) => lot.status === "pendiente");
+  const lotes = (dashboardData?.lotes || []).filter((lot) => lot.status !== "completado");
   useEffect(() => {
     setSelectedLotCode((current) => lotes.some((lot) => lot.code === current) ? current : lotes[0]?.code || "");
   }, [lotes.map((lot) => lot.code).join("|")]);
@@ -3105,7 +3186,7 @@ export default function FootwearDashboard() {
     productionMonths, selectedProductionRoles, detailTaskIds, selectedTaskTypes,
     hourlyRankingTaskId ? [hourlyRankingTaskId] : [], quantityRankingTaskId ? [quantityRankingTaskId] : [],
     selectedRoles,
-    selectedIncidentTaskIds, incidentAreaIds,
+    selectedIncidentTaskIds, incidentAreaIds, qualityRecordKind === "errores" ? [] : [qualityRecordKind],
     trainingCourseIds, trainingStatuses, selectedMovementMonths
   ].filter((values) => values.length).length;
   const filterSummary = activeFilterCount
@@ -3550,9 +3631,23 @@ export default function FootwearDashboard() {
                   id="pbi-attendance"
                   title={`Asistencia por Trabajador · ${selectedMonthTitleLabel}`}
                   meta="Puntual · tardanza · ausencia"
-                  className="pbi-card--chart pbi-card--span-12"
+                  className="pbi-card--chart pbi-card--span-6"
                 >
                   <AttendanceBars data={filteredAttendance} onSelect={selectWorkerFromChart} selectedNames={selectedWorkerNames} />
+                </Card>
+
+                <Card
+                  id="pbi-attendance-matrix"
+                  title={`Matriz de Asistencia · ${MONTHLY_TASKS[attendanceMatrixMonth - 1]?.label || "Mes"} ${attendanceMatrixYear}`}
+                  meta="Detalle diario"
+                  className="pbi-card--chart pbi-card--span-6 pbi-card--attendance-matrix"
+                >
+                  <AttendanceCalendarMatrix
+                    workers={peopleWorkers}
+                    records={attendanceMatrixRecords}
+                    year={attendanceMatrixYear}
+                    month={attendanceMatrixMonth}
+                  />
                 </Card>
 
                 <Card
@@ -3626,21 +3721,29 @@ export default function FootwearDashboard() {
               </fieldset>
 
               <div className="pbi-section-filters pbi-section-filters--quality" aria-label="Filtros de calidad y errores">
+                <label className="pbi-filter">
+                  <span className="pbi-filter-label">Tipo de registro</span>
+                  <select value={qualityRecordKind} onChange={(event) => setQualityRecordKind(event.target.value)}>
+                    <option value="errores">Errores</option>
+                    <option value="incidencias">Incidencias</option>
+                    <option value="todos">Todos</option>
+                  </select>
+                </label>
                 <MultiSlicer id="incident-areas" label="Área" options={incidentAreaOptions} selected={incidentAreaIds} onChange={setIncidentAreaIds} allLabel="Todas" />
               </div>
 
               <div className="pbi-content-grid">
                 <Card
                   id="pbi-errors-task"
-                  title={`Distribución de Errores por Tarea · ${selectedMonthTitleLabel}`}
-                  meta={`${visibleErrorRecords.length} registros de error`}
+                  title={`Distribución de ${qualityLabel} por Tarea · ${selectedMonthTitleLabel}`}
+                  meta={`${visibleQualityRecords.length} registro(s)`}
                   className="pbi-card--chart pbi-card--quality-donut pbi-card--span-4"
                 >
                   <DonutChart
                     id="pbi-errors-task"
                     data={filteredErrorsByTask}
-                    ariaLabel="Registros de errores agrupados por tarea"
-                    unit="errores"
+                    ariaLabel={`${qualityLabel} agrupados por tarea`}
+                    unit="registros"
                     onSelect={(item) => selectTaskFromChart(item, setSelectedIncidentTaskIds, INCIDENT_TASKS)}
                     selectedNames={selectedIncidentTaskIds.map((id) => errorTaskById.get(id)?.shortName).filter(Boolean)}
                   />
@@ -3648,17 +3751,19 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-error-types"
-                  title={`Errores por Turno y Tipo · ${selectedMonthTitleLabel}`}
-                  meta={`${visibleErrorRecords.length} errores`}
+                  title={`${qualityLabel} por Turno y Tipo · ${selectedMonthTitleLabel}`}
+                  meta={`${visibleQualityRecords.length} registro(s) · 100 %`}
                   className="pbi-card--chart pbi-card--error-comparison pbi-card--span-8"
                 >
                   <ComparisonBars
                     data={filteredErrorsByTypeAndShift}
-                    ariaLabel="Comparación de errores de contenido y liberados en turnos regular y extra"
+                    ariaLabel={`Porcentaje de ${qualityLabel.toLowerCase()} de contenido y liberados por turno`}
                     primaryLabel="CONTENIDO"
                     secondaryLabel="LIBERADO"
                     primaryColor="#0a4f87"
                     secondaryColor="#e1c233"
+                    valueFormatter={(value) => `${oneDecimalFormatter.format(value)}%`}
+                    maximumValue={100}
                     onSeriesSelect={(item, series) => {
                       const rows = series === "primary" ? item.primaryRows : item.secondaryRows;
                       if (rows.length) setSelectedErrorDetail({
@@ -3676,7 +3781,7 @@ export default function FootwearDashboard() {
 
                 <Card
                   id="pbi-errors-worker"
-                  title={`Errores por Usuario o Área · ${selectedMonthTitleLabel}`}
+                  title={`${qualityLabel} por Usuario o Área · ${selectedMonthTitleLabel}`}
                   meta={`${visibleErrorRecords.length} errores`}
                   className="pbi-card--chart pbi-card--quality-responsible pbi-card--tall pbi-card--span-12"
                 >
