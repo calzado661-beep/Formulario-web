@@ -750,28 +750,36 @@ const LOTE_DURATION_STATUS_OPTIONS = [
 function LoteDurationChart({ lots }) {
   const [statusFilter, setStatusFilter] = useState("todos");
   const scoped = lots.filter((lot) => statusFilter === "todos" || lot.status === statusFilter);
-  // Para lotes completados, la duración es fecha_completado - fecha_trabajo.
-  // Para lotes pendientes (todavia abiertos), se usa hoy como fin provisorio,
-  // asi se puede detectar lotes que llevan demasiados dias sin cerrarse.
-  // Una barra por lote (nombre = codigo_lote), altura = dias de duracion.
+  // Cada lote compara sus dos etapas. Una etapa abierta usa hoy como cierre
+  // provisional; una etapa historica sin fecha limite queda sin dato.
   const byLote = scoped
     .map((lot) => {
-      if (!lot.startDate) return null;
-      const endDate = lot.status === "completado" ? lot.completedDate : CURRENT_LIMA_PARTS.iso;
-      if (!endDate) return null;
-      const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lot.startDate}T00:00:00`)) / 86400000);
-      return Number.isFinite(days) && days >= 0 ? {
+      const classificationEndDate = lot.labelingStartDate || (lot.status !== "completado" ? CURRENT_LIMA_PARTS.iso : null);
+      const labelingEndDate = lot.status === "completado" ? lot.completedLabelingDate : CURRENT_LIMA_PARTS.iso;
+      const classificationDays = lot.classificationStartDate && classificationEndDate
+        ? Math.round((new Date(`${classificationEndDate}T00:00:00`) - new Date(`${lot.classificationStartDate}T00:00:00`)) / 86400000)
+        : null;
+      const labelingDays = lot.labelingStartDate && labelingEndDate
+        ? Math.round((new Date(`${labelingEndDate}T00:00:00`) - new Date(`${lot.labelingStartDate}T00:00:00`)) / 86400000)
+        : null;
+      const validClassificationDays = Number.isFinite(classificationDays) && classificationDays >= 0 ? classificationDays : null;
+      const validLabelingDays = Number.isFinite(labelingDays) && labelingDays >= 0 ? labelingDays : null;
+      return validClassificationDays !== null || validLabelingDays !== null ? {
         name: lot.code,
-        value: days,
+        value: validLabelingDays ?? 0,
+        secondaryValue: validClassificationDays ?? 0,
+        classificationDays: validClassificationDays,
+        labelingDays: validLabelingDays,
         teamLeaderName: lot.teamLeaderName,
         brandName: lot.brandName,
         quantity: lot.quantity,
-        startDate: lot.startDate,
-        completedDate: lot.completedDate
+        classificationStartDate: lot.classificationStartDate,
+        labelingStartDate: lot.labelingStartDate,
+        completedLabelingDate: lot.completedLabelingDate
       } : null;
     })
     .filter(Boolean)
-    .sort((a, b) => b.value - a.value);
+    .sort((a, b) => Math.max(b.value, b.secondaryValue) - Math.max(a.value, a.secondaryValue));
   return (
     <>
       <div className="pbi-ranking-task-filter">
@@ -783,18 +791,22 @@ function LoteDurationChart({ lots }) {
       <VerticalBarChart
         id="pbi-lote-duration"
         data={byLote}
-        ariaLabel="Días de duración de cada lote, desde la fecha de trabajo hasta que se completó"
+        ariaLabel="Días de clasificado y etiquetado de cada lote"
         tone="blue"
         unit="días"
         compact
+        primaryLabel="Días de etiquetado"
+        secondaryLabel="Días de clasificado"
+        secondaryColor="#e7c42d"
         tooltipFormatter={(item) => ({
-          value: `${numberFormatter.format(item.value)} día${item.value === 1 ? "" : "s"}`,
+          value: `Etiquetado: ${item.labelingDays === null ? "Sin dato" : `${numberFormatter.format(item.labelingDays)} día${item.labelingDays === 1 ? "" : "s"}`} · Clasificado: ${item.classificationDays === null ? "Sin dato" : `${numberFormatter.format(item.classificationDays)} día${item.classificationDays === 1 ? "" : "s"}`}`,
           detail: [
             `Líder de equipo: ${item.teamLeaderName || "—"}`,
             `Marca: ${item.brandName || "—"}`,
             `Pares: ${numberFormatter.format(item.quantity || 0)}`,
-            `Fecha de trabajo: ${item.startDate ? formatCalendarDate(item.startDate) : "—"}`,
-            `Completado: ${item.completedDate ? formatCalendarDate(item.completedDate) : "—"}`
+            `Inicio clasificado: ${item.classificationStartDate ? formatCalendarDate(item.classificationStartDate) : "—"}`,
+            `Inicio etiquetado: ${item.labelingStartDate ? formatCalendarDate(item.labelingStartDate) : "—"}`,
+            `Completado etiquetado: ${item.completedLabelingDate ? formatCalendarDate(item.completedLabelingDate) : "—"}`
           ].join(" · ")
         })}
       />
@@ -913,7 +925,7 @@ function splitLabel(label) {
   return [parts[0], parts.slice(1).join(" ")];
 }
 
-function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSelect, selectedNames = [], compact = false, tooltipFormatter }) {
+function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSelect, selectedNames = [], compact = false, tooltipFormatter, primaryLabel = "Puntos a favor", secondaryLabel = "Puntos en contra", secondaryColor = "#c94b4b" }) {
   const [tooltip, setTooltip] = useState(null);
   if (!data.length) return <p className="pbi-chart-empty">No hay datos para el filtro seleccionado.</p>;
 
@@ -938,8 +950,8 @@ function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSel
     <div className="pbi-chart pbi-chart--scrollable" data-animation-key={animationKey}>
       {hasSecondaryValues ? (
         <div className="pbi-chart-series-legend" aria-label="Leyenda del gráfico">
-          <span><i className="is-favor" />Puntos a favor</span>
-          <span><i className="is-against" />Puntos en contra</span>
+          <span><i className="is-favor" style={{ backgroundColor: fill }} />{primaryLabel}</span>
+          <span><i className="is-against" style={{ backgroundColor: secondaryColor }} />{secondaryLabel}</span>
         </div>
       ) : null}
       <svg key={animationKey} className="pbi-chart-svg" style={{ minWidth: `${width}px` }} viewBox={`0 0 ${width} ${height}`} role={onSelect ? "group" : "img"} aria-labelledby={`${id}-chart-title`}>
@@ -976,7 +988,7 @@ function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSel
               focusable="true"
               role={onSelect ? "button" : undefined}
               aria-pressed={onSelect ? selected : undefined}
-              aria-label={`${item.name}: ${item.value} puntos normales${againstPoints ? `, ${againstPoints} puntos en contra. ${item.againstReason || ""}` : ""}`}
+              aria-label={`${item.name}: ${item.value} ${primaryLabel}${hasSecondaryValues ? `, ${secondaryValue} ${secondaryLabel}` : ""}`}
               onClick={() => onSelect?.(item)}
               onKeyDown={(event) => {
                 if (onSelect && (event.key === "Enter" || event.key === " ")) {
@@ -997,7 +1009,7 @@ function VerticalBarChart({ id, data, ariaLabel, tone = "gold", unit = "", onSel
             >
               <title>{`${item.name}: ${numberFormatter.format(item.value)}`}</title>
               <rect className={`pbi-chart-bar pbi-chart-bar--${tone}`} style={{ "--pbi-index": index }} x={x} y={y} width={seriesWidth} height={barHeight} rx="3" fill={fill} />
-              {hasSecondaryValues ? <rect className="pbi-chart-bar pbi-chart-bar--against" style={{ "--pbi-index": index }} x={x + seriesWidth + seriesGap} y={secondaryY} width={seriesWidth} height={secondaryHeight} rx="3" fill="#c94b4b" /> : null}
+              {hasSecondaryValues ? <rect className="pbi-chart-bar pbi-chart-bar--against" style={{ "--pbi-index": index }} x={x + seriesWidth + seriesGap} y={secondaryY} width={seriesWidth} height={secondaryHeight} rx="3" fill={secondaryColor} /> : null}
               <text className="pbi-chart-value" x={x + seriesWidth / 2} y={Math.max(18, y - 8)} textAnchor="middle">
                 {numberFormatter.format(item.value)}
               </text>
@@ -1772,7 +1784,7 @@ const DASHBOARD_HELP_SECTIONS = [
     items: [
       { title: "Top 5 Trabajadores por Producción", text: "Los 5 trabajadores con más puntos a favor en el período filtrado." },
       { title: "Detalle de Registro de Tareas", text: "Tabla con cada registro operativo del período, filtrable por tarea." },
-      { title: "Días de Duración de Lotes", text: "Días de duración de cada lote (código en el eje), con filtro propio de estado. No usa el filtro de período global." },
+      { title: "Días de Duración de Lotes", text: "Compara por lote los días de clasificado y de etiquetado. El etiquetado se cuenta desde la fecha de fin de clasificado/inicio de etiquetado. Incluye un filtro propio de estado." },
       { title: "Ranking por Promedio por Hora / por Pares", text: "Ranking de todos los trabajadores para la tarea elegida, en el período filtrado." },
       { title: "Volumen de Registros por Tarea", text: "Cantidad de registros operativos agrupados por tipo de tarea, en el período filtrado." },
       { title: "Volumen de Registros por Mes", text: "Cantidad de registros por cada mes del año actual. Siempre muestra el año completo, no cambia con el filtro de mes." }
@@ -2548,6 +2560,7 @@ export default function FootwearDashboard() {
     selectedMonthWeek ? selectedMonthWeek.label : null,
     globalPeriodDay !== "all" ? `Día ${globalPeriodDay}` : null
   ].filter(Boolean).join(" · ");
+  const rotationYearTitleLabel = globalPeriodYear === "all" ? "Todos los años" : globalPeriodYear;
   const globalPeriodLabel = selectedMonthWeek ? `${productionPeriodLabel} · ${selectedMonthWeek.label}` : productionPeriodLabel;
   async function saveHourlyReference() {
     const value = Number(hourlyReferenceDraft);
@@ -2781,18 +2794,13 @@ export default function FootwearDashboard() {
   const tenure = averageEmployeeTenureMonths(dashboardData?.movements || [], {
     allowedWorkerIds: new Set(WORKERS.map((worker) => Number(worker.id)))
   });
-  // Promedio de días por lote: participan los lotes que ya tienen fecha de
-  // trabajo (completados con fecha_completada - fecha_trabajo; pendientes
-  // con hoy - fecha_trabajo, así
-  // un lote pendiente suma un dia mas cada dia que pasa sin cerrarse). No se
-  // guarda nada, se recalcula al vuelo con cada carga del dashboard. Respeta
-  // el filtro de periodo global (por fecha_trabajo), igual que el resto del
-  // tablero.
+  // Promedio de etiquetado por lote: comienza exclusivamente en la fecha de
+  // fin de clasificado/inicio de etiquetado y termina al completar o en hoy.
   const loteDurations = (dashboardData?.lotes || [])
-    .filter((lot) => lot.startDate && matchesGlobalPeriodDate(lot.startDate))
+    .filter((lot) => lot.labelingStartDate && matchesGlobalPeriodDate(lot.labelingStartDate))
     .map((lot) => {
-      const endDate = lot.status === "completado" && lot.completedDate ? lot.completedDate : CURRENT_LIMA_PARTS.iso;
-      const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lot.startDate}T00:00:00`)) / 86400000);
+      const endDate = lot.status === "completado" && lot.completedLabelingDate ? lot.completedLabelingDate : CURRENT_LIMA_PARTS.iso;
+      const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lot.labelingStartDate}T00:00:00`)) / 86400000);
       return Number.isFinite(days) ? Math.max(0, days) : null;
     })
     .filter((days) => days !== null);
@@ -2804,7 +2812,7 @@ export default function FootwearDashboard() {
     { label: "Ausentismo", detail: "Registro de asistencias", value: `${attendanceTotal ? ((attendanceTotals.absent / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
     { label: "Tardanza", detail: "Llegadas fuera de hora", value: `${attendanceTotal ? ((attendanceTotals.late / attendanceTotal) * 100).toFixed(2) : "0.00"}%` },
     { label: "Permanencia promedio", detail: `${tenure.workerCount} trabajador(es) con periodos laborales cerrados`, suffix: "meses", value: tenure.months.toFixed(2) },
-    { label: "Promedio de días por lote", detail: `${loteDurations.length} lote(s) · ${oneDecimalFormatter.format((dashboardData?.lotes || []).length ? dashboardData.lotes.reduce((sum, lot) => sum + Number(lot.quantity || 0), 0) / dashboardData.lotes.length : 0)} pares promedio`, suffix: "días", value: Math.round(avgLoteDurationDays).toLocaleString("es-PE") }
+    { label: "Promedio de días de etiquetado", detail: `${loteDurations.length} lote(s) · ${oneDecimalFormatter.format((dashboardData?.lotes || []).length ? dashboardData.lotes.reduce((sum, lot) => sum + Number(lot.quantity || 0), 0) / dashboardData.lotes.length : 0)} pares promedio`, suffix: "días", value: Math.round(avgLoteDurationDays).toLocaleString("es-PE") }
   ];
   // No se filtra por periodo ni por trabajador: el historial de amonestaciones
   // se ve completo siempre, sin que lo afecten los demas filtros del tablero.
@@ -2819,10 +2827,21 @@ export default function FootwearDashboard() {
     return { id: row.id, alias, workerName: worker?.name || alias, date: formatCalendarDate(row.date), documentType };
   }).sort((a, b) => b.id - a.id);
 
-  // Rotacion de Personal y Motivos de Salida necesitan ver siempre a los
-  // trabajadores inactivos (una salida deja al trabajador inactivo, asi que
-  // filtrar por "solo activos" ocultaria justo las salidas que este grafico
-  // debe mostrar), sin importar el switch global de inactivos.
+  // Rotacion de Personal siempre muestra los doce meses del año elegido. Los
+  // selectores globales de mes, semana y dia no recortan esta serie.
+  const matchesRotationYear = (date) => {
+    const year = Number(String(date || "").slice(0, 4));
+    return Number.isFinite(year) && (globalPeriodYear === "all" || year === Number(globalPeriodYear));
+  };
+  const rotationMovements = (dashboardData?.movements || []).filter((row) => {
+    const worker = workerById.get(Number(row.workerId));
+    return matchesRotationYear(row.date)
+      && matchesGlobalWorker(row.workerId)
+      && (!selectedRoles.length || (worker && selectedRoles.includes(worker.role)));
+  });
+  // Motivos de Salida conserva el comportamiento de los filtros globales.
+  // Ambos graficos incluyen inactivos porque una salida normalmente deja al
+  // trabajador inactivo y ocultarlo eliminaria el movimiento del historial.
   const visibleMovements = (dashboardData?.movements || []).filter((row) => {
     const worker = workerById.get(Number(row.workerId));
     return matchesPeopleDate(row.date)
@@ -2830,7 +2849,7 @@ export default function FootwearDashboard() {
       && (!selectedRoles.length || (worker && selectedRoles.includes(worker.role)));
   });
   const filteredRotation = MONTHLY_TASKS.map((month, monthIndex) => {
-    const monthMovements = visibleMovements.filter((row) => Number(row.date.slice(5, 7)) === monthIndex + 1);
+    const monthMovements = rotationMovements.filter((row) => Number(row.date.slice(5, 7)) === monthIndex + 1);
     const entries = monthMovements.filter((row) => /ingreso/i.test(row.type));
     const exits = monthMovements.filter((row) => /salida/i.test(row.type));
     return {
@@ -3355,12 +3374,20 @@ export default function FootwearDashboard() {
                 </Card>
 
                 <Card
-                  id="pbi-lote-duration"
-                  title="Días de Duración de Lotes"
-                  meta="Desde fecha de trabajo hasta que se completa"
-                  className="pbi-card--chart pbi-card--span-6"
+                  id="pbi-labeling-ranking"
+                  title={`Ranking de Cantidad por Pares · ${selectedMonthTitleLabel}`}
+                  meta={effectiveQuantityTask?.shortName || "Selecciona una tarea"}
+                  className="pbi-card--chart pbi-card--ranking pbi-card--span-6"
                 >
-                  <LoteDurationChart lots={dashboardData?.lotes || []} />
+                  <div className="pbi-ranking-task-filter">
+                    <label htmlFor="pbi-quantity-ranking-task">Tarea por pares</label>
+                    <select id="pbi-quantity-ranking-task" value={effectiveQuantityTaskId || ""} onChange={(event) => setQuantityRankingTaskId(event.target.value)}>
+                      {pairRankingTasks.map((task) => <option key={task.id} value={task.id}>{task.shortName}</option>)}
+                    </select>
+                  </div>
+                  <div className="pbi-ranking-scroll">
+                    <HorizontalBars data={quantityWorkerRanking} ariaLabel={`Ranking de todos los trabajadores por cantidad de pares en ${effectiveQuantityTask?.shortName || "la tarea seleccionada"}`} color="#e1c233" valueFormatter={(value) => `${numberFormatter.format(value)} pares`} selectedNames={selectedWorkerNames} />
+                  </div>
                 </Card>
 
                 <Card
@@ -3381,20 +3408,12 @@ export default function FootwearDashboard() {
                 </Card>
 
                 <Card
-                  id="pbi-labeling-ranking"
-                  title={`Ranking de Cantidad por Pares · ${selectedMonthTitleLabel}`}
-                  meta={effectiveQuantityTask?.shortName || "Selecciona una tarea"}
-                  className="pbi-card--chart pbi-card--ranking pbi-card--span-6"
+                  id="pbi-lote-duration"
+                  title="Días de Duración de Lotes"
+                  meta="Clasificado y etiquetado por separado"
+                  className="pbi-card--chart pbi-card--span-6"
                 >
-                  <div className="pbi-ranking-task-filter">
-                    <label htmlFor="pbi-quantity-ranking-task">Tarea por pares</label>
-                    <select id="pbi-quantity-ranking-task" value={effectiveQuantityTaskId || ""} onChange={(event) => setQuantityRankingTaskId(event.target.value)}>
-                      {pairRankingTasks.map((task) => <option key={task.id} value={task.id}>{task.shortName}</option>)}
-                    </select>
-                  </div>
-                  <div className="pbi-ranking-scroll">
-                    <HorizontalBars data={quantityWorkerRanking} ariaLabel={`Ranking de todos los trabajadores por cantidad de pares en ${effectiveQuantityTask?.shortName || "la tarea seleccionada"}`} color="#e1c233" valueFormatter={(value) => `${numberFormatter.format(value)} pares`} selectedNames={selectedWorkerNames} />
-                  </div>
+                  <LoteDurationChart lots={dashboardData?.lotes || []} />
                 </Card>
 
                 {selectedHourlyRankingWorker ? (
@@ -3464,7 +3483,7 @@ export default function FootwearDashboard() {
               <div className="pbi-content-grid">
                 <Card
                   id="pbi-rotation"
-                  title={`Rotación de Personal por Mes · ${selectedMonthTitleLabel}`}
+                  title={`Rotación de Personal por Mes · ${rotationYearTitleLabel}`}
                   meta={`${filteredRotation.reduce((sum, item) => sum + item.primary, 0)} ingresos · ${filteredRotation.reduce((sum, item) => sum + item.secondary, 0)} salidas`}
                   className="pbi-card--chart pbi-card--span-4"
                 >

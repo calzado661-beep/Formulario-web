@@ -44,6 +44,7 @@ async function requestLocalApi(path, options = {}, config = {}) {
     try {
       const response = await fetch(endpoint, {
         ...options,
+        cache: options.cache || "no-store",
         headers: {
           "content-type": "application/json",
           ...(apiSessionToken() ? { authorization: `Bearer ${apiSessionToken()}` } : {}),

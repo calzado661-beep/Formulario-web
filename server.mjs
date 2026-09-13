@@ -1526,8 +1526,9 @@ async function handleReadFootwearDashboard(request, response) {
         code: String(lote.codigo_lote || "").trim().toUpperCase(),
         quantity: Number(lote.cantidad_lote || 0),
         status: String(lote.estado || "pendiente").trim().toLowerCase(),
-        startDate: dashboardDate(lote.fecha_trabajo),
-        completedDate: dashboardDate(lote.fecha_completada),
+        classificationStartDate: dashboardDate(lote.fecha_trabajo),
+        labelingStartDate: dashboardDate(lote.fecha_fin_clasificado),
+        completedLabelingDate: dashboardDate(lote.fecha_completada),
         brandName: loteBrandNameById.get(Number(lote.marca_id)) || null,
         teamLeaderName: incidentUserById.get(Number(lote.usuario_id))?.nombre || null
       })).filter((lote) => lote.code),
@@ -2212,7 +2213,7 @@ async function handleDeleteStore(request, response, storeId) {
   }
 }
 
-const LOTE_SELECT_COLUMNS = "id,codigo_lote,cantidad_lote,marca_id,fecha_ingreso,fecha_trabajo,proveedor,usuario_id,estado,fecha_completada";
+const LOTE_SELECT_COLUMNS = "id,codigo_lote,cantidad_lote,marca_id,fecha_ingreso,fecha_trabajo,fecha_fin_clasificado,proveedor,usuario_id,estado,fecha_completada";
 const LOTE_ESTADOS = ["pendiente", "completado"];
 
 async function enrichLotes(rows) {
@@ -2236,6 +2237,7 @@ async function enrichLotes(rows) {
 async function handleReadLotes(request, response) {
   try {
     if (!requireSessionRole(request, response, ["administrador", "operante", "lider de equipo", "otros"])) return;
+    response.setHeader("cache-control", "no-store, no-cache, must-revalidate");
     const result = await supabase.from("lotes").select(LOTE_SELECT_COLUMNS).order("id", { ascending: false });
     if (result.error) throw result.error;
     sendJson(response, 200, { lotes: await enrichLotes(result.data || []) });
@@ -2257,6 +2259,7 @@ function validateLotePayload(body) {
   const marcaId = Number(body.marca_id);
   const fechaIngreso = String(body.fecha_ingreso || "").trim();
   const fechaTrabajo = String(body.fecha_trabajo || "").trim();
+  const fechaFinClasificado = String(body.fecha_fin_clasificado || "").trim();
   const fechaCompletada = String(body.fecha_completada || "").trim();
   const usuarioId = Number(body.usuario_id);
   const estado = String(body.estado || "pendiente").trim().toLowerCase();
@@ -2266,18 +2269,30 @@ function validateLotePayload(body) {
   }
   if (!Number.isInteger(marcaId) || marcaId <= 0) throw invalidLote("Selecciona una marca.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaIngreso)) throw invalidLote("Selecciona una fecha de ingreso valida.");
-  if (fechaTrabajo && !/^\d{4}-\d{2}-\d{2}$/.test(fechaTrabajo)) throw invalidLote("Selecciona una fecha de trabajo valida.");
-  if (fechaCompletada && !/^\d{4}-\d{2}-\d{2}$/.test(fechaCompletada)) throw invalidLote("Selecciona una fecha completada valida.");
+  if (fechaTrabajo && !/^\d{4}-\d{2}-\d{2}$/.test(fechaTrabajo)) throw invalidLote("Selecciona una fecha de inicio de clasificado valida.");
+  if (fechaFinClasificado && !/^\d{4}-\d{2}-\d{2}$/.test(fechaFinClasificado)) throw invalidLote("Selecciona una fecha de fin de clasificado valida.");
+  if (fechaCompletada && !/^\d{4}-\d{2}-\d{2}$/.test(fechaCompletada)) throw invalidLote("Selecciona una fecha completada de etiquetado valida.");
+  if (fechaTrabajo && fechaFinClasificado && fechaFinClasificado < fechaTrabajo) {
+    throw invalidLote("La fecha de fin de clasificado no puede ser anterior a su fecha de inicio.");
+  }
+  if (fechaFinClasificado && fechaCompletada && fechaCompletada < fechaFinClasificado) {
+    throw invalidLote("La fecha completada de etiquetado no puede ser anterior a su fecha de inicio.");
+  }
   if (!proveedor) throw invalidLote("El proveedor es obligatorio.");
   if (!Number.isInteger(usuarioId) || usuarioId <= 0) throw invalidLote("Selecciona el líder de equipo responsable del lote.");
   if (!LOTE_ESTADOS.includes(estado)) throw invalidLote("El estado del lote no es valido.");
+  const resolvedFechaCompletada = estado === "completado" ? (fechaCompletada || currentLimaDate()) : "";
+  if (fechaFinClasificado && resolvedFechaCompletada && resolvedFechaCompletada < fechaFinClasificado) {
+    throw invalidLote("La fecha completada de etiquetado no puede ser anterior a su fecha de inicio.");
+  }
   return {
     codigo_lote: codigoLote,
     cantidad_lote: cantidadLote,
     marca_id: marcaId,
     fecha_ingreso: fechaIngreso,
     fecha_trabajo: fechaTrabajo || null,
-    fecha_completada: estado === "completado" ? (fechaCompletada || null) : null,
+    fecha_fin_clasificado: fechaFinClasificado || null,
+    fecha_completada: resolvedFechaCompletada || null,
     proveedor,
     usuario_id: usuarioId,
     estado

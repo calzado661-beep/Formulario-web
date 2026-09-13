@@ -143,7 +143,7 @@ const ADMIN_SECTION_HELP = {
   },
   Lotes: {
     title: "Lotes",
-    text: "Catálogo de lotes de mercadería: código, marca, cantidad, proveedor, líder responsable, fecha de trabajo y estado. Los días se calculan desde la fecha de trabajo hasta que el lote se completa."
+    text: "Catálogo de lotes de mercadería: registra por separado el inicio y fin del clasificado, el inicio del etiquetado y su fecha de culminación."
   },
   Guias: {
     title: "Guías",
@@ -4636,22 +4636,30 @@ const LOTE_ESTADOS = [
 // Si el lote ya se completo, son los dias reales que tardo. Si sigue
 // pendiente, se calcula contra hoy (no se guarda en ningun lado), asi que la
 // cifra sube sola cada dia hasta que se marque como completado.
-function loteDurationDays(lote) {
+function loteClassificationDays(lote) {
   if (!lote.fecha_trabajo) return null;
-  const endDate = lote.estado === "completado" && lote.fecha_completada ? lote.fecha_completada : todayLimaISO();
+  const endDate = lote.fecha_fin_clasificado || (lote.estado !== "completado" ? todayLimaISO() : null);
+  if (!endDate) return null;
   const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lote.fecha_trabajo}T00:00:00`)) / 86400000);
+  return Number.isFinite(days) ? Math.max(0, days) : null;
+}
+
+function loteLabelingDays(lote) {
+  if (!lote.fecha_fin_clasificado) return null;
+  const endDate = lote.estado === "completado" && lote.fecha_completada ? lote.fecha_completada : todayLimaISO();
+  const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lote.fecha_fin_clasificado}T00:00:00`)) / 86400000);
   return Number.isFinite(days) ? Math.max(0, days) : null;
 }
 
 function emptyLoteForm() {
   return {
-    codigo_lote: "", cantidad_lote: "", marca_id: "", fecha_ingreso: todayLimaISO(), fecha_trabajo: "",
+    codigo_lote: "", cantidad_lote: "", marca_id: "", fecha_ingreso: todayLimaISO(), fecha_trabajo: "", fecha_fin_clasificado: "",
     fecha_completada: "", proveedor: "", usuario_id: "", estado: "pendiente"
   };
 }
 
 function LotesPanel() {
-  const { data: lotes = [], loading, error, reload } = useAsyncData(listLotes, [], []);
+  const { data: lotes = [], setData: setLotes, loading, error, reload } = useAsyncData(listLotes, [], []);
   const { data: brands = [] } = useAsyncData(listBrands, [], []);
   const { data: users = [] } = useAsyncData(selectUsers, [], []);
   const [tab, setTab] = useState("Crear");
@@ -4671,6 +4679,7 @@ function LotesPanel() {
       marca_id: String(selectedLote.marca_id || ""),
       fecha_ingreso: selectedLote.fecha_ingreso || "",
       fecha_trabajo: selectedLote.fecha_trabajo || "",
+      fecha_fin_clasificado: selectedLote.fecha_fin_clasificado || "",
       fecha_completada: selectedLote.fecha_completada || "",
       proveedor: selectedLote.proveedor || "",
       usuario_id: String(selectedLote.usuario_id || ""),
@@ -4685,6 +4694,12 @@ function LotesPanel() {
     }
     if (!form.marca_id) return "Selecciona una marca.";
     if (!form.fecha_ingreso) return "Selecciona una fecha de ingreso.";
+    if (form.fecha_trabajo && form.fecha_fin_clasificado && form.fecha_fin_clasificado < form.fecha_trabajo) {
+      return "La fecha de fin de clasificado no puede ser anterior a su fecha de inicio.";
+    }
+    if (form.fecha_fin_clasificado && form.fecha_completada && form.fecha_completada < form.fecha_fin_clasificado) {
+      return "La fecha completada de etiquetado no puede ser anterior a su fecha de inicio.";
+    }
     if (!form.proveedor.trim()) return "El proveedor es obligatorio.";
     if (!form.usuario_id) return "Selecciona el líder de equipo responsable del lote.";
     if (!LOTE_ESTADOS.some((option) => option.value === form.estado)) return "Selecciona un estado valido.";
@@ -4698,6 +4713,7 @@ function LotesPanel() {
       marca_id: Number(form.marca_id),
       fecha_ingreso: form.fecha_ingreso,
       fecha_trabajo: form.fecha_trabajo || null,
+      fecha_fin_clasificado: form.fecha_fin_clasificado || null,
       fecha_completada: form.estado === "completado" ? (form.fecha_completada || todayLimaISO()) : null,
       proveedor: form.proveedor.trim(),
       usuario_id: Number(form.usuario_id),
@@ -4715,10 +4731,10 @@ function LotesPanel() {
     }
     setSaving(true);
     try {
-      await createLote(buildPayload());
+      const createdLote = await createLote(buildPayload());
+      setLotes((current) => [createdLote, ...(current || []).filter((lote) => String(lote.id) !== String(createdLote.id))]);
       setForm(emptyLoteForm());
       setStatus({ type: "success", message: "Lote creado correctamente." });
-      reload();
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });
     } finally {
@@ -4737,9 +4753,17 @@ function LotesPanel() {
     }
     setSaving(true);
     try {
-      await updateLote(selectedLote.id, buildPayload());
+      const payload = buildPayload();
+      const updatedLote = await updateLote(selectedLote.id, payload);
+      const savedDatesMatch = ["fecha_trabajo", "fecha_fin_clasificado", "fecha_completada"]
+        .every((field) => (updatedLote[field] || null) === (payload[field] || null));
+      if (!savedDatesMatch) {
+        throw new Error("El servidor no confirmó las fechas ingresadas. Actualiza la versión publicada e inténtalo nuevamente.");
+      }
+      setLotes((current) => (current || []).map((lote) => (
+        String(lote.id) === String(updatedLote.id) ? updatedLote : lote
+      )));
       setStatus({ type: "success", message: "Lote actualizado correctamente." });
-      reload();
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });
     } finally {
@@ -4766,7 +4790,8 @@ function LotesPanel() {
   }
 
   const rows = lotes.map((lote) => {
-    const days = loteDurationDays(lote);
+    const classificationDays = loteClassificationDays(lote);
+    const labelingDays = loteLabelingDays(lote);
     return {
       id: lote.id,
       "Codigo de lote": lote.codigo_lote,
@@ -4774,9 +4799,11 @@ function LotesPanel() {
       Marca: lote.marca_nombre,
       Estado: LOTE_ESTADOS.find((option) => option.value === lote.estado)?.label || lote.estado,
       "Fecha de ingreso": formatDateLima(lote.fecha_ingreso),
-      "Fecha de trabajo": formatDateLima(lote.fecha_trabajo),
-      "Fecha completada": formatDateLima(lote.fecha_completada),
-      "Días": days === null ? null : `${days} día${days === 1 ? "" : "s"}`,
+      "Fecha inicio clasificado": formatDateLima(lote.fecha_trabajo),
+      "Fecha fin clasificado / inicio etiquetado": formatDateLima(lote.fecha_fin_clasificado),
+      "Fecha completada etiquetado": formatDateLima(lote.fecha_completada),
+      "Días clasificado": classificationDays === null ? null : `${classificationDays} día${classificationDays === 1 ? "" : "s"}`,
+      "Días etiquetado": labelingDays === null ? null : `${labelingDays} día${labelingDays === 1 ? "" : "s"}`,
       Proveedor: lote.proveedor,
       "Líder de equipo": lote.usuario_nombre
     };
@@ -4794,7 +4821,7 @@ function LotesPanel() {
         ) : (
           <DataTable
             rows={rows}
-            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Fecha de trabajo", "Fecha completada", "Días", "Proveedor", "Líder de equipo"]}
+            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Fecha inicio clasificado", "Fecha fin clasificado / inicio etiquetado", "Fecha completada etiquetado", "Días clasificado", "Días etiquetado", "Proveedor", "Líder de equipo"]}
             onRowClick={(row) => {
               setSelectedId(String(row.id));
               setTab("Editar");
@@ -4807,6 +4834,7 @@ function LotesPanel() {
 
       <Panel>
         <Tabs tabs={["Crear", "Editar", "Eliminar"]} active={tab} onChange={setTab} />
+        <div className="lote-form-status"><StatusAlert status={status} /></div>
         <form className="form-grid" onSubmit={tab === "Crear" ? submitCreate : submitEdit}>
           {tab !== "Crear" ? (
             <SelectInput
@@ -4845,10 +4873,16 @@ function LotesPanel() {
                 onChange={(fecha_ingreso) => setForm({ ...form, fecha_ingreso })}
               />
               <TextInput
-                label="Fecha de trabajo (opcional)"
+                label="Fecha inicio clasificado (opcional)"
                 type="date"
                 value={form.fecha_trabajo}
                 onChange={(fecha_trabajo) => setForm({ ...form, fecha_trabajo })}
+              />
+              <TextInput
+                label="Fecha fin clasificado / inicio de etiquetado (opcional)"
+                type="date"
+                value={form.fecha_fin_clasificado}
+                onChange={(fecha_fin_clasificado) => setForm({ ...form, fecha_fin_clasificado })}
               />
               <TextInput label="Proveedor" value={form.proveedor} onChange={(proveedor) => setForm({ ...form, proveedor })} />
               <SelectInput
@@ -4871,14 +4905,14 @@ function LotesPanel() {
                 options={LOTE_ESTADOS}
               />
               <TextInput
-                label="Fecha completada"
+                label="Fecha completada etiquetado"
                 type="date"
                 value={form.fecha_completada}
                 onChange={(fecha_completada) => setForm({ ...form, fecha_completada })}
                 disabled={tab !== "Editar" || form.estado !== "completado"}
                 hint={tab !== "Editar" ? "Se asigna automáticamente al completar el lote." : form.estado !== "completado" ? "Cambia el estado a Completado para editarla." : "Puedes corregir la fecha antes de guardar."}
               />
-              <div className="form-span">
+              <div className="form-span lote-form-actions">
                 <FormActions saving={saving} saveLabel={tab === "Crear" ? "Crear lote" : "Guardar cambios"} />
               </div>
             </>
@@ -4888,9 +4922,6 @@ function LotesPanel() {
               <Button type="button" variant="danger" icon={Trash2} loading={saving} onClick={submitDelete}>Eliminar lote</Button>
             </div>
           ) : null}
-          <div className="form-span">
-            <StatusAlert status={status} />
-          </div>
         </form>
       </Panel>
     </div>
