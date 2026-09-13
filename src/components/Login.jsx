@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LockKeyhole, LogIn, UserRound } from "lucide-react";
 import { verifyUser } from "../lib/repository";
 import { isSupabaseConfigured } from "../lib/supabaseClient";
 import { Alert, Button } from "./ui";
+import loginVideoUrl from "../../genera_un_video_de_fondo_para.mp4";
 
 function isInactive(user) {
   const value = String(user?.activo ?? true).trim().toLowerCase();
@@ -14,6 +15,28 @@ export default function Login({ onLogin }) {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [loadBackgroundVideo, setLoadBackgroundVideo] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
+
+  useEffect(() => {
+    const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const savesData = navigator.connection?.saveData === true;
+    if (prefersReducedMotion || savesData) return undefined;
+
+    let idleId;
+    const timerId = window.setTimeout(() => {
+      if ("requestIdleCallback" in window) {
+        idleId = window.requestIdleCallback(() => setLoadBackgroundVideo(true), { timeout: 2500 });
+      } else {
+        setLoadBackgroundVideo(true);
+      }
+    }, 600);
+
+    return () => {
+      window.clearTimeout(timerId);
+      if (idleId !== undefined && "cancelIdleCallback" in window) window.cancelIdleCallback(idleId);
+    };
+  }, []);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -45,6 +68,22 @@ export default function Login({ onLogin }) {
 
   return (
     <main className="login-screen">
+      {loadBackgroundVideo ? (
+        <video
+          className={`login-background-video${videoReady ? " is-ready" : ""}`}
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="none"
+          disablePictureInPicture
+          aria-hidden="true"
+          tabIndex={-1}
+          onCanPlay={() => setVideoReady(true)}
+        >
+          <source src={loginVideoUrl} type="video/mp4" />
+        </video>
+      ) : null}
       <div className="login-overlay" />
       <section className="login-card" aria-label="Inicio de sesion">
         <div className="brand-mark">F</div>

@@ -1,12 +1,14 @@
-import { useEffect, useState } from "react";
+import { isValidElement, useEffect, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  LayoutGrid,
   Loader2,
   Save,
+  Table2,
   Trash2
 } from "lucide-react";
 
@@ -237,6 +239,7 @@ export function DataTable({
   onRowClick,
   pageSize = DEFAULT_PAGE_SIZE
 }) {
+  const [mobileView, setMobileView] = useState("table");
   const normalizedRows = rows || [];
   const normalizedColumns =
     columns || Array.from(new Set(normalizedRows.flatMap((row) => Object.keys(row || {}))));
@@ -247,7 +250,18 @@ export function DataTable({
 
   return (
     <>
-    <div className={`table-wrap ${compact ? "compact" : ""} ${className}`}>
+    <div className="data-table-mobile-view-toggle">
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        icon={mobileView === "table" ? LayoutGrid : Table2}
+        onClick={() => setMobileView((current) => current === "table" ? "cards" : "table")}
+      >
+        {mobileView === "table" ? "Ver como tarjetas" : "Ver como tabla"}
+      </Button>
+    </div>
+    <div className={`table-wrap responsive-data-table${mobileView === "cards" ? " is-card-view" : ""} ${compact ? "compact" : ""} ${className}`}>
       <table>
         <thead>
           <tr>
@@ -272,7 +286,7 @@ export function DataTable({
               } : undefined}
             >
               {normalizedColumns.map((column) => (
-                <td key={column}>{formatCell(row[column])}</td>
+                <td key={column} data-label={column}>{formatCell(row[column])}</td>
               ))}
             </tr>
           ))}
@@ -286,6 +300,7 @@ export function DataTable({
 
 function formatCell(value) {
   if (value === null || value === undefined || value === "") return <span className="muted">-</span>;
+  if (isValidElement(value)) return value;
   if (typeof value === "boolean") return value ? "Si" : "No";
   if (Array.isArray(value)) return value.join(", ");
   if (typeof value === "object") return JSON.stringify(value);

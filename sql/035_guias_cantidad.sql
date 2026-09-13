@@ -12,7 +12,7 @@ alter table public.guias
 update public.guias g
 set cantidad = coalesce(sub.total, 0)
 from (
-  select codigo_guia, sum((datos->>'SERIE')::numeric) as total
+  select codigo_guia, sum(cantidad) as total
   from public.guias_items
   group by codigo_guia
 ) sub

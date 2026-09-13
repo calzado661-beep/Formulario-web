@@ -238,7 +238,7 @@ def apply_styles():
     """, unsafe_allow_html=True)
 
 
-def add_login_video_background(video_file: str = "fondovideo.mp4"):
+def add_login_video_background(video_file: str = "genera_un_video_de_fondo_para.mp4"):
     video_b64 = _get_base64_file(_asset_path(video_file))
     if video_b64:
         st.markdown(f"""

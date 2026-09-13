@@ -35,6 +35,7 @@ const adminItems = [
   { key: "Lotes", icon: Package },
   { key: "Guias", icon: Truck },
   { key: "Errores", icon: Bug },
+  { key: "Registros", label: "Registros operativos", icon: ClipboardList },
   { key: "Amonestaciones", icon: AlertTriangle },
   { key: "Documentos", icon: FileSpreadsheet }
 ];

@@ -12,6 +12,7 @@ import {
   createTienda,
   createTrainingCourse,
   createUser,
+  clearOperationalRecordsCache,
   deleteActivityReportSettings,
   deleteAmonestacion,
   deleteAttendanceReportSettings,
@@ -40,6 +41,7 @@ import {
   listGuiaItemsForExport,
   listLogAsistencias,
   listLotes,
+  listOperationalRecords,
   listPenalizaciones,
   listPersonnelMovements,
   listTasks,
@@ -81,8 +83,9 @@ import {
   validateQuantityRanges
 } from "../lib/scoring";
 import { useAsyncData } from "../lib/hooks";
+import { readSessionState, useSessionState, writeSessionState } from "../lib/sessionState";
 import FootwearDashboard from "./FootwearDashboard";
-import { IncidentDashboard, TaskAverageField } from "./GroupLeaderDashboard";
+import { GroupTimeDashboard, IncidentDashboard, TaskAverageField } from "./GroupLeaderDashboard";
 import {
   Alert,
   Button,
@@ -94,6 +97,7 @@ import {
   Panel,
   SelectInput,
   SwitchInput,
+  TablePager,
   Tabs,
   TextArea,
   TextInput
@@ -139,7 +143,7 @@ const ADMIN_SECTION_HELP = {
   },
   Lotes: {
     title: "Lotes",
-    text: "Catálogo de lotes de mercadería: código, marca, cantidad, proveedor, líder de equipo responsable y estado (pendiente/completado). Muestra los días que lleva cada lote hasta completarse."
+    text: "Catálogo de lotes de mercadería: registra por separado el inicio y fin del clasificado, el inicio del etiquetado y su fecha de culminación."
   },
   Guias: {
     title: "Guías",
@@ -197,7 +201,7 @@ function AdminHelpButton({ section }) {
   );
 }
 
-export default function AdminDashboard({ section }) {
+export default function AdminDashboard({ section, user }) {
   if (section === "Dashboard") return <FootwearDashboard />;
   if (section === "Usuarios") return <><UsersPanel /><AdminHelpButton section="Usuarios" /></>;
   if (section === "Capacitaciones") return <><TrainingsPanel /><AdminHelpButton section="Capacitaciones" /></>;
@@ -208,9 +212,170 @@ export default function AdminDashboard({ section }) {
   if (section === "Lotes") return <><LotesPanel /><AdminHelpButton section="Lotes" /></>;
   if (section === "Guias") return <><GuiasPanel /><AdminHelpButton section="Guias" /></>;
   if (section === "Errores") return <><IncidentDashboard /><AdminHelpButton section="Errores" /></>;
+  if (section === "Registros") return <div className="admin-history-only"><GroupTimeDashboard user={user} /></div>;
   if (section === "Amonestaciones") return <><WarningsPanel /><AdminHelpButton section="Amonestaciones" /></>;
   if (section === "Documentos") return <><DocumentsPanel /><AdminHelpButton section="Documentos" /></>;
   return <FootwearDashboard />;
+}
+
+function AdminOperationalRecords() {
+  const { data, loading, error, reload } = useAsyncData(
+    async () => {
+      const cached = readSessionState("admin-operational-catalogs", null);
+      if (cached?.users && cached?.managers && cached?.tasks && cached?.lotes) return cached;
+      const result = await listOperationalRecords({ source: "time", page: 1, pageSize: 10, includeCatalogs: true, forceRefresh: true });
+      const catalogs = result.catalogs || { users: [], managers: [], tasks: [], lotes: [] };
+      writeSessionState("admin-operational-catalogs", catalogs);
+      return catalogs;
+    },
+    [],
+    { users: [], managers: [], tasks: [], lotes: [] }
+  );
+
+  if (loading) return <LoadingBlock label="Cargando filtros de registros..." />;
+  if (error) return <Alert type="error" action={<Button variant="secondary" onClick={reload}>Reintentar</Button>}>{friendlyError(error)}</Alert>;
+
+  return (
+    <div className="stack">
+      <AdminOperationalRecordsTable source="time" title="Registros operativos de líderes de equipo" catalogs={data} />
+    </div>
+  );
+}
+
+function AdminOperationalRecordsTable({ source, title, catalogs }) {
+  const pageSize = 25;
+  const stateKey = `admin-operational:${source}`;
+  const currentDate = todayLimaISO();
+  const currentYear = currentDate.slice(0, 4);
+  const currentMonth = currentDate.slice(5, 7);
+  const [page, setPage] = useSessionState(`${stateKey}:page`, 1);
+  const [workerId, setWorkerId] = useSessionState(`${stateKey}:worker`, "");
+  const [managerId, setManagerId] = useSessionState(`${stateKey}:manager`, "");
+  const [includeInactive, setIncludeInactive] = useSessionState(`${stateKey}:include-inactive`, false);
+  const [taskId, setTaskId] = useSessionState(`${stateKey}:task`, "");
+  const [lot, setLot] = useSessionState(`${stateKey}:lot`, "");
+  const [year, setYear] = useSessionState(`${stateKey}:year`, currentYear);
+  const [month, setMonth] = useSessionState(`${stateKey}:month`, currentMonth);
+  const [day, setDay] = useSessionState(`${stateKey}:day`, "");
+  const filtersMounted = useRef(false);
+  const daysInMonth = month ? new Date(Number(year), Number(month), 0).getDate() : 0;
+  const selectedDay = day ? String(day).padStart(2, "0") : "";
+  const from = month
+    ? `${year}-${month}-${selectedDay || "01"}`
+    : `${year}-01-01`;
+  const to = month
+    ? `${year}-${month}-${selectedDay || String(daysInMonth).padStart(2, "0")}`
+    : `${year}-12-31`;
+
+  useEffect(() => {
+    if (!filtersMounted.current) {
+      filtersMounted.current = true;
+      return;
+    }
+    setPage(1);
+  }, [workerId, managerId, taskId, lot, year, month, day]);
+
+  useEffect(() => {
+    if (day && Number(day) > daysInMonth) setDay("");
+  }, [day, daysInMonth, setDay]);
+
+  const { data, loading, error, reload } = useAsyncData(
+    () => listOperationalRecords({ source, page, pageSize, workerId, managerId, taskId, lot, from, to }),
+    [source, page, workerId, managerId, taskId, lot, from, to],
+    { records: [], total: 0, page: 1, pageSize }
+  );
+
+  const workerOptions = [
+    { value: "", label: "Todos" },
+    ...(catalogs.users || [])
+      .filter((item) => normalizeRole(item.rol) === "operante" && (includeInactive || boolValue(item.activo)))
+      .map((item) => ({ value: String(item.id), label: `${item.nombre || item.email}${boolValue(item.activo) ? "" : " (inactivo)"}` }))
+  ];
+  const managerOptions = [
+    { value: "", label: "Todos" },
+    ...(catalogs.managers || [])
+      .filter((item) => normalizeRole(item.rol) === "lider de equipo" && (includeInactive || boolValue(item.activo)))
+      .map((item) => ({ value: String(item.id), label: `${item.nombre || item.email}${boolValue(item.activo) ? "" : " (inactivo)"}` }))
+  ];
+
+  useEffect(() => {
+    if (!includeInactive && workerId && !workerOptions.some((option) => option.value === String(workerId))) setWorkerId("");
+    if (!includeInactive && managerId && !managerOptions.some((option) => option.value === String(managerId))) setManagerId("");
+  }, [includeInactive]);
+  const taskOptions = [
+    { value: "", label: "Todas" },
+    ...(catalogs.tasks || []).map((item) => ({ value: String(item.id), label: getTaskTitle(item) || "Tarea sin nombre" }))
+  ];
+  const lotOptions = [
+    { value: "", label: "Todos" },
+    ...(catalogs.lotes || []).map((item) => ({ value: String(item.codigo_lote || item.codigo || item.lote || ""), label: String(item.codigo_lote || item.codigo || item.lote || "") })).filter((item) => item.value)
+  ];
+  const yearOptions = Array.from({ length: 21 }, (_, index) => {
+    const value = String(Number(currentYear) - index);
+    return { value, label: value };
+  });
+  const monthOptions = [
+    { value: "", label: "Todos los meses" },
+    ...[
+      "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+      "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+    ].map((label, index) => ({ value: String(index + 1).padStart(2, "0"), label }))
+  ];
+  const dayOptions = [
+    { value: "", label: "Todos los días" },
+    ...Array.from({ length: daysInMonth }, (_, index) => ({ value: String(index + 1).padStart(2, "0"), label: String(index + 1) }))
+  ];
+  const rows = (data.records || []).map((record) => source === "time" ? {
+    Fecha: record.fecha_registro || "",
+    Operante: record.trabajador_nombre || "",
+    Tarea: record.tarea_nombre || "",
+    "Hora inicio": formatDateTimeLima(record.hora_inicio) || "",
+    "Hora fin": formatDateTimeLima(record.hora_fin) || "",
+    "Tiempo (min)": record.tiempo_minutos ?? "",
+    Cantidad: record.cantidad ?? "",
+    Lote: record.lote || "",
+    Tienda: record.tienda_nombre || "",
+    Encargado: record.encargado_nombre || "",
+    Detalle: record.detalle || record.observacion || ""
+  } : {
+    Fecha: record.fecha_registro || "",
+    Hora: record.hora_registro || "",
+    Operante: record.trabajador_nombre || "",
+    Tarea: record.tarea_nombre || record.actividad_nombre || "",
+    Cantidad: record.cantidad ?? "",
+    Lote: record.lote || "",
+    Guia: record.numero_guia || "",
+    Tienda: record.tienda_nombre || "",
+    Puntos: record.puntaje ?? "",
+    Detalle: record.detalle || record.observacion || ""
+  });
+  const totalPages = Math.max(1, Math.ceil(Number(data.total || 0) / pageSize));
+
+  return (
+    <Panel
+      title={title}
+      eyebrow={source === "time" ? "registros_tareas_jefe_equipo" : "registros_tareas"}
+      actions={<Button variant="secondary" icon={RefreshCcw} onClick={() => { clearOperationalRecordsCache(source); reload(); }}>Actualizar</Button>}
+    >
+      <div className="toolbar">
+        <SelectInput label="Operante" value={workerId} onChange={setWorkerId} options={workerOptions} />
+        <SelectInput label="Encargado" value={managerId} onChange={setManagerId} options={managerOptions} />
+        <CheckboxInput label="Incluir inactivos" checked={includeInactive} onChange={setIncludeInactive} />
+        <SelectInput label="Tarea" value={taskId} onChange={setTaskId} options={taskOptions} />
+        <SelectInput label="Lote" value={lot} onChange={setLot} options={lotOptions} />
+        <SelectInput label="Año" value={year} onChange={setYear} options={yearOptions} />
+        <SelectInput label="Mes" value={month} onChange={(value) => { setMonth(value); setDay(""); }} options={monthOptions} />
+        <SelectInput label="Día" value={day} onChange={setDay} options={dayOptions} disabled={!month} />
+      </div>
+      {error ? <Alert type="error">{friendlyError(error)}</Alert> : null}
+      {loading ? <LoadingBlock label="Cargando registros..." /> : (
+        <>
+          <DataTable rows={rows} pageSize={0} empty="No hay registros para estos filtros." />
+          <TablePager page={page - 1} totalPages={totalPages} totalRows={Number(data.total || 0)} onChange={(nextPage) => setPage(nextPage + 1)} />
+        </>
+      )}
+    </Panel>
+  );
 }
 
 function boolValue(value) {
@@ -4465,28 +4630,37 @@ function BrandsSection() {
 
 const LOTE_ESTADOS = [
   { value: "pendiente", label: "Pendiente" },
+  { value: "en_curso", label: "En curso" },
   { value: "completado", label: "Completado" }
 ];
 
 // Si el lote ya se completo, son los dias reales que tardo. Si sigue
 // pendiente, se calcula contra hoy (no se guarda en ningun lado), asi que la
 // cifra sube sola cada dia hasta que se marque como completado.
-function loteDurationDays(lote) {
-  if (!lote.fecha_ingreso) return null;
+function loteClassificationDays(lote) {
+  if (!lote.fecha_trabajo) return null;
+  const endDate = lote.fecha_fin_clasificado || todayLimaISO();
+  if (!endDate) return null;
+  const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lote.fecha_trabajo}T00:00:00`)) / 86400000);
+  return Number.isFinite(days) ? Math.max(1, days + 1) : null;
+}
+
+function loteLabelingDays(lote) {
+  if (!lote.fecha_inicio_etiquetado) return null;
   const endDate = lote.estado === "completado" && lote.fecha_completada ? lote.fecha_completada : todayLimaISO();
-  const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lote.fecha_ingreso}T00:00:00`)) / 86400000);
+  const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lote.fecha_inicio_etiquetado}T00:00:00`)) / 86400000);
   return Number.isFinite(days) ? Math.max(0, days) : null;
 }
 
 function emptyLoteForm() {
   return {
-    codigo_lote: "", cantidad_lote: "", marca_id: "", fecha_ingreso: todayLimaISO(),
-    proveedor: "", usuario_id: "", estado: "pendiente"
+    codigo_lote: "", cantidad_lote: "", marca_id: "", fecha_ingreso: todayLimaISO(), fecha_trabajo: "", fecha_fin_clasificado: "", fecha_inicio_etiquetado: "",
+    fecha_completada: "", proveedor: "", usuario_id: "", estado: "pendiente"
   };
 }
 
 function LotesPanel() {
-  const { data: lotes = [], loading, error, reload } = useAsyncData(listLotes, [], []);
+  const { data: lotes = [], setData: setLotes, loading, error, reload } = useAsyncData(listLotes, [], []);
   const { data: brands = [] } = useAsyncData(listBrands, [], []);
   const { data: users = [] } = useAsyncData(selectUsers, [], []);
   const [tab, setTab] = useState("Crear");
@@ -4505,6 +4679,10 @@ function LotesPanel() {
       cantidad_lote: String(selectedLote.cantidad_lote ?? ""),
       marca_id: String(selectedLote.marca_id || ""),
       fecha_ingreso: selectedLote.fecha_ingreso || "",
+      fecha_trabajo: selectedLote.fecha_trabajo || "",
+      fecha_fin_clasificado: selectedLote.fecha_fin_clasificado || "",
+      fecha_inicio_etiquetado: selectedLote.fecha_inicio_etiquetado || "",
+      fecha_completada: selectedLote.fecha_completada || "",
       proveedor: selectedLote.proveedor || "",
       usuario_id: String(selectedLote.usuario_id || ""),
       estado: selectedLote.estado || "pendiente"
@@ -4518,9 +4696,21 @@ function LotesPanel() {
     }
     if (!form.marca_id) return "Selecciona una marca.";
     if (!form.fecha_ingreso) return "Selecciona una fecha de ingreso.";
+    if (form.fecha_trabajo && form.fecha_fin_clasificado && form.fecha_fin_clasificado < form.fecha_trabajo) {
+      return "La fecha de fin de clasificado no puede ser anterior a su fecha de inicio.";
+    }
+    if (form.fecha_fin_clasificado && form.fecha_inicio_etiquetado && form.fecha_inicio_etiquetado < form.fecha_fin_clasificado) {
+      return "La fecha de inicio de etiquetado no puede ser anterior al fin de clasificado.";
+    }
+    if (form.fecha_inicio_etiquetado && form.fecha_completada && form.fecha_completada < form.fecha_inicio_etiquetado) {
+      return "La fecha completada de etiquetado no puede ser anterior a su fecha de inicio.";
+    }
     if (!form.proveedor.trim()) return "El proveedor es obligatorio.";
     if (!form.usuario_id) return "Selecciona el líder de equipo responsable del lote.";
     if (!LOTE_ESTADOS.some((option) => option.value === form.estado)) return "Selecciona un estado valido.";
+    if (form.estado === "completado" && (!form.fecha_trabajo || !form.fecha_fin_clasificado || !form.fecha_inicio_etiquetado || !form.fecha_completada)) {
+      return "Completa todas las fechas antes de marcar el lote como Completado.";
+    }
     return null;
   }
 
@@ -4530,6 +4720,10 @@ function LotesPanel() {
       cantidad_lote: Number(form.cantidad_lote),
       marca_id: Number(form.marca_id),
       fecha_ingreso: form.fecha_ingreso,
+      fecha_trabajo: form.fecha_trabajo || null,
+      fecha_fin_clasificado: form.fecha_fin_clasificado || null,
+      fecha_inicio_etiquetado: form.fecha_inicio_etiquetado || null,
+      fecha_completada: form.fecha_completada || null,
       proveedor: form.proveedor.trim(),
       usuario_id: Number(form.usuario_id),
       estado: form.estado
@@ -4546,10 +4740,10 @@ function LotesPanel() {
     }
     setSaving(true);
     try {
-      await createLote(buildPayload());
+      const createdLote = await createLote(buildPayload());
+      setLotes((current) => [createdLote, ...(current || []).filter((lote) => String(lote.id) !== String(createdLote.id))]);
       setForm(emptyLoteForm());
       setStatus({ type: "success", message: "Lote creado correctamente." });
-      reload();
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });
     } finally {
@@ -4568,9 +4762,17 @@ function LotesPanel() {
     }
     setSaving(true);
     try {
-      await updateLote(selectedLote.id, buildPayload());
+      const payload = buildPayload();
+      const updatedLote = await updateLote(selectedLote.id, payload);
+      const savedDatesMatch = ["fecha_trabajo", "fecha_fin_clasificado", "fecha_inicio_etiquetado", "fecha_completada"]
+        .every((field) => (updatedLote[field] || null) === (payload[field] || null));
+      if (!savedDatesMatch) {
+        throw new Error("El servidor no confirmó las fechas ingresadas. Actualiza la versión publicada e inténtalo nuevamente.");
+      }
+      setLotes((current) => (current || []).map((lote) => (
+        String(lote.id) === String(updatedLote.id) ? updatedLote : lote
+      )));
       setStatus({ type: "success", message: "Lote actualizado correctamente." });
-      reload();
     } catch (err) {
       setStatus({ type: "error", message: friendlyError(err) });
     } finally {
@@ -4597,7 +4799,8 @@ function LotesPanel() {
   }
 
   const rows = lotes.map((lote) => {
-    const days = loteDurationDays(lote);
+    const classificationDays = loteClassificationDays(lote);
+    const labelingDays = loteLabelingDays(lote);
     return {
       id: lote.id,
       "Codigo de lote": lote.codigo_lote,
@@ -4605,7 +4808,12 @@ function LotesPanel() {
       Marca: lote.marca_nombre,
       Estado: LOTE_ESTADOS.find((option) => option.value === lote.estado)?.label || lote.estado,
       "Fecha de ingreso": formatDateLima(lote.fecha_ingreso),
-      "Días": days === null ? null : `${days} día${days === 1 ? "" : "s"}`,
+      "Fecha inicio clasificado": formatDateLima(lote.fecha_trabajo),
+      "Fecha fin clasificado": formatDateLima(lote.fecha_fin_clasificado),
+      "Fecha inicio etiquetado": formatDateLima(lote.fecha_inicio_etiquetado),
+      "Fecha fin etiquetado": formatDateLima(lote.fecha_completada),
+      "Días clasificado": classificationDays === null ? null : `${classificationDays} día${classificationDays === 1 ? "" : "s"}`,
+      "Días etiquetado": labelingDays === null ? null : `${labelingDays} día${labelingDays === 1 ? "" : "s"}`,
       Proveedor: lote.proveedor,
       "Líder de equipo": lote.usuario_nombre
     };
@@ -4623,7 +4831,7 @@ function LotesPanel() {
         ) : (
           <DataTable
             rows={rows}
-            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Días", "Proveedor", "Líder de equipo"]}
+            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Fecha inicio clasificado", "Fecha fin clasificado", "Fecha inicio etiquetado", "Fecha fin etiquetado", "Días clasificado", "Días etiquetado", "Proveedor", "Líder de equipo"]}
             onRowClick={(row) => {
               setSelectedId(String(row.id));
               setTab("Editar");
@@ -4636,6 +4844,7 @@ function LotesPanel() {
 
       <Panel>
         <Tabs tabs={["Crear", "Editar", "Eliminar"]} active={tab} onChange={setTab} />
+        <div className="lote-form-status"><StatusAlert status={status} /></div>
         <form className="form-grid" onSubmit={tab === "Crear" ? submitCreate : submitEdit}>
           {tab !== "Crear" ? (
             <SelectInput
@@ -4673,6 +4882,46 @@ function LotesPanel() {
                 value={form.fecha_ingreso}
                 onChange={(fecha_ingreso) => setForm({ ...form, fecha_ingreso })}
               />
+              <TextInput
+                label="Fecha inicio clasificado (opcional)"
+                type="date"
+                value={form.fecha_trabajo}
+                onChange={(fecha_trabajo) => setForm({
+                  ...form,
+                  fecha_trabajo,
+                  fecha_fin_clasificado: fecha_trabajo ? form.fecha_fin_clasificado : "",
+                  fecha_inicio_etiquetado: fecha_trabajo ? form.fecha_inicio_etiquetado : "",
+                  fecha_completada: fecha_trabajo ? form.fecha_completada : "",
+                  estado: fecha_trabajo ? "en_curso" : "pendiente"
+                })}
+              />
+              <TextInput
+                label="Fecha fin clasificado"
+                type="date"
+                value={form.fecha_fin_clasificado}
+                onChange={(fecha_fin_clasificado) => setForm({
+                  ...form,
+                  fecha_fin_clasificado,
+                  fecha_inicio_etiquetado: fecha_fin_clasificado ? form.fecha_inicio_etiquetado : "",
+                  fecha_completada: fecha_fin_clasificado ? form.fecha_completada : "",
+                  estado: fecha_fin_clasificado ? form.estado : "en_curso"
+                })}
+                disabled={!form.fecha_trabajo}
+                hint={!form.fecha_trabajo ? "Primero ingresa la fecha de inicio de clasificado." : ""}
+              />
+              <TextInput
+                label="Fecha inicio de etiquetado"
+                type="date"
+                value={form.fecha_inicio_etiquetado}
+                onChange={(fecha_inicio_etiquetado) => setForm({
+                  ...form,
+                  fecha_inicio_etiquetado,
+                  fecha_completada: fecha_inicio_etiquetado ? form.fecha_completada : "",
+                  estado: fecha_inicio_etiquetado ? form.estado : "en_curso"
+                })}
+                disabled={!form.fecha_fin_clasificado}
+                hint={!form.fecha_fin_clasificado ? "Primero ingresa la fecha de fin de clasificado." : ""}
+              />
               <TextInput label="Proveedor" value={form.proveedor} onChange={(proveedor) => setForm({ ...form, proveedor })} />
               <SelectInput
                 label="Líder de equipo"
@@ -4683,8 +4932,30 @@ function LotesPanel() {
                   ...teamLeaders.map((leader) => ({ value: String(leader.id), label: leader.nombre || leader.email }))
                 ]}
               />
-              <SelectInput label="Estado" value={form.estado} onChange={(estado) => setForm({ ...form, estado })} options={LOTE_ESTADOS} />
-              <div className="form-span">
+              <SelectInput
+                label="Estado"
+                value={form.estado}
+                onChange={(estado) => setForm({ ...form, estado })}
+                options={LOTE_ESTADOS.map((option) => ({
+                  ...option,
+                  disabled: option.value !== form.estado && option.value !== "completado"
+                }))}
+                disabled={!form.fecha_completada}
+                hint={!form.fecha_completada ? "Cambia automáticamente a En curso al iniciar clasificado. Completa todas las fechas para cerrar." : "Ya puedes marcar el lote como Completado."}
+              />
+              <TextInput
+                label="Fecha fin de etiquetado"
+                type="date"
+                value={form.fecha_completada}
+                onChange={(fecha_completada) => setForm({
+                  ...form,
+                  fecha_completada,
+                  estado: fecha_completada ? form.estado : "en_curso"
+                })}
+                disabled={!form.fecha_inicio_etiquetado}
+                hint={!form.fecha_inicio_etiquetado ? "Primero ingresa la fecha de inicio de etiquetado." : "Esta fecha habilita el estado Completado."}
+              />
+              <div className="form-span lote-form-actions">
                 <FormActions saving={saving} saveLabel={tab === "Crear" ? "Crear lote" : "Guardar cambios"} />
               </div>
             </>
@@ -4694,9 +4965,6 @@ function LotesPanel() {
               <Button type="button" variant="danger" icon={Trash2} loading={saving} onClick={submitDelete}>Eliminar lote</Button>
             </div>
           ) : null}
-          <div className="form-span">
-            <StatusAlert status={status} />
-          </div>
         </form>
       </Panel>
     </div>
@@ -4710,6 +4978,8 @@ const GUIA_MESES = [
 const GUIA_DATE_HEADER = "ESTADO";
 const GUIA_CODE_HEADER = "TDA ORIGEN";
 const GUIA_NISSEI_HEADER = "CODIGO NISSEI";
+const GUIA_DESTINATION_HEADER = "TDA DESTINO";
+const GUIA_QUANTITY_HEADER = "SERIE";
 const GUIA_ITEM_BATCH_SIZE = 1000;
 
 function guiaColLetter(ref) {
@@ -4733,10 +5003,35 @@ function guiaLineFingerprint(text) {
   return hash.toString(16).padStart(16, "0");
 }
 
-function guiaExcelSerialToISODate(serial) {
-  const value = Number(serial);
-  if (!Number.isFinite(value)) return null;
-  const date = new Date(Date.UTC(1899, 11, 30) + value * 86400000);
+function guiaExcelDateToISODate(rawValue) {
+  const text = String(rawValue ?? "").trim();
+  if (!text) return null;
+
+  const textDate = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (textDate) {
+    const [, rawDay, rawMonth, rawYear] = textDate;
+    const year = Number(rawYear);
+    const month = Number(rawMonth);
+    const day = Number(rawDay);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day) return null;
+    return `${rawYear}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  const isoDate = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/);
+  if (isoDate) {
+    const [, rawYear, rawMonth, rawDay] = isoDate;
+    const year = Number(rawYear);
+    const month = Number(rawMonth);
+    const day = Number(rawDay);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day) return null;
+    return `${rawYear}-${rawMonth}-${rawDay}`;
+  }
+
+  const serial = Number(text);
+  if (!Number.isFinite(serial)) return null;
+  const date = new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
   if (Number.isNaN(date.getTime())) return null;
   const year = date.getUTCFullYear();
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
@@ -4821,19 +5116,19 @@ async function parseGuiasWorkbook(file) {
   // que las columnas exportadas despues se lean bien.
   const headerCols = [];
   const headerByCol = {};
-  const headerLabelByCol = {};
   rows[0].forEach((cell) => {
     const col = guiaColLetter(cell.ref);
     const label = String(cellValue(cell) || "").replace(/_x000a_/gi, " ").trim();
     headerCols.push(col);
     headerByCol[col] = label.toUpperCase();
-    headerLabelByCol[col] = label;
   });
   const dateCol = headerCols.find((col) => headerByCol[col] === GUIA_DATE_HEADER);
   const codeCol = headerCols.find((col) => headerByCol[col] === GUIA_CODE_HEADER);
   const nisseiCol = headerCols.find((col) => headerByCol[col] === GUIA_NISSEI_HEADER);
-  if (!dateCol || !codeCol || !nisseiCol) {
-    throw new Error(`No se encontraron las columnas "${GUIA_DATE_HEADER}", "${GUIA_CODE_HEADER}" y "${GUIA_NISSEI_HEADER}" en el archivo.`);
+  const destinationCol = headerCols.find((col) => headerByCol[col] === GUIA_DESTINATION_HEADER);
+  const quantityCol = headerCols.find((col) => headerByCol[col] === GUIA_QUANTITY_HEADER);
+  if (!dateCol || !codeCol || !quantityCol || (!nisseiCol && !destinationCol)) {
+    throw new Error(`No se encontraron las columnas "${GUIA_DATE_HEADER}", "${GUIA_CODE_HEADER}", "${GUIA_QUANTITY_HEADER}" y una columna de destino en el archivo.`);
   }
 
   const guidesByCode = new Map();
@@ -4845,27 +5140,23 @@ async function parseGuiasWorkbook(file) {
       valuesByCol[guiaColLetter(cell.ref)] = cellValue(cell);
     });
     const codigo = String(valuesByCol[codeCol] || "").trim();
-    const fecha = guiaExcelSerialToISODate(valuesByCol[dateCol]);
+    const fecha = guiaExcelDateToISODate(valuesByCol[dateCol]);
     const nissei = String(valuesByCol[nisseiCol] || "").trim().toUpperCase();
-    if (!codigo || !fecha || nissei !== "CD") continue;
+    const destination = String(valuesByCol[destinationCol] || "").trim().toUpperCase();
+    if (!codigo || !fecha || (nissei !== "CD" && destination !== "CD")) continue;
     if (!guidesByCode.has(codigo)) guidesByCode.set(codigo, fecha);
 
-    const datos = {};
-    headerCols.forEach((col) => {
-      datos[headerLabelByCol[col]] = valuesByCol[col] ?? "";
-    });
+    const rawCantidad = Number(valuesByCol[quantityCol]);
+    const cantidad = Number.isFinite(rawCantidad) ? rawCantidad : 0;
     const codigoItem = guiaLineFingerprint(headerCols.map((col) => valuesByCol[col] ?? "").join("|"));
     const key = `${codigo}::${codigoItem}`;
     if (itemsByKey.has(key)) continue;
-    itemsByKey.set(key, { codigoGuia: codigo, codigoItem, fecha, datos });
+    itemsByKey.set(key, { codigoGuia: codigo, codigoItem, fecha, cantidad });
 
     // Se suma aqui (mientras se arma cada linea unica) para que la guia se
     // cree de una con su cantidad correcta, en vez de nacer en 0 y esperar
     // a que el detalle se importe y recalcule despues.
-    const cantidad = Number(datos.SERIE);
-    if (Number.isFinite(cantidad)) {
-      cantidadByCode.set(codigo, (cantidadByCode.get(codigo) || 0) + cantidad);
-    }
+    cantidadByCode.set(codigo, (cantidadByCode.get(codigo) || 0) + cantidad);
   }
 
   return {
@@ -4883,7 +5174,7 @@ function filterGuiasParseToMonth({ guides, items }, anio, mes) {
   const monthItems = items.filter((item) => String(item.fecha || "").startsWith(prefix));
   const cantidadByCode = new Map();
   monthItems.forEach((item) => {
-    const cantidad = Number(item.datos?.SERIE);
+    const cantidad = Number(item.cantidad);
     if (Number.isFinite(cantidad)) {
       cantidadByCode.set(item.codigoGuia, (cantidadByCode.get(item.codigoGuia) || 0) + cantidad);
     }
@@ -4951,7 +5242,7 @@ function GuiasPanel() {
       if (!guides.length) {
         setImportStatus({
           type: "error",
-          message: `No se encontraron guias validas en el archivo. Verifica que tenga las columnas "${GUIA_DATE_HEADER}", "${GUIA_CODE_HEADER}" y "${GUIA_NISSEI_HEADER}", y que existan filas con "${GUIA_NISSEI_HEADER}" = CD.`
+          message: `No se encontraron guias validas en el archivo. Verifica que tenga las columnas "${GUIA_DATE_HEADER}", "${GUIA_CODE_HEADER}" y filas con destino CD.`
         });
         return;
       }
@@ -5060,8 +5351,8 @@ function GuiasPanel() {
         <Alert>
           Sube el Excel de salidas (por ejemplo "Salidas 2026 enero.xlsx"). Cada guia se identifica por su codigo en
           la columna "{GUIA_CODE_HEADER}" y su fecha se toma de la columna "{GUIA_DATE_HEADER}". Solo se toman en
-          cuenta las filas donde "{GUIA_NISSEI_HEADER}" sea CD; el resto se ignora. Tambien se guarda
-          cada linea de producto de la guia, con todas las demas columnas del archivo. Puedes importar el mismo
+          cuenta las filas donde "{GUIA_DESTINATION_HEADER}" o "{GUIA_NISSEI_HEADER}" sea CD; el resto se ignora. Tambien se guarda
+          cada linea de producto de la guia con su cantidad. Puedes importar el mismo
           archivo mas de una vez o archivos de distintos meses: lo que ya existe no se sobrescribe ni se duplica,
           solo se agrega lo que falte.
         </Alert>

@@ -1,15 +1,15 @@
 import { Plus, Trash2 } from "lucide-react";
-import { Button, TextInput } from "./ui";
+import { Button, SelectInput, TextInput } from "./ui";
 
 export function emptyGuideShare() {
-  return { numero_guia: "", cantidad: "" };
+  return { numero_guia: "", cantidad: "", tienda_id: "" };
 }
 
 export function guideTotal(items) {
   return (items || []).reduce((total, item) => total + Number(item.cantidad || 0), 0);
 }
 
-export function GuideDistribution({ items, onChange }) {
+export function GuideDistribution({ items, stores = [], onChange }) {
   const shares = items?.length ? items : [emptyGuideShare()];
   const total = guideTotal(shares);
 
@@ -49,6 +49,15 @@ export function GuideDistribution({ items, onChange }) {
             step="1"
             value={share.cantidad}
             onChange={(cantidad) => update(index, { cantidad })}
+          />
+          <SelectInput
+            label="Tienda"
+            value={share.tienda_id || ""}
+            onChange={(tienda_id) => update(index, { tienda_id })}
+            options={[
+              { value: "", label: "Selecciona una tienda" },
+              ...stores.map((store) => ({ value: String(store.id), label: store.nombre }))
+            ]}
           />
           <Button variant="ghost" icon={Trash2} onClick={() => remove(index)} disabled={shares.length === 1}>
             Quitar

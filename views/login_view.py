@@ -6,7 +6,7 @@ from services.styles import add_login_video_background
 
 
 def render_login(supabase: Client) -> None:
-    add_login_video_background("fondovideo.mp4")
+    add_login_video_background("genera_un_video_de_fondo_para.mp4")
 
     st.markdown("""
         <style>

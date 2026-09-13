@@ -140,6 +140,24 @@ export function buildComparableIncidentMetrics(incidents, operationalRecords) {
   };
 }
 
+export function buildLeaderOperationSummary(activities, tasks, operationName, { excludeMatch = false } = {}) {
+  const normalize = (value) => String(value || "").normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  const needles = (Array.isArray(operationName) ? operationName : [operationName]).map(normalize).filter(Boolean);
+  const taskIds = new Set((tasks || [])
+    .filter((task) => {
+      const taskName = normalize(task.name || task.shortName);
+      const matches = needles.some((needle) => taskName.includes(needle));
+      return excludeMatch ? !matches : matches;
+    })
+    .map((task) => Number(task.id)));
+  const rows = (activities || []).filter((row) => row.source === "jefe-equipo" && taskIds.has(Number(row.taskId)));
+  const workerCount = new Set(rows.map((row) => Number(row.workerId)).filter(Number.isFinite)).size;
+  const pairs = rows.reduce((sum, row) => sum + Math.max(0, Number(row.quantity || 0)), 0);
+  const minutes = rows.reduce((sum, row) => sum + Math.max(0, Number(row.minutes || 0)), 0);
+  return { pairs, workerCount, minutes, averageMinutesPerWorker: workerCount ? minutes / workerCount : 0, records: rows.length };
+}
+
 export function averageEmployeeTenureMonths(movements, {
   today = new Date(),
   timeZone = DEFAULT_TIME_ZONE,
