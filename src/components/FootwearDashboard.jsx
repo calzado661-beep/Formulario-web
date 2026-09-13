@@ -743,7 +743,6 @@ function LotProgressCard({ lots, selectedCode, onChange, labeledPairs, compact =
 
 const LOTE_DURATION_STATUS_OPTIONS = [
   { value: "todos", label: "Todos" },
-  { value: "pendiente", label: "Pendiente" },
   { value: "en_curso", label: "En curso" },
   { value: "completado", label: "Completado" }
 ];
@@ -755,7 +754,7 @@ function LoteDurationChart({ lots }) {
   // provisional; una etapa historica sin fecha limite queda sin dato.
   const byLote = scoped
     .map((lot) => {
-      const classificationEndDate = lot.labelingStartDate || (lot.status !== "completado" ? CURRENT_LIMA_PARTS.iso : null);
+      const classificationEndDate = lot.classificationEndDate || CURRENT_LIMA_PARTS.iso;
       const labelingEndDate = lot.status === "completado" ? lot.completedLabelingDate : CURRENT_LIMA_PARTS.iso;
       const classificationDays = lot.classificationStartDate && classificationEndDate
         ? Math.round((new Date(`${classificationEndDate}T00:00:00`) - new Date(`${lot.classificationStartDate}T00:00:00`)) / 86400000) + 1
@@ -775,6 +774,7 @@ function LoteDurationChart({ lots }) {
         brandName: lot.brandName,
         quantity: lot.quantity,
         classificationStartDate: lot.classificationStartDate,
+        classificationEndDate: lot.classificationEndDate,
         labelingStartDate: lot.labelingStartDate,
         completedLabelingDate: lot.completedLabelingDate
       } : null;
@@ -806,6 +806,7 @@ function LoteDurationChart({ lots }) {
             `Marca: ${item.brandName || "—"}`,
             `Pares: ${numberFormatter.format(item.quantity || 0)}`,
             `Inicio clasificado: ${item.classificationStartDate ? formatCalendarDate(item.classificationStartDate) : "—"}`,
+            `Fin clasificado: ${item.classificationEndDate ? formatCalendarDate(item.classificationEndDate) : "—"}`,
             `Inicio etiquetado: ${item.labelingStartDate ? formatCalendarDate(item.labelingStartDate) : "—"}`,
             `Completado etiquetado: ${item.completedLabelingDate ? formatCalendarDate(item.completedLabelingDate) : "—"}`
           ].join(" · ")
@@ -2294,7 +2295,6 @@ export default function FootwearDashboard() {
   const [detailTaskIds, setDetailTaskIds] = useState([]);
   const [selectedTaskTypes, setSelectedTaskTypes] = useState([]);
   const [selectedIncidentTaskIds, setSelectedIncidentTaskIds] = useState([]);
-  const [incidentAreaIds, setIncidentAreaIds] = useState([]);
   const [qualityRecordKind, setQualityRecordKind] = useState("errores");
   const [trainingCourseIds, setTrainingCourseIds] = useState([]);
   const [trainingStatuses, setTrainingStatuses] = useState([]);
@@ -2516,12 +2516,6 @@ export default function FootwearDashboard() {
   const operationalTaskOptions = OPERATIONAL_TASKS
     .filter((task) => !selectedTaskTypes.length || selectedTaskTypes.includes(task.type))
     .map((task) => ({ value: task.id, label: task.shortName }));
-  const incidentAreaOptions = [...(dashboardData?.incidents || []).reduce((areas, incident) => {
-    if (incident.areaId && incident.offenderType === "Área") {
-      areas.set(Number(incident.areaId), incident.offenderName || `Área ${incident.areaId}`);
-    }
-    return areas;
-  }, new Map()).entries()].map(([value, label]) => ({ value, label }));
   const trainingCourseOptions = (dashboardData?.trainings || []).map((course) => ({ value: course.id, label: course.course }));
   const trainingStatusOptions = [
     { value: "completado", label: "Completado" },
@@ -2701,12 +2695,11 @@ export default function FootwearDashboard() {
   const datedLeaderActivities = (dashboardData?.activities || []).filter((row) => (
     row.source === "jefe-equipo" && matchesGlobalPeriodDate(row.date)
   ));
-  // Ingreso corresponde a Etiquetado. Despacho solo agrupa las cuatro tareas
+  // Ingreso corresponde a Etiquetado. Despacho solo agrupa las tres tareas
   // operativas definidas para ese proceso.
   const intakeSummary = buildLeaderOperationSummary(datedLeaderActivities, TASK_CATALOG, "etiquetado");
   const dispatchSummary = buildLeaderOperationSummary(datedLeaderActivities, TASK_CATALOG, [
     "picking",
-    "embalado y rotulado de guia",
     "envio nuevo",
     "visita de tienda"
   ]);
@@ -2721,11 +2714,7 @@ export default function FootwearDashboard() {
   const visibleIncidentRecords = (dashboardData?.incidents || []).filter((incident) => (
     matchesQualityDate(incident.date)
     && allowedIncidentTaskIds.has(incident.taskId)
-    && (
-      (globalWorkerId === "all" && !incidentAreaIds.length)
-      || (globalWorkerId !== "all" && Number(incident.workerId) === Number(globalWorkerId))
-      || (incidentAreaIds.length > 0 && incidentAreaIds.includes(Number(incident.areaId)))
-    )
+    && (globalWorkerId === "all" || Number(incident.workerId) === Number(globalWorkerId))
   ));
   // Las incidencias representan factores externos que afectan la operacion,
   // pero no son errores del equipo. Permanecen disponibles en el historial y
@@ -3186,7 +3175,7 @@ export default function FootwearDashboard() {
     productionMonths, selectedProductionRoles, detailTaskIds, selectedTaskTypes,
     hourlyRankingTaskId ? [hourlyRankingTaskId] : [], quantityRankingTaskId ? [quantityRankingTaskId] : [],
     selectedRoles,
-    selectedIncidentTaskIds, incidentAreaIds, qualityRecordKind === "errores" ? [] : [qualityRecordKind],
+    selectedIncidentTaskIds, qualityRecordKind === "errores" ? [] : [qualityRecordKind],
     trainingCourseIds, trainingStatuses, selectedMovementMonths
   ].filter((values) => values.length).length;
   const filterSummary = activeFilterCount
@@ -3729,7 +3718,6 @@ export default function FootwearDashboard() {
                     <option value="todos">Todos</option>
                   </select>
                 </label>
-                <MultiSlicer id="incident-areas" label="Área" options={incidentAreaOptions} selected={incidentAreaIds} onChange={setIncidentAreaIds} allLabel="Todas" />
               </div>
 
               <div className="pbi-content-grid">

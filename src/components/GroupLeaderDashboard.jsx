@@ -1691,13 +1691,19 @@ function HistoryRow({ record, editable, busy, average, readonlyReason, onEdit, o
     </tr>
   );
 }
+function availableLotesForTask(lotes, task, brandId) {
+  const labelingTask = normalizeText(getTaskTitle(task)) === "etiquetado";
+  return (lotes || []).filter((lote) => (
+    (labelingTask ? lote.estado === "en_curso" : ["pendiente", "en_curso"].includes(lote.estado))
+    && (!brandId || Number(lote.marca_id) === Number(brandId))
+  ));
+}
+
 function EditableHistoryRow({ record, draft, tasks, brands, stores, lotes, saving, onDraft, onSave, onCancel }) {
   const selectedTask = tasks.find((task) => String(task.id) === String(draft.tarea_id));
   const fields = getTaskFieldFlags(selectedTask);
   const updateDraft = (changes) => onDraft((current) => ({ ...current, ...changes }));
-  const availableLotes = (lotes || []).filter((lote) => (
-    lote.estado === "pendiente" && (!draft.marca_id || Number(lote.marca_id) === Number(draft.marca_id))
-  ));
+  const availableLotes = availableLotesForTask(lotes, selectedTask, draft.marca_id);
   // El lote ya guardado se mantiene visible aunque ya no este disponible
   // (por ejemplo, si se marco agotado despues), para no perder el dato.
   const loteOptions = draft.lote && !availableLotes.some((lote) => lote.codigo_lote === draft.lote)
@@ -1846,9 +1852,7 @@ function PendingActivityRow({ activity, tasks, brands, lotes, currentUserId, onR
   }));
   const [busy, setBusy] = useState(false);
   const updateDraft = (changes) => setDraft((current) => ({ ...current, ...changes }));
-  const availableLotes = (lotes || []).filter((lote) => (
-    lote.estado === "pendiente" && (!draft.marca_id || Number(lote.marca_id) === Number(draft.marca_id))
-  ));
+  const availableLotes = availableLotesForTask(lotes, task, draft.marca_id);
   const loteOptions = draft.lote && !availableLotes.some((lote) => lote.codigo_lote === draft.lote)
     ? [{ id: draft.lote, codigo_lote: draft.lote, marca_nombre: "no disponible" }, ...availableLotes]
     : availableLotes;
@@ -2010,9 +2014,7 @@ function DynamicGroupFields({ mode, task, form, updateForm, brands, stores, lote
   if (mode.completedOnly) {
     return /* @__PURE__ */ React.createElement("div", { className: "form-span" }, /* @__PURE__ */ React.createElement(Alert, null, "Esta tarea se guarda como realizado."));
   }
-  const availableLotes = (lotes || []).filter((lote) => (
-    lote.estado === "pendiente" && (!form.marca_id || Number(lote.marca_id) === Number(form.marca_id))
-  ));
+  const availableLotes = availableLotesForTask(lotes, task, form.marca_id);
   return /* @__PURE__ */ React.createElement(React.Fragment, null, mode.requiresBrand ? /* @__PURE__ */ React.createElement(
     SelectInput,
     {

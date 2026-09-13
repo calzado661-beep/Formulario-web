@@ -1,10 +1,8 @@
 -- Detalle linea por linea de cada guia (un producto despachado por fila en
 -- el reporte "Salidas AAAA mes.xlsx"). "guias" guarda un resumen por guia
 -- (codigo + fecha); esta tabla guarda cada producto de esa guia para no
--- perder informacion al importar. "datos" conserva la fila completa tal
--- como viene en el Excel (clave = encabezado de columna, valor = celda),
--- porque varias columnas del reporte no tienen un significado 100% fijo y
--- preferimos no inventarles nombres.
+-- perder informacion necesaria al importar. "cantidad" conserva el valor de
+-- la columna SERIE del Excel, que en este reporte representa pares.
 --
 -- El dedupe al reimportar es por (codigo_guia, codigo_item). "codigo_item"
 -- no es un codigo de columna del reporte (varios encabezados del Excel no
@@ -19,7 +17,7 @@ create table if not exists public.guias_items (
   codigo_guia varchar not null references public.guias(codigo) on delete cascade,
   codigo_item varchar not null,
   fecha date not null,
-  datos jsonb not null default '{}'::jsonb,
+  cantidad numeric not null default 0,
   archivo_origen varchar,
   created_at timestamptz not null default now()
 );

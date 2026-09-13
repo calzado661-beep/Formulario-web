@@ -575,7 +575,7 @@ function DynamicRecordFields({ record, task, brands, stores, lotes, onChange }) 
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
         {flags.marca && !flags.lote ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
         {usesGuideBreakdown ? <GuideFields record={record} stores={stores} onChange={onChange} /> : null}
-        {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
+        {flags.lote ? <LoteField record={record} task={task} lotes={lotes} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore && !record.usaGuias} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
@@ -598,7 +598,7 @@ function DynamicRecordFields({ record, task, brands, stores, lotes, onChange }) 
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
         {flags.marca && !flags.lote ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
         {usesGuideBreakdown ? <GuideFields record={record} stores={stores} onChange={onChange} /> : null}
-        {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
+        {flags.lote ? <LoteField record={record} task={task} lotes={lotes} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore && !record.usaGuias} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       </div>
@@ -617,7 +617,7 @@ function DynamicRecordFields({ record, task, brands, stores, lotes, onChange }) 
         {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
         {flags.marca && !flags.lote ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
         {flags.guia ? <SingleGuideField record={record} onChange={onChange} /> : null}
-        {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
+        {flags.lote ? <LoteField record={record} task={task} lotes={lotes} onChange={onChange} /> : null}
         <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
         <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
         <Alert>Esta tarea usa el puntaje fijo definido por administracion.</Alert>
@@ -636,7 +636,7 @@ function DynamicRecordFields({ record, task, brands, stores, lotes, onChange }) 
       {flags.hangtag ? <HangtagField record={record} onChange={onChange} /> : null}
       {flags.marca && !flags.lote ? <SingleBrandField record={record} brands={brands} onChange={onChange} /> : null}
       {flags.guia ? <SingleGuideField record={record} onChange={onChange} /> : null}
-      {flags.lote ? <LoteField record={record} lotes={lotes} onChange={onChange} /> : null}
+      {flags.lote ? <LoteField record={record} task={task} lotes={lotes} onChange={onChange} /> : null}
       <OptionalContextFields record={record} stores={stores} onChange={onChange} showStore={usesStore} />
       <TextArea label="Detalle" value={record.detalle} onChange={(detalle) => onChange({ detalle })} placeholder="Comentarios opcionales" />
       <Alert>
@@ -684,11 +684,14 @@ function GuideFields({ record, stores, onChange }) {
   );
 }
 
-function LoteField({ record, lotes, onChange }) {
+function LoteField({ record, task, lotes, onChange }) {
   // El lote ya trae su marca (codigo_lote - marca_nombre), asi que al
   // elegirlo se completa marcaId solo: la tarea no vuelve a pedir la marca
   // por separado cuando tiene lote.
-  const availableLotes = (lotes || []).filter((lote) => lote.estado === "pendiente");
+  const labelingTask = normalizeText(getTaskTitle(task)) === "etiquetado";
+  const availableLotes = (lotes || []).filter((lote) => (
+    labelingTask ? lote.estado === "en_curso" : ["pendiente", "en_curso"].includes(lote.estado)
+  ));
   return (
     <SelectInput
       label="Lote"

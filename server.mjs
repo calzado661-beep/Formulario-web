@@ -1527,7 +1527,8 @@ async function handleReadFootwearDashboard(request, response) {
         quantity: Number(lote.cantidad_lote || 0),
         status: String(lote.estado || "pendiente").trim().toLowerCase(),
         classificationStartDate: dashboardDate(lote.fecha_trabajo),
-        labelingStartDate: dashboardDate(lote.fecha_fin_clasificado),
+        classificationEndDate: dashboardDate(lote.fecha_fin_clasificado),
+        labelingStartDate: dashboardDate(lote.fecha_inicio_etiquetado),
         completedLabelingDate: dashboardDate(lote.fecha_completada),
         brandName: loteBrandNameById.get(Number(lote.marca_id)) || null,
         teamLeaderName: incidentUserById.get(Number(lote.usuario_id))?.nombre || null
@@ -2213,7 +2214,7 @@ async function handleDeleteStore(request, response, storeId) {
   }
 }
 
-const LOTE_SELECT_COLUMNS = "id,codigo_lote,cantidad_lote,marca_id,fecha_ingreso,fecha_trabajo,fecha_fin_clasificado,proveedor,usuario_id,estado,fecha_completada";
+const LOTE_SELECT_COLUMNS = "id,codigo_lote,cantidad_lote,marca_id,fecha_ingreso,fecha_trabajo,fecha_fin_clasificado,fecha_inicio_etiquetado,proveedor,usuario_id,estado,fecha_completada";
 const LOTE_ESTADOS = ["pendiente", "en_curso", "completado"];
 
 async function enrichLotes(rows) {
@@ -2260,6 +2261,7 @@ function validateLotePayload(body) {
   const fechaIngreso = String(body.fecha_ingreso || "").trim();
   const fechaTrabajo = String(body.fecha_trabajo || "").trim();
   const fechaFinClasificado = String(body.fecha_fin_clasificado || "").trim();
+  const fechaInicioEtiquetado = String(body.fecha_inicio_etiquetado || "").trim();
   const fechaCompletada = String(body.fecha_completada || "").trim();
   const usuarioId = Number(body.usuario_id);
   const estado = String(body.estado || "pendiente").trim().toLowerCase();
@@ -2271,23 +2273,27 @@ function validateLotePayload(body) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaIngreso)) throw invalidLote("Selecciona una fecha de ingreso valida.");
   if (fechaTrabajo && !/^\d{4}-\d{2}-\d{2}$/.test(fechaTrabajo)) throw invalidLote("Selecciona una fecha de inicio de clasificado valida.");
   if (fechaFinClasificado && !/^\d{4}-\d{2}-\d{2}$/.test(fechaFinClasificado)) throw invalidLote("Selecciona una fecha de fin de clasificado valida.");
+  if (fechaInicioEtiquetado && !/^\d{4}-\d{2}-\d{2}$/.test(fechaInicioEtiquetado)) throw invalidLote("Selecciona una fecha de inicio de etiquetado valida.");
   if (fechaCompletada && !/^\d{4}-\d{2}-\d{2}$/.test(fechaCompletada)) throw invalidLote("Selecciona una fecha completada de etiquetado valida.");
+  if (fechaFinClasificado && !fechaTrabajo) throw invalidLote("Primero ingresa la fecha de inicio de clasificado.");
+  if (fechaInicioEtiquetado && !fechaFinClasificado) throw invalidLote("Primero ingresa la fecha de fin de clasificado.");
+  if (fechaCompletada && !fechaInicioEtiquetado) throw invalidLote("Primero ingresa la fecha de inicio de etiquetado.");
   if (fechaTrabajo && fechaFinClasificado && fechaFinClasificado < fechaTrabajo) {
     throw invalidLote("La fecha de fin de clasificado no puede ser anterior a su fecha de inicio.");
   }
-  if (fechaFinClasificado && fechaCompletada && fechaCompletada < fechaFinClasificado) {
+  if (fechaFinClasificado && fechaInicioEtiquetado && fechaInicioEtiquetado < fechaFinClasificado) {
+    throw invalidLote("La fecha de inicio de etiquetado no puede ser anterior al fin de clasificado.");
+  }
+  if (fechaInicioEtiquetado && fechaCompletada && fechaCompletada < fechaInicioEtiquetado) {
     throw invalidLote("La fecha completada de etiquetado no puede ser anterior a su fecha de inicio.");
   }
   if (!proveedor) throw invalidLote("El proveedor es obligatorio.");
   if (!Number.isInteger(usuarioId) || usuarioId <= 0) throw invalidLote("Selecciona el líder de equipo responsable del lote.");
   if (!LOTE_ESTADOS.includes(estado)) throw invalidLote("El estado del lote no es valido.");
-  if (estado === "en_curso" && !fechaFinClasificado) {
-    throw invalidLote("La fecha fin de clasificado / inicio de etiquetado es obligatoria para usar el estado En curso.");
+  if (estado === "completado" && (!fechaTrabajo || !fechaFinClasificado || !fechaInicioEtiquetado || !fechaCompletada)) {
+    throw invalidLote("Completa todas las fechas del proceso antes de marcar el lote como Completado.");
   }
-  const resolvedFechaCompletada = estado === "completado" ? (fechaCompletada || currentLimaDate()) : "";
-  if (fechaFinClasificado && resolvedFechaCompletada && resolvedFechaCompletada < fechaFinClasificado) {
-    throw invalidLote("La fecha completada de etiquetado no puede ser anterior a su fecha de inicio.");
-  }
+  const resolvedEstado = !fechaTrabajo ? "pendiente" : estado === "completado" ? "completado" : "en_curso";
   return {
     codigo_lote: codigoLote,
     cantidad_lote: cantidadLote,
@@ -2295,10 +2301,11 @@ function validateLotePayload(body) {
     fecha_ingreso: fechaIngreso,
     fecha_trabajo: fechaTrabajo || null,
     fecha_fin_clasificado: fechaFinClasificado || null,
-    fecha_completada: resolvedFechaCompletada || null,
+    fecha_inicio_etiquetado: fechaInicioEtiquetado || null,
+    fecha_completada: fechaCompletada || null,
     proveedor,
     usuario_id: usuarioId,
-    estado
+    estado: resolvedEstado
   };
 }
 
@@ -2322,8 +2329,6 @@ async function handleCreateLote(request, response) {
       return;
     }
     await validateLoteResponsible(payload.usuario_id);
-    // Al crear, si llega completado sin fecha se asigna hoy.
-    payload.fecha_completada = payload.estado === "completado" ? (payload.fecha_completada || currentLimaDate()) : null;
     let result = await supabase.from("lotes").insert(payload).select(LOTE_SELECT_COLUMNS).single();
     if (isPrimaryKeySequenceConflict(result.error)) {
       result = await supabase
@@ -2357,15 +2362,6 @@ async function handleUpdateLote(request, response, loteId) {
       return;
     }
     await validateLoteResponsible(payload.usuario_id);
-    // Al pasar a completado se asigna hoy por defecto; el formulario también
-    // puede mandar una fecha editada. Al volver a pendiente se limpia.
-    const existingLoteResult = await supabase.from("lotes").select("estado,fecha_completada").eq("id", loteId).maybeSingle();
-    if (existingLoteResult.error) throw existingLoteResult.error;
-    payload.fecha_completada = payload.estado === "completado"
-      ? (payload.fecha_completada || (existingLoteResult.data?.estado === "completado" && existingLoteResult.data?.fecha_completada
-        ? existingLoteResult.data.fecha_completada
-        : currentLimaDate()))
-      : null;
     const result = await supabase.from("lotes").update(payload).eq("id", loteId).select(LOTE_SELECT_COLUMNS).maybeSingle();
     if (result.error) {
       sendJson(response, result.error.code === "23514" ? 400 : 500, {
@@ -2436,7 +2432,7 @@ async function recomputeGuiasCantidad(codigosGuia) {
   for (let from = 0; ; from += pageSize) {
     const itemsResult = await supabase
       .from("guias_items")
-      .select("codigo_guia,datos")
+      .select("codigo_guia,cantidad")
       .in("codigo_guia", codigosGuia)
       .range(from, from + pageSize - 1);
     if (itemsResult.error) throw itemsResult.error;
@@ -2447,7 +2443,7 @@ async function recomputeGuiasCantidad(codigosGuia) {
 
   const sums = new Map();
   for (const item of items) {
-    const cantidad = Number(item.datos?.SERIE);
+    const cantidad = Number(item.cantidad);
     sums.set(item.codigo_guia, (sums.get(item.codigo_guia) || 0) + (Number.isFinite(cantidad) ? cantidad : 0));
   }
 
@@ -2512,8 +2508,8 @@ async function handleImportGuias(request, response) {
         const key = `${codigoGuia}::${codigoItem}`;
         if (!codigoGuia || !codigoItem || !/^\d{4}-\d{2}-\d{2}$/.test(fecha) || seen.has(key)) continue;
         seen.add(key);
-        const datos = item?.datos && typeof item.datos === "object" && !Array.isArray(item.datos) ? item.datos : {};
-        rows.push({ codigo_guia: codigoGuia, codigo_item: codigoItem, fecha, datos, archivo_origen: archivo });
+        const cantidad = Number(item?.cantidad);
+        rows.push({ codigo_guia: codigoGuia, codigo_item: codigoItem, fecha, cantidad: Number.isFinite(cantidad) ? cantidad : 0, archivo_origen: archivo });
       }
       if (!rows.length) {
         sendJson(response, 400, { error: "No se encontraron lineas de detalle validas para importar." });

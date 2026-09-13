@@ -4639,22 +4639,22 @@ const LOTE_ESTADOS = [
 // cifra sube sola cada dia hasta que se marque como completado.
 function loteClassificationDays(lote) {
   if (!lote.fecha_trabajo) return null;
-  const endDate = lote.fecha_fin_clasificado || (lote.estado !== "completado" ? todayLimaISO() : null);
+  const endDate = lote.fecha_fin_clasificado || todayLimaISO();
   if (!endDate) return null;
   const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lote.fecha_trabajo}T00:00:00`)) / 86400000);
   return Number.isFinite(days) ? Math.max(1, days + 1) : null;
 }
 
 function loteLabelingDays(lote) {
-  if (!lote.fecha_fin_clasificado) return null;
+  if (!lote.fecha_inicio_etiquetado) return null;
   const endDate = lote.estado === "completado" && lote.fecha_completada ? lote.fecha_completada : todayLimaISO();
-  const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lote.fecha_fin_clasificado}T00:00:00`)) / 86400000);
+  const days = Math.round((new Date(`${endDate}T00:00:00`) - new Date(`${lote.fecha_inicio_etiquetado}T00:00:00`)) / 86400000);
   return Number.isFinite(days) ? Math.max(0, days) : null;
 }
 
 function emptyLoteForm() {
   return {
-    codigo_lote: "", cantidad_lote: "", marca_id: "", fecha_ingreso: todayLimaISO(), fecha_trabajo: "", fecha_fin_clasificado: "",
+    codigo_lote: "", cantidad_lote: "", marca_id: "", fecha_ingreso: todayLimaISO(), fecha_trabajo: "", fecha_fin_clasificado: "", fecha_inicio_etiquetado: "",
     fecha_completada: "", proveedor: "", usuario_id: "", estado: "pendiente"
   };
 }
@@ -4681,6 +4681,7 @@ function LotesPanel() {
       fecha_ingreso: selectedLote.fecha_ingreso || "",
       fecha_trabajo: selectedLote.fecha_trabajo || "",
       fecha_fin_clasificado: selectedLote.fecha_fin_clasificado || "",
+      fecha_inicio_etiquetado: selectedLote.fecha_inicio_etiquetado || "",
       fecha_completada: selectedLote.fecha_completada || "",
       proveedor: selectedLote.proveedor || "",
       usuario_id: String(selectedLote.usuario_id || ""),
@@ -4698,14 +4699,17 @@ function LotesPanel() {
     if (form.fecha_trabajo && form.fecha_fin_clasificado && form.fecha_fin_clasificado < form.fecha_trabajo) {
       return "La fecha de fin de clasificado no puede ser anterior a su fecha de inicio.";
     }
-    if (form.fecha_fin_clasificado && form.fecha_completada && form.fecha_completada < form.fecha_fin_clasificado) {
+    if (form.fecha_fin_clasificado && form.fecha_inicio_etiquetado && form.fecha_inicio_etiquetado < form.fecha_fin_clasificado) {
+      return "La fecha de inicio de etiquetado no puede ser anterior al fin de clasificado.";
+    }
+    if (form.fecha_inicio_etiquetado && form.fecha_completada && form.fecha_completada < form.fecha_inicio_etiquetado) {
       return "La fecha completada de etiquetado no puede ser anterior a su fecha de inicio.";
     }
     if (!form.proveedor.trim()) return "El proveedor es obligatorio.";
     if (!form.usuario_id) return "Selecciona el líder de equipo responsable del lote.";
     if (!LOTE_ESTADOS.some((option) => option.value === form.estado)) return "Selecciona un estado valido.";
-    if (form.estado === "en_curso" && !form.fecha_fin_clasificado) {
-      return "Ingresa la fecha fin de clasificado / inicio de etiquetado para usar el estado En curso.";
+    if (form.estado === "completado" && (!form.fecha_trabajo || !form.fecha_fin_clasificado || !form.fecha_inicio_etiquetado || !form.fecha_completada)) {
+      return "Completa todas las fechas antes de marcar el lote como Completado.";
     }
     return null;
   }
@@ -4718,7 +4722,8 @@ function LotesPanel() {
       fecha_ingreso: form.fecha_ingreso,
       fecha_trabajo: form.fecha_trabajo || null,
       fecha_fin_clasificado: form.fecha_fin_clasificado || null,
-      fecha_completada: form.estado === "completado" ? (form.fecha_completada || todayLimaISO()) : null,
+      fecha_inicio_etiquetado: form.fecha_inicio_etiquetado || null,
+      fecha_completada: form.fecha_completada || null,
       proveedor: form.proveedor.trim(),
       usuario_id: Number(form.usuario_id),
       estado: form.estado
@@ -4759,7 +4764,7 @@ function LotesPanel() {
     try {
       const payload = buildPayload();
       const updatedLote = await updateLote(selectedLote.id, payload);
-      const savedDatesMatch = ["fecha_trabajo", "fecha_fin_clasificado", "fecha_completada"]
+      const savedDatesMatch = ["fecha_trabajo", "fecha_fin_clasificado", "fecha_inicio_etiquetado", "fecha_completada"]
         .every((field) => (updatedLote[field] || null) === (payload[field] || null));
       if (!savedDatesMatch) {
         throw new Error("El servidor no confirmó las fechas ingresadas. Actualiza la versión publicada e inténtalo nuevamente.");
@@ -4804,8 +4809,9 @@ function LotesPanel() {
       Estado: LOTE_ESTADOS.find((option) => option.value === lote.estado)?.label || lote.estado,
       "Fecha de ingreso": formatDateLima(lote.fecha_ingreso),
       "Fecha inicio clasificado": formatDateLima(lote.fecha_trabajo),
-      "Fecha fin clasificado / inicio etiquetado": formatDateLima(lote.fecha_fin_clasificado),
-      "Fecha completada etiquetado": formatDateLima(lote.fecha_completada),
+      "Fecha fin clasificado": formatDateLima(lote.fecha_fin_clasificado),
+      "Fecha inicio etiquetado": formatDateLima(lote.fecha_inicio_etiquetado),
+      "Fecha fin etiquetado": formatDateLima(lote.fecha_completada),
       "Días clasificado": classificationDays === null ? null : `${classificationDays} día${classificationDays === 1 ? "" : "s"}`,
       "Días etiquetado": labelingDays === null ? null : `${labelingDays} día${labelingDays === 1 ? "" : "s"}`,
       Proveedor: lote.proveedor,
@@ -4825,7 +4831,7 @@ function LotesPanel() {
         ) : (
           <DataTable
             rows={rows}
-            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Fecha inicio clasificado", "Fecha fin clasificado / inicio etiquetado", "Fecha completada etiquetado", "Días clasificado", "Días etiquetado", "Proveedor", "Líder de equipo"]}
+            columns={["Codigo de lote", "Cantidad", "Marca", "Estado", "Fecha de ingreso", "Fecha inicio clasificado", "Fecha fin clasificado", "Fecha inicio etiquetado", "Fecha fin etiquetado", "Días clasificado", "Días etiquetado", "Proveedor", "Líder de equipo"]}
             onRowClick={(row) => {
               setSelectedId(String(row.id));
               setTab("Editar");
@@ -4880,17 +4886,41 @@ function LotesPanel() {
                 label="Fecha inicio clasificado (opcional)"
                 type="date"
                 value={form.fecha_trabajo}
-                onChange={(fecha_trabajo) => setForm({ ...form, fecha_trabajo })}
+                onChange={(fecha_trabajo) => setForm({
+                  ...form,
+                  fecha_trabajo,
+                  fecha_fin_clasificado: fecha_trabajo ? form.fecha_fin_clasificado : "",
+                  fecha_inicio_etiquetado: fecha_trabajo ? form.fecha_inicio_etiquetado : "",
+                  fecha_completada: fecha_trabajo ? form.fecha_completada : "",
+                  estado: fecha_trabajo ? "en_curso" : "pendiente"
+                })}
               />
               <TextInput
-                label="Fecha fin clasificado / inicio de etiquetado (opcional)"
+                label="Fecha fin clasificado"
                 type="date"
                 value={form.fecha_fin_clasificado}
                 onChange={(fecha_fin_clasificado) => setForm({
                   ...form,
                   fecha_fin_clasificado,
-                  estado: !fecha_fin_clasificado && form.estado === "en_curso" ? "pendiente" : form.estado
+                  fecha_inicio_etiquetado: fecha_fin_clasificado ? form.fecha_inicio_etiquetado : "",
+                  fecha_completada: fecha_fin_clasificado ? form.fecha_completada : "",
+                  estado: fecha_fin_clasificado ? form.estado : "en_curso"
                 })}
+                disabled={!form.fecha_trabajo}
+                hint={!form.fecha_trabajo ? "Primero ingresa la fecha de inicio de clasificado." : ""}
+              />
+              <TextInput
+                label="Fecha inicio de etiquetado"
+                type="date"
+                value={form.fecha_inicio_etiquetado}
+                onChange={(fecha_inicio_etiquetado) => setForm({
+                  ...form,
+                  fecha_inicio_etiquetado,
+                  fecha_completada: fecha_inicio_etiquetado ? form.fecha_completada : "",
+                  estado: fecha_inicio_etiquetado ? form.estado : "en_curso"
+                })}
+                disabled={!form.fecha_fin_clasificado}
+                hint={!form.fecha_fin_clasificado ? "Primero ingresa la fecha de fin de clasificado." : ""}
               />
               <TextInput label="Proveedor" value={form.proveedor} onChange={(proveedor) => setForm({ ...form, proveedor })} />
               <SelectInput
@@ -4905,24 +4935,25 @@ function LotesPanel() {
               <SelectInput
                 label="Estado"
                 value={form.estado}
-                onChange={(estado) => setForm({
-                  ...form,
-                  estado,
-                  fecha_completada: estado === "completado" ? (form.fecha_completada || todayLimaISO()) : ""
-                })}
+                onChange={(estado) => setForm({ ...form, estado })}
                 options={LOTE_ESTADOS.map((option) => ({
                   ...option,
-                  disabled: option.value === "en_curso" && !form.fecha_fin_clasificado
+                  disabled: option.value !== form.estado && option.value !== "completado"
                 }))}
-                hint={!form.fecha_fin_clasificado ? "En curso se habilita al ingresar el inicio de etiquetado." : ""}
+                disabled={!form.fecha_completada}
+                hint={!form.fecha_completada ? "Cambia automáticamente a En curso al iniciar clasificado. Completa todas las fechas para cerrar." : "Ya puedes marcar el lote como Completado."}
               />
               <TextInput
-                label="Fecha completada etiquetado"
+                label="Fecha fin de etiquetado"
                 type="date"
                 value={form.fecha_completada}
-                onChange={(fecha_completada) => setForm({ ...form, fecha_completada })}
-                disabled={tab !== "Editar" || form.estado !== "completado"}
-                hint={tab !== "Editar" ? "Se asigna automáticamente al completar el lote." : form.estado !== "completado" ? "Cambia el estado a Completado para editarla." : "Puedes corregir la fecha antes de guardar."}
+                onChange={(fecha_completada) => setForm({
+                  ...form,
+                  fecha_completada,
+                  estado: fecha_completada ? form.estado : "en_curso"
+                })}
+                disabled={!form.fecha_inicio_etiquetado}
+                hint={!form.fecha_inicio_etiquetado ? "Primero ingresa la fecha de inicio de etiquetado." : "Esta fecha habilita el estado Completado."}
               />
               <div className="form-span lote-form-actions">
                 <FormActions saving={saving} saveLabel={tab === "Crear" ? "Crear lote" : "Guardar cambios"} />
@@ -4948,6 +4979,7 @@ const GUIA_DATE_HEADER = "ESTADO";
 const GUIA_CODE_HEADER = "TDA ORIGEN";
 const GUIA_NISSEI_HEADER = "CODIGO NISSEI";
 const GUIA_DESTINATION_HEADER = "TDA DESTINO";
+const GUIA_QUANTITY_HEADER = "SERIE";
 const GUIA_ITEM_BATCH_SIZE = 1000;
 
 function guiaColLetter(ref) {
@@ -5084,20 +5116,19 @@ async function parseGuiasWorkbook(file) {
   // que las columnas exportadas despues se lean bien.
   const headerCols = [];
   const headerByCol = {};
-  const headerLabelByCol = {};
   rows[0].forEach((cell) => {
     const col = guiaColLetter(cell.ref);
     const label = String(cellValue(cell) || "").replace(/_x000a_/gi, " ").trim();
     headerCols.push(col);
     headerByCol[col] = label.toUpperCase();
-    headerLabelByCol[col] = label;
   });
   const dateCol = headerCols.find((col) => headerByCol[col] === GUIA_DATE_HEADER);
   const codeCol = headerCols.find((col) => headerByCol[col] === GUIA_CODE_HEADER);
   const nisseiCol = headerCols.find((col) => headerByCol[col] === GUIA_NISSEI_HEADER);
   const destinationCol = headerCols.find((col) => headerByCol[col] === GUIA_DESTINATION_HEADER);
-  if (!dateCol || !codeCol || (!nisseiCol && !destinationCol)) {
-    throw new Error(`No se encontraron las columnas "${GUIA_DATE_HEADER}", "${GUIA_CODE_HEADER}" y una columna de destino en el archivo.`);
+  const quantityCol = headerCols.find((col) => headerByCol[col] === GUIA_QUANTITY_HEADER);
+  if (!dateCol || !codeCol || !quantityCol || (!nisseiCol && !destinationCol)) {
+    throw new Error(`No se encontraron las columnas "${GUIA_DATE_HEADER}", "${GUIA_CODE_HEADER}", "${GUIA_QUANTITY_HEADER}" y una columna de destino en el archivo.`);
   }
 
   const guidesByCode = new Map();
@@ -5115,22 +5146,17 @@ async function parseGuiasWorkbook(file) {
     if (!codigo || !fecha || (nissei !== "CD" && destination !== "CD")) continue;
     if (!guidesByCode.has(codigo)) guidesByCode.set(codigo, fecha);
 
-    const datos = {};
-    headerCols.forEach((col) => {
-      datos[headerLabelByCol[col]] = valuesByCol[col] ?? "";
-    });
+    const rawCantidad = Number(valuesByCol[quantityCol]);
+    const cantidad = Number.isFinite(rawCantidad) ? rawCantidad : 0;
     const codigoItem = guiaLineFingerprint(headerCols.map((col) => valuesByCol[col] ?? "").join("|"));
     const key = `${codigo}::${codigoItem}`;
     if (itemsByKey.has(key)) continue;
-    itemsByKey.set(key, { codigoGuia: codigo, codigoItem, fecha, datos });
+    itemsByKey.set(key, { codigoGuia: codigo, codigoItem, fecha, cantidad });
 
     // Se suma aqui (mientras se arma cada linea unica) para que la guia se
     // cree de una con su cantidad correcta, en vez de nacer en 0 y esperar
     // a que el detalle se importe y recalcule despues.
-    const cantidad = Number(datos.SERIE);
-    if (Number.isFinite(cantidad)) {
-      cantidadByCode.set(codigo, (cantidadByCode.get(codigo) || 0) + cantidad);
-    }
+    cantidadByCode.set(codigo, (cantidadByCode.get(codigo) || 0) + cantidad);
   }
 
   return {
@@ -5148,7 +5174,7 @@ function filterGuiasParseToMonth({ guides, items }, anio, mes) {
   const monthItems = items.filter((item) => String(item.fecha || "").startsWith(prefix));
   const cantidadByCode = new Map();
   monthItems.forEach((item) => {
-    const cantidad = Number(item.datos?.SERIE);
+    const cantidad = Number(item.cantidad);
     if (Number.isFinite(cantidad)) {
       cantidadByCode.set(item.codigoGuia, (cantidadByCode.get(item.codigoGuia) || 0) + cantidad);
     }
@@ -5326,7 +5352,7 @@ function GuiasPanel() {
           Sube el Excel de salidas (por ejemplo "Salidas 2026 enero.xlsx"). Cada guia se identifica por su codigo en
           la columna "{GUIA_CODE_HEADER}" y su fecha se toma de la columna "{GUIA_DATE_HEADER}". Solo se toman en
           cuenta las filas donde "{GUIA_DESTINATION_HEADER}" o "{GUIA_NISSEI_HEADER}" sea CD; el resto se ignora. Tambien se guarda
-          cada linea de producto de la guia, con todas las demas columnas del archivo. Puedes importar el mismo
+          cada linea de producto de la guia con su cantidad. Puedes importar el mismo
           archivo mas de una vez o archivos de distintos meses: lo que ya existe no se sobrescribe ni se duplica,
           solo se agrega lo que falte.
         </Alert>
